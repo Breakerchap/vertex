@@ -1,8 +1,11 @@
 [gd_scene format=3 uid="uid://dpw70vlkqi2x1"]
 
 [ext_resource type="PackedScene" uid="uid://prxcbenmg28r" path="res://Particles/Electron/electron.tscn" id="2_8dj5j"]
+[ext_resource type="Script" uid="uid://djd221bnsje8o" path="res://MainScene/check_button.gd" id="3_451ce"]
+[ext_resource type="Script" uid="uid://oohk2fag5w2o" path="res://Particles/particle_simulation.gd" id="3_sim"]
 
 [node name="main" type="Node2D" unique_id=852513529]
+script = ExtResource("3_sim")
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=637681497]
 
@@ -13,3 +16,12 @@ direction = Vector2(-1, 0)
 [node name="Electron2" parent="." unique_id=1017393580 instance=ExtResource("2_8dj5j")]
 position = Vector2(-522, 43)
 isAnti = true
+
+[node name="CheckButton" type="CheckButton" parent="." unique_id=798716623]
+offset_left = -514.0
+offset_top = -274.0
+offset_right = -470.0
+offset_bottom = -250.0
+script = ExtResource("3_451ce")
+
+[connection signal="toggled" from="CheckButton" to="CheckButton" method="_on_toggled"]
