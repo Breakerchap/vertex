@@ -1,6 +1,5 @@
 [gd_scene format=3 uid="uid://dpw70vlkqi2x1"]
 
-[ext_resource type="PackedScene" uid="uid://cgnsvbxjh8p8j" path="res://Particles/Photon/photon.tscn" id="1_s3183"]
 [ext_resource type="PackedScene" uid="uid://prxcbenmg28r" path="res://Particles/Electron/electron.tscn" id="2_8dj5j"]
 
 [node name="main" type="Node2D" unique_id=852513529]
@@ -9,6 +8,8 @@
 
 [node name="Electron" parent="." unique_id=975686501 instance=ExtResource("2_8dj5j")]
 position = Vector2(350, 34)
+direction = Vector2(-1, 0)
 
-[node name="Photon" parent="." unique_id=1038709659 instance=ExtResource("1_s3183")]
-position = Vector2(-265, -47)
+[node name="Electron2" parent="." unique_id=1017393580 instance=ExtResource("2_8dj5j")]
+position = Vector2(-522, 43)
+isAnti = true

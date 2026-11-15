@@ -1,9 +1,9 @@
 extends Particle
 
 func _ready() -> void:
+  flavour = Flavour.PHOTON
   size = 0.75
   speed = 600
-  direction = Vector2.RIGHT
   spin = 1.0
   charge = 0
 
