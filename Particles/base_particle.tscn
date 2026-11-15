@@ -1,0 +1,14 @@
+[gd_scene format=3 uid="uid://ct8naifl8mwoj"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_mqq03"]
+radius = 66.1211
+
+[node name="BaseParticle" type="Node2D" unique_id=975686501]
+scale = Vector2(0.5, 0.5)
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=873866100]
+
+[node name="Area2D" type="Area2D" parent="." unique_id=1390850343]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Area2D" unique_id=1944634486]
+shape = SubResource("CircleShape2D_mqq03")

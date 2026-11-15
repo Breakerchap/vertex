@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://cgnsvbxjh8p8j"]
+
+[ext_resource type="PackedScene" uid="uid://ct8naifl8mwoj" path="res://Particles/base_particle.tscn" id="1_gf5l3"]
+[ext_resource type="Script" uid="uid://cy3am0oyddq6j" path="res://Particles/Photon/photon.gd" id="2_w3tgm"]
+[ext_resource type="Texture2D" uid="uid://12v2tv8af5y1" path="res://Particles/Photon/photon.png" id="3_w3tgm"]
+
+[node name="Photon" unique_id=975686501 instance=ExtResource("1_gf5l3")]
+script = ExtResource("2_w3tgm")
+
+[node name="Sprite2D" parent="." index="0" unique_id=873866100]
+texture = ExtResource("3_w3tgm")
