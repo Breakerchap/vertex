@@ -1,4 +1,3 @@
-@abstract
 class_name Particle
 extends Node2D
 
@@ -31,4 +30,4 @@ func _ready() -> void:
       sprite.texture = textures[1]
 
 func advance(delta: float) -> void:
-  position += direction.normalized() * speed * delta
+  global_position += direction.normalized() * speed * delta

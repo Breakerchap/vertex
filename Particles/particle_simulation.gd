@@ -3,9 +3,18 @@ extends Node2D
 
 const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 
+@export var running: bool = true
+
+func _physics_process(delta: float) -> void:
+  if running:
+    step_simulation(delta)
+
 ## Advances every particle and resolves collisions once per explicit call.
 func step_simulation(delta: float) -> void:
   assert(delta >= 0.0, "Simulation delta cannot be negative")
+  for emitter in get_tree().get_nodes_in_group("particle_emitters"):
+    if is_ancestor_of(emitter) and not emitter.is_queued_for_deletion():
+      emitter.step_emission(delta)
   var particles := _particles()
   for particle in particles:
     particle.advance(delta)
