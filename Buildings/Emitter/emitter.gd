@@ -1,11 +1,16 @@
 @tool
 class_name ParticleEmitter
-extends "res://Buildings/building.gd"
+extends "res://Buildings/solid_building.gd"
 
 const EmissionEntry = preload("res://Buildings/Emitter/particle_emission.gd")
 
 const ELECTRON_SCENE: PackedScene = preload("res://Particles/Electron/electron.tscn")
 const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
+
+@export_enum("0 degrees", "45 degrees", "90 degrees", "135 degrees", "180 degrees", "225 degrees", "270 degrees", "315 degrees") var orientation: int = 0:
+  set(value):
+    orientation = posmod(value, 8)
+    rotation = orientation * PI / 4.0
 
 @export var particleFlavour: Global.Flavour = Global.Flavour.ELECTRON
 @export var isAnti: bool = false
@@ -13,7 +18,7 @@ const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 ## Number of particles emitted per second.
 @export_range(0.01, 1000.0, 0.01, "or_greater") var rate: float = 1.0
 @export var sequence: Array[EmissionEntry] = []
-@export var start_on_ready: bool = false
+@export var start_on_ready: bool = true
 
 var _pending: Array[EmissionEntry] = []
 var _time_until_next: float = 0.0
@@ -30,7 +35,7 @@ func _ready() -> void:
     else:
       start_sequence()
 
-## Emit one particle into the enclosing simulation, travelling in world coordinates.
+## Emit one particle into the enclosing simulation, travelling in emitter-local coordinates.
 func emit_particle(flavour: Global.Flavour, anti: bool, travel: Vector2) -> Particle:
   var simulation := _simulation()
   if simulation == null:
@@ -48,9 +53,10 @@ func emit_particle(flavour: Global.Flavour, anti: bool, travel: Vector2) -> Part
     return null
   var particle := scene.instantiate() as Particle
   particle.isAnti = anti
-  particle.direction = travel.normalized()
+  particle.direction = global_transform.basis_xform(travel).normalized()
   simulation.add_child(particle)
-  particle.global_position = global_position
+  var radius := particle.collision_radius * absf(particle.global_scale.x)
+  particle.global_position = collision_shape.global_position + particle.direction * exit_distance(particle.direction, radius)
   return particle
 
 ## Emit one particle using the emitter's inspector settings.

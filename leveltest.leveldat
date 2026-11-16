@@ -1,0 +1,15 @@
+15 x 7; # grid size
+
+# Objectives
+goal: {photon: 2, 4, 6} # required rate for 1, 2, 3 stars respectively
+
+# Equipment already on board
+emitter: {x=1, y=4, E, [electron], rate=3, fixed=rp}; # x cord, y cord (0, 0 is the bottom left), orientation (8-point compass directions), particle fired (array, fires in that order), fire rate / s, fixed rotation and position
+emitter: {x=13, y=4, W, [positron], rate=3, fixed=rp};
+mirror: {x=8, y=6, SW, fixed=p}; 
+detector: {x=8, y=1, [photon], fixed=rp};
+
+# Inventory
+inventory: {wall=1};
+
+# whitespace should be fully ignored

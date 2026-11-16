@@ -30,9 +30,9 @@ func step_simulation(delta: float) -> void:
     if is_ancestor_of(emitter) and not emitter.is_queued_for_deletion():
       emitter.step_emission(delta)
   var particles := _particles()
-  var mirrors := _mirrors()
+  var obstacles := _obstacles()
   for particle in particles:
-    _advance_particle(particle, delta, mirrors)
+    _advance_particle(particle, delta, obstacles)
 
   var consumed: Dictionary = {}
   for i in range(particles.size()):
@@ -53,8 +53,8 @@ func step_simulation(delta: float) -> void:
         consumed[b] = true
         break
 
-## Sweep against mirror surfaces so fast particles cannot pass through between steps.
-func _advance_particle(particle: Particle, delta: float, mirrors: Array[Node]) -> void:
+## Sweep against buildings so fast particles cannot pass through between steps.
+func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node]) -> void:
   var remaining := delta
   # Bound work for a particle trapped between surfaces in a single step.
   for _bounce in range(8):
@@ -64,8 +64,8 @@ func _advance_particle(particle: Particle, delta: float, mirrors: Array[Node]) -
     if motion.is_zero_approx():
       return
     var hit: Dictionary = {}
-    for mirror in mirrors:
-      var candidate: Dictionary = mirror.sweep(particle.global_position, motion, particle.collision_radius * absf(particle.global_scale.x))
+    for obstacle in obstacles:
+      var candidate: Dictionary = obstacle.sweep(particle.global_position, motion, particle.collision_radius * absf(particle.global_scale.x))
       if not candidate.is_empty() and (hit.is_empty() or candidate.fraction < hit.fraction):
         hit = candidate
     if hit.is_empty():
@@ -80,12 +80,16 @@ func _advance_particle(particle: Particle, delta: float, mirrors: Array[Node]) -
     particle.global_position += normal * 0.001
     remaining *= 1.0 - float(hit.fraction)
 
-func _mirrors() -> Array[Node]:
+func _obstacles() -> Array[Node]:
   var result: Array[Node] = []
   for mirror in get_tree().get_nodes_in_group("particle_mirrors"):
     if is_ancestor_of(mirror) and not mirror.is_queued_for_deletion():
       result.append(mirror)
+  for blocker in get_tree().get_nodes_in_group("particle_blockers"):
+    if is_ancestor_of(blocker) and not blocker.is_queued_for_deletion():
+      result.append(blocker)
   return result
+
 func _particles() -> Array[Particle]:
   var result: Array[Particle] = []
   for child in get_children():
