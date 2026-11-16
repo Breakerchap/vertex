@@ -4,6 +4,8 @@
 [ext_resource type="PackedScene" uid="uid://cq7p3hoi07i80" path="res://Buildings/Emitter/emitter.tscn" id="4_emitter"]
 [ext_resource type="PackedScene" uid="uid://jvmyp3jq0dy1" path="res://Buildings/Mirror/mirror.tscn" id="5_mirror"]
 
+[ext_resource type="PackedScene" path="res://MainScene/simulation_controls.tscn" id="6_controls"]
+
 [node name="main" type="Node2D" unique_id=852513529]
 script = ExtResource("3_sim")
 
@@ -18,3 +20,5 @@ start_on_ready = true
 position = Vector2(204.8, -102.4)
 rotation = 5.497787
 orientation = 7
+
+[node name="SimulationControls" parent="." instance=ExtResource("6_controls")]

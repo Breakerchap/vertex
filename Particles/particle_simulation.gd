@@ -4,10 +4,24 @@ extends Node2D
 const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 
 @export var running: bool = true
+@export_range(0.25, 4.0, 0.25) var simulation_speed: float = 1.0
+
+var _accumulated_time: float = 0.0
 
 func _physics_process(delta: float) -> void:
-  if running:
-    step_simulation(delta)
+  if not running:
+    return
+  var step_duration := 1.0 / float(Engine.physics_ticks_per_second)
+  _accumulated_time += delta * maxf(simulation_speed, 0.0)
+  while _accumulated_time + 0.0000001 >= step_duration:
+    _accumulated_time = maxf(0.0, _accumulated_time - step_duration)
+    step_simulation(step_duration)
+
+## Pause and advance one fixed physics tick, independent of the speed setting.
+func step_once() -> void:
+  running = false
+  _accumulated_time = 0.0
+  step_simulation(1.0 / float(Engine.physics_ticks_per_second))
 
 ## Advances every particle and resolves collisions once per explicit call.
 func step_simulation(delta: float) -> void:

@@ -1,0 +1,64 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://MainScene/simulation_controls.gd" id="1_controls"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.09, 0.11, 0.16, 0.94)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.28, 0.33, 0.42, 1)
+corner_radius_top_left = 7
+corner_radius_top_right = 7
+corner_radius_bottom_right = 7
+corner_radius_bottom_left = 7
+
+[node name="SimulationControls" type="CanvasLayer"]
+script = ExtResource("1_controls")
+
+[node name="Panel" type="PanelContainer" parent="."]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 425.0
+offset_bottom = 64.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="Margin" type="MarginContainer" parent="Panel"]
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 7
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 7
+
+[node name="Controls" type="HBoxContainer" parent="Panel/Margin"]
+theme_override_constants/separation = 6
+
+[node name="PlayPause" type="Button" parent="Panel/Margin/Controls"]
+custom_minimum_size = Vector2(66, 0)
+tooltip_text = "Pause or resume the simulation"
+text = "Pause"
+
+[node name="Step" type="Button" parent="Panel/Margin/Controls"]
+tooltip_text = "Pause and advance one simulation step"
+text = "Step"
+
+[node name="Slower" type="Button" parent="Panel/Margin/Controls"]
+custom_minimum_size = Vector2(32, 0)
+tooltip_text = "Slow down the simulation"
+text = "−"
+
+[node name="Speed" type="Label" parent="Panel/Margin/Controls"]
+custom_minimum_size = Vector2(48, 0)
+tooltip_text = "Simulation speed"
+text = "1.0×"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Faster" type="Button" parent="Panel/Margin/Controls"]
+custom_minimum_size = Vector2(32, 0)
+tooltip_text = "Speed up the simulation"
+text = "+"
+
+[node name="ResetSpeed" type="Button" parent="Panel/Margin/Controls"]
+tooltip_text = "Return to normal speed"
+text = "1×"
