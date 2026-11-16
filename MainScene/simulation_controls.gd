@@ -12,7 +12,7 @@ const SPEEDS: Array[float] = [0.25, 0.5, 1.0, 2.0, 4.0]
 
 func _ready() -> void:
   play_pause.pressed.connect(_toggle_running)
-  step_button.pressed.connect(simulation.step_once)
+  step_button.pressed.connect(_step_once)
   slower.pressed.connect(_change_speed.bind(-1))
   faster.pressed.connect(_change_speed.bind(1))
   reset_speed.pressed.connect(_reset_speed)
@@ -22,7 +22,19 @@ func _process(_delta: float) -> void:
   _update_controls()
 
 func _toggle_running() -> void:
+  if simulation.has_method("begin_run") and simulation.completed:
+    return
+  if simulation.has_method("begin_run") and not simulation.simulating:
+    simulation.begin_run()
   simulation.running = not simulation.running
+  _update_controls()
+
+func _step_once() -> void:
+  if simulation.has_method("begin_run") and simulation.completed:
+    return
+  if simulation.has_method("begin_run") and not simulation.simulating:
+    simulation.begin_run()
+  simulation.step_once()
   _update_controls()
 
 func _change_speed(direction: int) -> void:

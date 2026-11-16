@@ -31,3 +31,17 @@ func _ready() -> void:
 
 func advance(delta: float) -> void:
   global_position += direction.normalized() * speed * delta
+
+## Name used by level goals and detectors.
+func level_particle_name() -> String:
+  match flavour:
+    Flavour.PHOTON: return "photon"
+    Flavour.ELECTRON: return "positron" if isAnti else "electron"
+    Flavour.UP, Flavour.DOWN:
+      var name := "up" if flavour == Flavour.UP else "down"
+      match colour:
+        ColourCharge.RED: name += "_r"
+        ColourCharge.GREEN: name += "_g"
+        ColourCharge.BLUE: name += "_b"
+      return name
+  return "unknown"

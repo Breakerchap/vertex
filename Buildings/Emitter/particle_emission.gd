@@ -5,3 +5,5 @@ extends Resource
 @export var flavour: Global.Flavour = Global.Flavour.ELECTRON
 @export var is_anti: bool = false
 @export var direction: Vector2 = Vector2.RIGHT
+
+@export var colour: Particle.ColourCharge = Particle.ColourCharge.NONE

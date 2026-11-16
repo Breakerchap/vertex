@@ -1,0 +1,21 @@
+15 x 7; # grid size
+
+# Goals
+# 1, 2, 3 stars respectively. Must satisfy all in a goal. 
+# if there are multiple goals, can satisfy any one.
+goal: {photon: 1/s, 2/s, 2/s; cost: inf, inf, 40}; # first here is minimun photons produced per second, second is max cost.
+
+# pre-placed buildings
+# coordinates start from the bottom-left as (0, 0)
+emitter: {x=1, y=4, E, [electron], rate=3, fixed=rp}; # positions, direction facing, list of what will be output in that exact repeating order, fire rate per second, fixed rotation and position
+emitter: {x=13, y=4, W, [positron, up_r], rate=3, fixed=rp}; # up_r = up quark coloured red
+mirror: {x=8, y=6, SW, fixed=p}; # fixed position, non-fixed rotation 
+detector: {x=4, y=1, [photon, electron], fixed=rp};
+wall: {x=0..4, y=6..5} # ranges (inclusive)
+
+inventory: {  # what the player can place, each has a cost thats constant across levels
+  mirror=2, 
+  wall=1
+};
+
+# ignore most white-space

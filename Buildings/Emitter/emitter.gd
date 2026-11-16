@@ -5,6 +5,7 @@ extends "res://Buildings/solid_building.gd"
 const EmissionEntry = preload("res://Buildings/Emitter/particle_emission.gd")
 
 const ELECTRON_SCENE: PackedScene = preload("res://Particles/Electron/electron.tscn")
+const QUARK_SCENE: PackedScene = preload("res://Particles/Quark/quark.tscn")
 const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 
 @export_enum("0 degrees", "45 degrees", "90 degrees", "135 degrees", "180 degrees", "225 degrees", "270 degrees", "315 degrees") var orientation: int = 0:
@@ -18,11 +19,13 @@ const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 ## Number of particles emitted per second.
 @export_range(0.01, 1000.0, 0.01, "or_greater") var rate: float = 1.0
 @export var sequence: Array[EmissionEntry] = []
+@export var repeat_sequence: bool = false
 @export var start_on_ready: bool = true
 
 var _pending: Array[EmissionEntry] = []
 var _time_until_next: float = 0.0
 var _continuous: bool = false
+var _sequence_template: Array[EmissionEntry] = []
 
 func _ready() -> void:
   super._ready()
@@ -36,13 +39,14 @@ func _ready() -> void:
       start_sequence()
 
 ## Emit one particle into the enclosing simulation, travelling in emitter-local coordinates.
-func emit_particle(flavour: Global.Flavour, anti: bool, travel: Vector2) -> Particle:
+func emit_particle(flavour: Global.Flavour, anti: bool, travel: Vector2, colour: Particle.ColourCharge = Particle.ColourCharge.NONE) -> Particle:
   var simulation := _simulation()
   if simulation == null:
     push_warning("Emitter must be a child of a ParticleSimulation")
     return null
   var scene: PackedScene
   match flavour:
+    Global.Flavour.UP, Global.Flavour.DOWN: scene = QUARK_SCENE
     Global.Flavour.ELECTRON: scene = ELECTRON_SCENE
     Global.Flavour.PHOTON: scene = PHOTON_SCENE
     _:
@@ -52,6 +56,8 @@ func emit_particle(flavour: Global.Flavour, anti: bool, travel: Vector2) -> Part
     push_warning("Cannot emit a particle with a zero direction")
     return null
   var particle := scene.instantiate() as Particle
+  particle.flavour = flavour as Particle.Flavour
+  particle.colour = colour
   particle.isAnti = anti
   particle.direction = global_transform.basis_xform(travel).normalized()
   simulation.add_child(particle)
@@ -69,6 +75,7 @@ func start_sequence() -> void:
 
 func play_sequence(entries: Array[EmissionEntry]) -> void:
   _continuous = false
+  _sequence_template = entries.duplicate()
   _pending = entries.duplicate()
   _time_until_next = 0.0
 
@@ -98,7 +105,9 @@ func step_emission(delta: float) -> void:
     else:
       var entry: EmissionEntry = _pending.pop_front()
       if entry != null:
-        emit_particle(entry.flavour, entry.is_anti, entry.direction)
+        emit_particle(entry.flavour, entry.is_anti, entry.direction, entry.colour)
+      if _pending.is_empty() and repeat_sequence and not _sequence_template.is_empty():
+        _pending = _sequence_template.duplicate()
     _time_until_next += 1.0 / rate
 
 func _simulation() -> ParticleSimulation:

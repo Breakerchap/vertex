@@ -1,19 +1,24 @@
 class_name ParticleSimulation
 extends Node2D
 
+signal particle_detected(particle_name: String)
+signal simulation_stepped(delta: float)
+
 const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 
 @export var running: bool = true
 @export_range(0.25, 4.0, 0.25) var simulation_speed: float = 1.0
 
 var _accumulated_time: float = 0.0
+var level_bounds_enabled: bool = false
+var level_bounds: Rect2
 
 func _physics_process(delta: float) -> void:
   if not running:
     return
   var step_duration := 1.0 / float(Engine.physics_ticks_per_second)
   _accumulated_time += delta * maxf(simulation_speed, 0.0)
-  while _accumulated_time + 0.0000001 >= step_duration:
+  while running and _accumulated_time + 0.0000001 >= step_duration:
     _accumulated_time = maxf(0.0, _accumulated_time - step_duration)
     step_simulation(step_duration)
 
@@ -33,6 +38,8 @@ func step_simulation(delta: float) -> void:
   var obstacles := _obstacles()
   for particle in particles:
     _advance_particle(particle, delta, obstacles)
+    if level_bounds_enabled and not particle.is_queued_for_deletion() and not level_bounds.has_point(particle.global_position):
+      particle.queue_free()
 
   var consumed: Dictionary = {}
   for i in range(particles.size()):
@@ -52,6 +59,7 @@ func step_simulation(delta: float) -> void:
         consumed[a] = true
         consumed[b] = true
         break
+  simulation_stepped.emit(delta)
 
 ## Sweep against buildings so fast particles cannot pass through between steps.
 func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node]) -> void:
@@ -68,10 +76,13 @@ func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node])
       var candidate: Dictionary = obstacle.sweep(particle.global_position, motion, particle.collision_radius * absf(particle.global_scale.x))
       if not candidate.is_empty() and (hit.is_empty() or candidate.fraction < hit.fraction):
         hit = candidate
+        hit["obstacle"] = obstacle
     if hit.is_empty():
       particle.global_position += motion
       return
     particle.global_position += motion * float(hit.fraction)
+    if hit.obstacle.has_method("accepts") and hit.obstacle.accepts(particle):
+      particle_detected.emit(particle.level_particle_name())
     if particle.flavour != Particle.Flavour.PHOTON or not hit.reflective:
       particle.queue_free()
       return

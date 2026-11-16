@@ -1,8 +1,6 @@
 [gd_scene format=3 uid="uid://dpw70vlkqi2x1"]
 
 [ext_resource type="Script" uid="uid://oohk2fag5w2o" path="res://Particles/particle_simulation.gd" id="3_sim"]
-[ext_resource type="PackedScene" uid="uid://cq7p3hoi07i80" path="res://Buildings/Emitter/emitter.tscn" id="4_emitter"]
-[ext_resource type="PackedScene" uid="uid://jvmyp3jq0dy1" path="res://Buildings/Mirror/mirror.tscn" id="5_mirror"]
 [ext_resource type="PackedScene" path="res://MainScene/simulation_controls.tscn" id="6_controls"]
 
 [node name="main" type="Node2D" unique_id=852513529]
@@ -10,22 +8,4 @@ script = ExtResource("3_sim")
 
 [node name="Camera2D" type="Camera2D" parent="." unique_id=637681497]
 
-[node name="Emitter" parent="." unique_id=1992377071 instance=ExtResource("4_emitter")]
-position = Vector2(-307.2, -102.4)
-rotation = 3.9269907
-orientation = 5
-particleFlavour = 3
-start_on_ready = true
-
-[node name="Mirror" parent="." unique_id=2136123782 instance=ExtResource("5_mirror")]
-position = Vector2(204.8, -102.4)
-rotation = 5.497787
-orientation = 7
-
 [node name="SimulationControls" parent="." unique_id=1634270302 instance=ExtResource("6_controls")]
-
-[node name="Emitter2" parent="." unique_id=1331032538 instance=ExtResource("4_emitter")]
-position = Vector2(-512, -102.4)
-orientation = null
-particleFlavour = 3
-start_on_ready = true

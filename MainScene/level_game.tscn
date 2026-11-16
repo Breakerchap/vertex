@@ -1,0 +1,11 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://MainScene/level_game.gd" id="1"]
+[ext_resource type="PackedScene" path="res://MainScene/simulation_controls.tscn" id="2"]
+
+[node name="LevelGame" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+
+[node name="SimulationControls" parent="." instance=ExtResource("2")]
