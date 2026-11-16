@@ -1,5 +1,6 @@
+@tool
 class_name ParticleEmitter
-extends Node2D
+extends "res://Buildings/building.gd"
 
 const EmissionEntry = preload("res://Buildings/Emitter/particle_emission.gd")
 
@@ -19,6 +20,9 @@ var _time_until_next: float = 0.0
 var _continuous: bool = false
 
 func _ready() -> void:
+  super._ready()
+  if Engine.is_editor_hint():
+    return
   add_to_group("particle_emitters")
   if start_on_ready:
     if sequence.is_empty():

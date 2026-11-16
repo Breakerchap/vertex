@@ -16,17 +16,18 @@ func step_simulation(delta: float) -> void:
     if is_ancestor_of(emitter) and not emitter.is_queued_for_deletion():
       emitter.step_emission(delta)
   var particles := _particles()
+  var mirrors := _mirrors()
   for particle in particles:
-    particle.advance(delta)
+    _advance_particle(particle, delta, mirrors)
 
   var consumed: Dictionary = {}
   for i in range(particles.size()):
     var a: Particle = particles[i]
-    if not is_instance_valid(a) or consumed.has(a):
+    if not is_instance_valid(a) or a.is_queued_for_deletion() or consumed.has(a):
       continue
     for j in range(i + 1, particles.size()):
       var b: Particle = particles[j]
-      if not is_instance_valid(b) or consumed.has(b):
+      if not is_instance_valid(b) or b.is_queued_for_deletion() or consumed.has(b):
         continue
       var radius_a : float = a.collision_radius * absf(a.global_scale.x)
       var radius_b : float = b.collision_radius * absf(b.global_scale.x)
@@ -38,6 +39,39 @@ func step_simulation(delta: float) -> void:
         consumed[b] = true
         break
 
+## Sweep against mirror surfaces so fast particles cannot pass through between steps.
+func _advance_particle(particle: Particle, delta: float, mirrors: Array[Node]) -> void:
+  var remaining := delta
+  # Bound work for a particle trapped between surfaces in a single step.
+  for _bounce in range(8):
+    if remaining <= 0.0:
+      return
+    var motion := particle.direction.normalized() * particle.speed * remaining
+    if motion.is_zero_approx():
+      return
+    var hit: Dictionary = {}
+    for mirror in mirrors:
+      var candidate: Dictionary = mirror.sweep(particle.global_position, motion, particle.collision_radius * absf(particle.global_scale.x))
+      if not candidate.is_empty() and (hit.is_empty() or candidate.fraction < hit.fraction):
+        hit = candidate
+    if hit.is_empty():
+      particle.global_position += motion
+      return
+    particle.global_position += motion * float(hit.fraction)
+    if particle.flavour != Particle.Flavour.PHOTON or not hit.reflective:
+      particle.queue_free()
+      return
+    var normal: Vector2 = hit.normal
+    particle.direction = particle.direction.bounce(normal).normalized()
+    particle.global_position += normal * 0.001
+    remaining *= 1.0 - float(hit.fraction)
+
+func _mirrors() -> Array[Node]:
+  var result: Array[Node] = []
+  for mirror in get_tree().get_nodes_in_group("particle_mirrors"):
+    if is_ancestor_of(mirror) and not mirror.is_queued_for_deletion():
+      result.append(mirror)
+  return result
 func _particles() -> Array[Particle]:
   var result: Array[Particle] = []
   for child in get_children():

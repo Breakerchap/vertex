@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://jvmyp3jq0dy1"]
+
+[ext_resource type="Script" uid="uid://dx4yxltkns5dy" path="res://Buildings/Mirror/mirror.gd" id="1_mirror"]
+[ext_resource type="Texture2D" uid="uid://gott8cc41pdo" path="res://Buildings/Mirror/mirror.png" id="2_ion1i"]
+
+[node name="Mirror" type="Node2D" unique_id=2136123782]
+script = ExtResource("1_mirror")
+
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=1199262961]
+scale = Vector2(0.4, 0.4)
+texture = ExtResource("2_ion1i")
+offset = Vector2(0, -36.5)
