@@ -15,9 +15,10 @@ static func parse(source: String) -> Dictionary:
   if data.width <= 0 or data.height <= 0:
     return {"error": "Grid dimensions must be positive."}
   var blocks := RegEx.new()
-  blocks.compile("(?is)(goal|emitter|mirror|detector|wall|inventory)\\s*:\\s*\\{([^}]*)\\}")
+  blocks.compile("(?is)(goal|emitter|mirror|detector|wall|magnetic_field|magnet|inventory)\\s*:\\s*\\{([^}]*)\\}")
   for block in blocks.search_all(text):
     var kind := block.get_string(1).to_lower()
+    if kind == "magnetic_field": kind = "magnet"
     var body := block.get_string(2)
     if kind == "goal":
       var goal := {}
@@ -46,7 +47,8 @@ static func parse(source: String) -> Dictionary:
         if pair.size() != 2 or not pair[1].strip_edges().is_valid_int() or int(pair[1]) < 0:
           return {"error": "Invalid inventory entry: " + item}
         var name := pair[0].strip_edges().to_lower()
-        if name not in ["mirror", "wall", "emitter", "detector"]:
+        if name == "magnetic_field": name = "magnet"
+        if name not in ["mirror", "wall", "emitter", "detector", "magnet"]:
           return {"error": "Unknown inventory item: " + name}
         data.inventory[name] = int(pair[1])
     else:
@@ -67,6 +69,8 @@ static func parse(source: String) -> Dictionary:
           entry[pair[0].strip_edges().to_lower()] = pair[1].strip_edges().to_lower()
         else:
           entry.facing = token.to_upper()
+      if kind == "magnet" and str(entry.get("polarity", "positive")) not in ["positive", "negative", "+", "-", "+1", "-1", "1", "p", "n"]:
+        return {"error": "Invalid magnetic polarity: " + str(entry.polarity)}
       if not entry.has("x") or not entry.has("y"):
         return {"error": kind + " needs x and y coordinates."}
       if entry.facing not in ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]:

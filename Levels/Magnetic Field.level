@@ -1,0 +1,6 @@
+7 x 7;
+# Guide an electron beam up into the detector.
+goal: {electron: 1/s, 2/s, 2/s; cost: inf, inf, 20};
+emitter: {x=1, y=2, E, [electron], rate=2, fixed=rp};
+detector: {x=3, y=5, [electron], fixed=rp};
+inventory: {magnet=1};

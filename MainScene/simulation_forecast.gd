@@ -7,12 +7,15 @@ static func predict(source: ParticleSimulation, buildings: Array[Node], seconds:
   shadow.level_bounds_enabled = source.level_bounds_enabled
   shadow.level_bounds = source.level_bounds
   source.get_tree().root.add_child(shadow)
+  var field_copies := {}
   for original in buildings:
     var copy = original.duplicate()
     if original.get_meta("kind") == "emitter":
       copy.start_on_ready = false
     shadow.add_child(copy)
     copy.global_position = original.global_position
+    if original.get_meta("kind") == "magnet":
+      field_copies[original] = copy
     if original.get_meta("kind") == "emitter":
       copy._continuous = original._continuous
       copy._pending = original._pending.duplicate()
@@ -30,6 +33,10 @@ static func predict(source: ParticleSimulation, buildings: Array[Node], seconds:
     copy.global_position = original.global_position
     copy.speed = original.speed
     copy.collision_radius = original.collision_radius
+    copy.magnetic_field = field_copies.get(original.magnetic_field)
+    copy.magnetic_last_field = field_copies.get(original.magnetic_last_field)
+    copy.magnetic_remaining = original.magnetic_remaining
+    copy.magnetic_turn_sign = original.magnetic_turn_sign
   var tally := {"counts": {}}
   shadow.particle_detected.connect(func(name: String) -> void:
     var keys := [name, name.split("_")[0]] if "_" in name else [name]

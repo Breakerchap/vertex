@@ -9,3 +9,6 @@ In build mode, select an inventory item and click a free cell. Select a building
 A star tier requires every condition in any one goal to be met. Particle rates count particles accepted by detectors in each five-second window. After two consistent observed windows meet a goal, the game simulates three more windows on an isolated copy of the current state; every observed and predicted window must meet the goal. This is a forecast, not a proof of perpetual production. Results show total detections, the latest observed five-second rate, simulation time, cost, and stars.
 
 During building, green outlines indicate movable buildings, gold indicates fixed-position buildings that can rotate, and red indicates fully fixed buildings. Emitter and detector icons show their configured particle types.
+
+
+Magnetic fields: add `magnet: {x=3, y=2, polarity=positive, fixed=p};` (or `magnetic_field`) and use `inventory: {magnet=1};` for placeable fields. Polarity accepts `positive` or `negative`; select a field and press **R** to flip it unless `fixed=r` is set. Fields cost 20. A centred charged beam turns smoothly by 90 degrees through the field: matching polarity turns clockwise, opposite polarity turns counterclockwise. Neutral particles pass through. Photon contact with an electron or positron absorbs the photon.

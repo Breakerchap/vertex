@@ -12,9 +12,10 @@ const SCENES := {
   "mirror": preload("res://Buildings/Mirror/mirror.tscn"),
   "wall": preload("res://Buildings/Wall/wall.tscn"),
   "detector": preload("res://Buildings/Detector/detector.tscn"),
+  "magnet": preload("res://Buildings/MagneticField/magnetic_field.tscn"),
 }
 # Costs are shared by all levels, as described by the level format.
-const COSTS := {"mirror": 10, "wall": 5, "emitter": 40, "detector": 30}
+const COSTS := {"mirror": 10, "wall": 5, "emitter": 40, "detector": 30, "magnet": 20}
 const DIRECTIONS := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
 const WINDOW_SECONDS: float = 5.0
 const OBSERVED_WINDOWS: int = 2
@@ -109,13 +110,13 @@ func _create_hud() -> void:
   var actions := HBoxContainer.new()
   actions.add_theme_constant_override("separation", 6)
   column.add_child(actions)
-  _button(actions, "Rotate [R]", _rotate_selected)
+  _button(actions, "Rotate / polarity [R]", _rotate_selected)
   _button(actions, "Remove [Del]", _remove_selected)
   stop_button = _button(actions, "Back to build [B]", stop_to_build)
   _button(actions, "Reset level [X]", reset_level)
   _button(actions, "Level select", _return_to_select)
   instructions = Label.new()
-  instructions.text = "Green: movable   |   Gold: rotate only   |   Red: fixed    •    Select a building to move/rotate; right-click to remove."
+  instructions.text = "Green: movable   |   Gold: rotate / polarity only   |   Red: fixed    •    Select a building to move/rotate; right-click to remove."
   instructions.add_theme_font_size_override("font_size", 12)
   column.add_child(instructions)
   results = AcceptDialog.new()
@@ -178,6 +179,8 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
   if entry.kind in ["mirror", "emitter"]:
     var direction := DIRECTIONS.find(entry.get("facing", "E"))
     building.orientation = (direction + 2) % 8 if entry.kind == "mirror" else direction
+  if entry.kind == "magnet":
+    building.polarity = -1 if str(entry.get("polarity", "positive")) in ["negative", "-", "-1", "n"] else 1
   if entry.kind == "emitter":
     building.start_on_ready = false
     building.rate = float(entry.get("rate", 1.0))
@@ -273,7 +276,10 @@ func _click_cell(cell: Vector2i, button_index: int) -> void:
 func _rotate_selected() -> void:
   if simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_rotation"):
     return
-  if selected_building.get_meta("kind") in ["emitter", "mirror"]:
+  if selected_building.get_meta("kind") == "magnet":
+    selected_building.polarity *= -1
+    queue_redraw()
+  elif selected_building.get_meta("kind") in ["emitter", "mirror"]:
     selected_building.orientation = (selected_building.orientation + 1) % 8
     queue_redraw()
 
@@ -303,8 +309,16 @@ func _refresh_ui() -> void:
   if not is_instance_valid(status_label): return
   var title := Global.selected_level.get_file().trim_suffix(".level")
   var mode := "SIMULATING" if simulating else "BUILD"
-  var recent_rate := float(windows.back().get("photon", 0)) / WINDOW_SECONDS if not windows.is_empty() else 0.0
-  status_label.text = "%s   |   %s   |   Cost: %d   |   Photons: %d   |   Last 5s: %.2f / s" % [title, mode, cost, int(total_counts.get("photon", 0)), recent_rate]
+  var tracked := "photon"
+  for goal in level.goals:
+    for key in goal:
+      if key != "cost":
+        tracked = key
+        break
+    if tracked != "photon" or goal.has("photon"):
+      break
+  var recent_rate := float(windows.back().get(tracked, 0)) / WINDOW_SECONDS if not windows.is_empty() else 0.0
+  status_label.text = "%s   |   %s   |   Cost: %d   |   %s: %d   |   Last 5s: %.2f / s" % [title, mode, cost, tracked.capitalize(), int(total_counts.get(tracked, 0)), recent_rate]
   stop_button.disabled = not simulating
   for child in inventory_box.get_children():
     inventory_box.remove_child(child)

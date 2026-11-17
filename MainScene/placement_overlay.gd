@@ -10,7 +10,7 @@ func _draw() -> void:
   for building in game.buildings:
     if not is_instance_valid(building): continue
     var fixed_position: bool = building.get_meta("fixed_position")
-    var can_rotate: bool = building.get_meta("kind") in ["emitter", "mirror"] and not building.get_meta("fixed_rotation")
+    var can_rotate: bool = building.get_meta("kind") in ["emitter", "mirror", "magnet"] and not building.get_meta("fixed_rotation")
     var colour := Color("66d8b2") # movable
     if fixed_position:
       colour = Color("f4c55d") if can_rotate else Color("f17f81")

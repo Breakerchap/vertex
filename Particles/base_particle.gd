@@ -14,6 +14,12 @@ var size: float = 1.0
 @export var textures: Array[Texture2D]
 @export var direction: Vector2 = Vector2.RIGHT
 @export var collision_radius: float = 33.0
+
+# Magnetic turns retain their progress across fixed simulation steps.
+var magnetic_field: Node2D = null
+var magnetic_last_field: Node2D = null
+var magnetic_remaining: float = 0.0
+var magnetic_turn_sign: float = 0.0
 @onready var sprite: Sprite2D = $Sprite2D
 
 func _ready() -> void:
