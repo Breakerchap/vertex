@@ -4,7 +4,7 @@ The level selector reads every `.level` file in this directory. See `Example Lev
 
 In build mode, select an inventory item and click a free cell. Select a building and click a free cell to move it, press **R** to rotate, or right-click / press **Delete** to remove it. Fixed buildings obey their level flags. Inventory placement costs are shared across levels: wall 5, mirror 10, detector 30, and emitter 40; removing an inventory building refunds its cost. Pre-placed buildings are free.
 
-**Play/Pause** controls the simulation and **Step** advances one fixed simulation tick. **Space** toggles play, **.** steps, **B** stops and returns to build mode while keeping the layout, and **X** resets the level to its initial layout. The speed controls do not alter the step size.
+**Play/Pause** controls the simulation and **Step** pauses and advances 15 fixed simulation ticks smoothly, one per physics frame. **Space** toggles play, **.** advances 15 ticks, **B** stops and returns to build mode while keeping the layout, and **X** resets the level to its initial layout. The speed controls do not alter the step size.
 
 A star tier requires every condition in any one goal to be met. Particle rates count particles accepted by detectors in each five-second window. After two consistent observed windows meet a goal, the game simulates three more windows on an isolated copy of the current state; every observed and predicted window must meet the goal. This is a forecast, not a proof of perpetual production. Results show total detections, the latest observed five-second rate, simulation time, cost, and stars.
 

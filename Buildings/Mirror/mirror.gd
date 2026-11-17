@@ -21,7 +21,7 @@ func _ready() -> void:
 
 ## Sweeps a particle circle against the mirror's rectangular body.
 ## Only the straight front face is reflective; the back and ends absorb.
-func sweep(from: Vector2, motion: Vector2, particle_radius: float) -> Dictionary:
+func sweep(from: Vector2, motion: Vector2, particle_radius: float, center_reflection: bool = false) -> Dictionary:
   var tangent := global_transform.x.normalized()
   var normal := Vector2(-tangent.y, tangent.x)
   var half_width := HALF_WIDTH * global_transform.x.length()
@@ -37,7 +37,10 @@ func sweep(from: Vector2, motion: Vector2, particle_radius: float) -> Dictionary
   # Check the four straight faces expanded by the particle radius.
   if absf(move.y) > EPSILON:
     for side in [-1.0, 1.0]:
-      var t: float = (side * (half_height + radius) - start.y) / move.y
+      # Photons reflect when their centre reaches the mirror centre line.
+      # Other particles still collide with the visible front of the body.
+      var face_y: float = 0.0 if center_reflection and side < 0.0 else side * (half_height + radius)
+      var t: float = (face_y - start.y) / move.y
       var x: float = start.x + move.x * t
       var face_normal := Vector2(0.0, side)
       if t >= 0.0 and t <= 1.0 and t < best_t and absf(x) <= half_width and move.dot(face_normal) < -EPSILON:
@@ -89,7 +92,8 @@ func sweep(from: Vector2, motion: Vector2, particle_radius: float) -> Dictionary
         if distances[i] < distances[nearest]:
           nearest = i
       contact_normal = normals[nearest]
-    if move.dot(contact_normal) < -EPSILON:
+    var approaching_center := center_reflection and contact_normal.is_equal_approx(Vector2.UP) and start.y <= 0.0 and move.y > EPSILON
+    if move.dot(contact_normal) < -EPSILON and not approaching_center:
       best_t = 0.0
       best_normal = contact_normal
       reflective = contact_normal.is_equal_approx(Vector2.UP)
@@ -97,3 +101,7 @@ func sweep(from: Vector2, motion: Vector2, particle_radius: float) -> Dictionary
   if best_t == INF:
     return {}
   return {"fraction": best_t, "normal": (tangent * best_normal.x + normal * best_normal.y).normalized(), "reflective": reflective}
+
+## Photons use the centre line while retaining physical collisions on the back and ends.
+func sweep_photon(from: Vector2, motion: Vector2, particle_radius: float) -> Dictionary:
+  return sweep(from, motion, particle_radius, true)

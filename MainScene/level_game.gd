@@ -144,6 +144,7 @@ func _button(parent: Node, title: String, action: Callable) -> Button:
 
 func _load_initial_board() -> void:
   running = false
+  cancel_pending_steps()
   simulating = false
   completed = false
   _clear_particles()
@@ -204,6 +205,7 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
     var preview = Node2D.new()
     preview.set_script(PREVIEW)
     preview.z_index = 2
+    preview.emitter_preview = entry.kind == "emitter"
     building.add_child(preview)
     var names: Array[String] = []
     names.assign(entry.get("particles", ["photon"] if entry.kind == "detector" else ["electron"]))
@@ -329,6 +331,7 @@ func begin_run() -> void:
 
 func stop_to_build() -> void:
   running = false
+  cancel_pending_steps()
   simulating = false
   _accumulated_time = 0.0
   for building in buildings:
@@ -381,6 +384,7 @@ func _on_simulation_stepped(delta: float) -> void:
   if stars > 0:
     completed = true
     running = false
+    cancel_pending_steps()
     var stats := ""
     var latest: Dictionary = windows.back()
     for kind in total_counts:

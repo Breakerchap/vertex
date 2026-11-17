@@ -39,7 +39,7 @@ tooltip_text = "Pause or resume the simulation"
 text = "Pause"
 
 [node name="Step" type="Button" parent="Panel/Margin/Controls"]
-tooltip_text = "Pause and advance one simulation step"
+tooltip_text = "Pause and smoothly advance 15 simulation steps"
 text = "Step"
 
 [node name="Slower" type="Button" parent="Panel/Margin/Controls"]

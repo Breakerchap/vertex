@@ -10,21 +10,36 @@ const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 @export_range(0.25, 4.0, 0.25) var simulation_speed: float = 1.0
 
 var _accumulated_time: float = 0.0
+var _pending_steps: int = 0
 var level_bounds_enabled: bool = false
 var level_bounds: Rect2
 
 func _physics_process(delta: float) -> void:
   if not running:
+    if _pending_steps > 0:
+      _pending_steps -= 1
+      step_simulation(1.0 / float(Engine.physics_ticks_per_second))
     return
+  _pending_steps = 0
   var step_duration := 1.0 / float(Engine.physics_ticks_per_second)
   _accumulated_time += delta * maxf(simulation_speed, 0.0)
   while running and _accumulated_time + 0.0000001 >= step_duration:
     _accumulated_time = maxf(0.0, _accumulated_time - step_duration)
     step_simulation(step_duration)
 
+## Queue fixed-size steps, advancing one per physics frame while paused.
+func request_steps(count: int) -> void:
+  running = false
+  _accumulated_time = 0.0
+  _pending_steps += maxi(count, 0)
+
+func cancel_pending_steps() -> void:
+  _pending_steps = 0
+
 ## Pause and advance one fixed physics tick, independent of the speed setting.
 func step_once() -> void:
   running = false
+  cancel_pending_steps()
   _accumulated_time = 0.0
   step_simulation(1.0 / float(Engine.physics_ticks_per_second))
 
@@ -73,7 +88,12 @@ func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node])
       return
     var hit: Dictionary = {}
     for obstacle in obstacles:
-      var candidate: Dictionary = obstacle.sweep(particle.global_position, motion, particle.collision_radius * absf(particle.global_scale.x))
+      var radius := particle.collision_radius * absf(particle.global_scale.x)
+      var candidate: Dictionary
+      if particle.flavour == Particle.Flavour.PHOTON and obstacle.has_method("sweep_photon"):
+        candidate = obstacle.sweep_photon(particle.global_position, motion, radius)
+      else:
+        candidate = obstacle.sweep(particle.global_position, motion, radius)
       if not candidate.is_empty() and (hit.is_empty() or candidate.fraction < hit.fraction):
         hit = candidate
         hit["obstacle"] = obstacle
@@ -88,7 +108,7 @@ func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node])
       return
     var normal: Vector2 = hit.normal
     particle.direction = particle.direction.bounce(normal).normalized()
-    particle.global_position += normal * 0.001
+    particle.global_position += particle.direction * 0.001
     remaining *= 1.0 - float(hit.fraction)
 
 func _obstacles() -> Array[Node]:

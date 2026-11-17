@@ -1,5 +1,6 @@
 extends CanvasLayer
 
+const STEP_COUNT: int = 15
 const SPEEDS: Array[float] = [0.25, 0.5, 1.0, 2.0, 4.0]
 
 @onready var simulation: ParticleSimulation = get_parent() as ParticleSimulation
@@ -26,6 +27,7 @@ func _toggle_running() -> void:
     return
   if simulation.has_method("begin_run") and not simulation.simulating:
     simulation.begin_run()
+  simulation.cancel_pending_steps()
   simulation.running = not simulation.running
   _update_controls()
 
@@ -34,7 +36,7 @@ func _step_once() -> void:
     return
   if simulation.has_method("begin_run") and not simulation.simulating:
     simulation.begin_run()
-  simulation.step_once()
+  simulation.request_steps(STEP_COUNT)
   _update_controls()
 
 func _change_speed(direction: int) -> void:
