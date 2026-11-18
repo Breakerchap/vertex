@@ -225,8 +225,15 @@ func _build_ui() -> void:
   settings_dialog.title = "Level settings"
   settings_dialog.min_size = Vector2i(580, 480)
   add_child(settings_dialog)
+  var settings_root := VBoxContainer.new()
+  settings_dialog.add_child(settings_root)
+  var settings_scroll := ScrollContainer.new()
+  settings_scroll.custom_minimum_size = Vector2(540, 380)
+  settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+  settings_root.add_child(settings_scroll)
   var settings_column := VBoxContainer.new()
-  settings_dialog.add_child(settings_column)
+  settings_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  settings_scroll.add_child(settings_column)
   settings_column.add_child(_label("Level title"))
   title_input = LineEdit.new()
   title_input.placeholder_text = "e.g. First Contact"
@@ -236,13 +243,9 @@ func _build_ui() -> void:
   hint_input.placeholder_text = "e.g. Guide a photon into the detector"
   settings_column.add_child(hint_input)
   settings_column.add_child(_label("Goals: each solution must satisfy all its conditions"))
-  var goals_scroll := ScrollContainer.new()
-  goals_scroll.custom_minimum_size.y = 160
-  goals_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-  settings_column.add_child(goals_scroll)
   goal_rows = VBoxContainer.new()
   goal_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  goals_scroll.add_child(goal_rows)
+  settings_column.add_child(goal_rows)
   _button(settings_column, "+ Add alternative solution", func() -> void: _add_goal_group())
   settings_column.add_child(_label("Starting inventory"))
   for kind in CATALOG.SCENES:
@@ -256,8 +259,8 @@ func _build_ui() -> void:
     count.max_value = 999
     inventory_fields[kind] = count
   settings_error = _label("")
-  settings_column.add_child(settings_error)
-  _button(settings_column, "Apply settings", _apply_settings)
+  settings_root.add_child(settings_error)
+  _button(settings_root, "Apply settings", _apply_settings)
   file_dialog = FileDialog.new()
   file_dialog.access = FileDialog.ACCESS_FILESYSTEM
   file_dialog.filters = PackedStringArray(["*.level ; Level files"])
@@ -497,6 +500,20 @@ func _build_visual_form() -> void:
   property_error.text = ""
   if selected_block < 0: return
   var entry: Dictionary = blocks[selected_block].entries[0]
+  var x_field := SpinBox.new()
+  x_field.min_value = 0
+  x_field.max_value = parsed.width - 1
+  x_field.value = selected_cell.x
+  _visual_row("X", x_field)
+  visual_fields.x = x_field
+  x_field.value_changed.connect(func(_value: float) -> void: _apply_visual_properties.call_deferred())
+  var y_field := SpinBox.new()
+  y_field.min_value = 0
+  y_field.max_value = parsed.height - 1
+  y_field.value = selected_cell.y
+  _visual_row("Y", y_field)
+  visual_fields.y = y_field
+  y_field.value_changed.connect(func(_value: float) -> void: _apply_visual_properties.call_deferred())
   if entry.kind in ["mirror", "emitter"]:
     var direction := OptionButton.new()
     for name in ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]: direction.add_item(name)
@@ -549,7 +566,11 @@ func _build_visual_form() -> void:
 func _apply_visual_properties() -> void:
   if selected_block < 0: return
   var entry: Dictionary = blocks[selected_block].entries[0]
-  var parts: PackedStringArray = ["x=%d" % selected_cell.x, "y=%d" % selected_cell.y]
+  var destination := Vector2i(int(visual_fields.x.value), int(visual_fields.y.value))
+  if destination != selected_cell and game._building_at(destination) != null:
+    property_error.text = "Destination cell is occupied."
+    return
+  var parts: PackedStringArray = ["x=%d" % destination.x, "y=%d" % destination.y]
   if visual_fields.has("facing"): parts.append(visual_fields.facing.get_item_text(visual_fields.facing.selected))
   if visual_fields.has("polarity"): parts.append("-" if visual_fields.polarity.selected == 1 else "+")
   if visual_fields.has("particles"): parts.append("[" + visual_fields.particles.text + "]")
@@ -565,9 +586,8 @@ func _apply_visual_properties() -> void:
   if candidate.has("error"):
     property_error.text = candidate.error
     return
-  var cell := selected_cell
   _replace_selected_cell(replacement)
-  _select_at(cell)
+  _select_at(destination)
 
 func _clear_property_form() -> void:
   property_fields.clear()

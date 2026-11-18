@@ -58,6 +58,7 @@ var selection_label: Label
 var status_label: Label
 var goals_label: Label
 var measurement_label: Label
+var diagnostic_legend: Label
 var measurement_bar: ProgressBar
 var rotate_button: Button
 var configure_button: Button
@@ -208,8 +209,14 @@ func _create_hud() -> void:
   diagnostics.toggled.connect(func(enabled: bool) -> void:
     diagnostics_enabled = enabled
     if is_instance_valid(diagnostic_overlay): diagnostic_overlay.queue_redraw()
+    _refresh_ui()
   )
   actions.add_child(diagnostics)
+  diagnostic_legend = Label.new()
+  diagnostic_legend.text = "Blue: reflect   ·   Green: detect   ·   Gold: annihilate   ·   Red: absorb/exit   ·   Purple: field"
+  diagnostic_legend.add_theme_font_size_override("font_size", 12)
+  diagnostic_legend.hide()
+  column.add_child(diagnostic_legend)
   config_dialog = AcceptDialog.new()
   config_dialog.title = "Building settings"
   config_dialog.min_size = Vector2i(400, 160)
@@ -547,6 +554,7 @@ func _refresh_ui() -> void:
     var rate := float(_goal_count(window_counts, tracked)) / maxf(window_time, 0.001)
     measurement_label.text = "Measuring %d/2 stable windows  |  Current %s: %.2f/s  |  %.1f/5s" % [mini(windows.size() + 1, 2), tracked, rate, window_time]
   measurement_bar.value = window_time if simulating else 0.0
+  diagnostic_legend.visible = diagnostics_enabled
   var has_selection := is_instance_valid(selected_building)
   rotate_button.disabled = simulating or not has_selection
   remove_button.disabled = simulating or not has_selection
