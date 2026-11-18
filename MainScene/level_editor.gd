@@ -39,6 +39,8 @@ var visual_form: VBoxContainer
 var settings_error: Label
 var property_error: Label
 var settings_dialog: AcceptDialog
+var title_input: LineEdit
+var hint_input: LineEdit
 var goal_rows: VBoxContainer
 var inventory_fields := {}
 var updating := false
@@ -222,7 +224,15 @@ func _build_ui() -> void:
   add_child(settings_dialog)
   var settings_column := VBoxContainer.new()
   settings_dialog.add_child(settings_column)
-  settings_column.add_child(_label("Goals ? target and thresholds for 1, 2 and 3 stars"))
+  settings_column.add_child(_label("Level title"))
+  title_input = LineEdit.new()
+  title_input.placeholder_text = "e.g. First Contact"
+  settings_column.add_child(title_input)
+  settings_column.add_child(_label("Short objective hint (avoid spoilers)"))
+  hint_input = LineEdit.new()
+  hint_input.placeholder_text = "e.g. Guide a photon into the detector"
+  settings_column.add_child(hint_input)
+  settings_column.add_child(_label("Goals: each solution must satisfy all its conditions"))
   var goals_scroll := ScrollContainer.new()
   goals_scroll.custom_minimum_size.y = 160
   goals_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -230,7 +240,7 @@ func _build_ui() -> void:
   goal_rows = VBoxContainer.new()
   goal_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   goals_scroll.add_child(goal_rows)
-  _button(settings_column, "+ Add goal alternative", func() -> void: _add_goal_row())
+  _button(settings_column, "+ Add alternative solution", func() -> void: _add_goal_group())
   settings_column.add_child(_label("Starting inventory"))
   for kind in CATALOG.SCENES:
     var row := HBoxContainer.new()
@@ -331,7 +341,10 @@ func _source_changed() -> void:
   game.level = parsed
   game._load_initial_board()
   game._fit_camera()
-  status.text = (path.get_file() if not path.is_empty() else "Untitled") + ("  • unsaved" if source.text != saved_text else "")
+  var warnings := _level_warnings(parsed)
+  status.text = (path.get_file() if not path.is_empty() else "Untitled") + ("  • unsaved" if source.text != saved_text else "") + ("  • %d warning(s)" % warnings.size() if not warnings.is_empty() else "")
+  status.tooltip_text = "\n".join(warnings)
+  source_error.text = "\n".join(warnings)
 
 # Mask comments without changing offsets so editing preserves the original text.
 func _index_blocks() -> void:
@@ -613,86 +626,158 @@ func _delete_selected() -> void:
   if selected_block < 0: return
   _replace_selected_cell("")
 
-func _add_goal_row(group: int = 1, target: String = "electron", values: Array = [1.0, 2.0, 3.0]) -> void:
+# Goal panels express OR between alternatives and AND within each one.
+func _add_goal_group(conditions: Dictionary = {}) -> void:
+  var group := PanelContainer.new()
+  goal_rows.add_child(group)
+  var column := VBoxContainer.new()
+  group.add_child(column)
+  var header := HBoxContainer.new()
+  column.add_child(header)
+  header.add_child(_label("Solution %d  (all conditions)" % goal_rows.get_child_count()))
+  var add := Button.new()
+  add.text = "+ Condition"
+  add.pressed.connect(func() -> void: _add_goal_row(group.get_meta("rows")))
+  header.add_child(add)
+  var remove := Button.new()
+  remove.text = "Remove solution"
+  remove.pressed.connect(func() -> void: group.queue_free())
+  header.add_child(remove)
+  var rows := VBoxContainer.new()
+  column.add_child(rows)
+  group.set_meta("rows", rows)
+  if conditions.is_empty():
+    _add_goal_row(rows)
+  else:
+    for target in conditions:
+      _add_goal_row(rows, str(target), conditions[target])
+
+func _add_goal_row(parent: VBoxContainer, target: String = "electron", values: Array = [1.0, 2.0, 3.0]) -> void:
   var row := HBoxContainer.new()
-  goal_rows.add_child(row)
-  var group_input := SpinBox.new()
-  group_input.min_value = 1
-  group_input.max_value = 99
-  group_input.value = group
-  group_input.custom_minimum_size.x = 65
-  group_input.tooltip_text = "Goals with the same alternative number must all be met"
-  row.add_child(group_input)
+  parent.add_child(row)
   var target_input := LineEdit.new()
   target_input.text = target
   target_input.placeholder_text = "Particle or cost"
   target_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  target_input.tooltip_text = "Particle, cost, or a bracketed particle expression"
+  target_input.tooltip_text = "Use a particle, cost, or [particle OR particle] expression"
   row.add_child(target_input)
   for value in values:
     var field := LineEdit.new()
     field.text = "inf" if is_inf(float(value)) else str(value)
-    field.custom_minimum_size.x = 65
+    field.custom_minimum_size.x = 56
+    field.tooltip_text = "Threshold for one, two or three stars (in that order)"
     row.add_child(field)
-  _button(row, "Remove", func() -> void: row.queue_free())
+  _button(row, "×", func() -> void: row.queue_free())
 
 func _open_settings() -> void:
   if parsed.has("error") or parsed.is_empty(): return
-  for row in goal_rows.get_children():
-    goal_rows.remove_child(row)
-    row.queue_free()
+  for group in goal_rows.get_children():
+    goal_rows.remove_child(group)
+    group.queue_free()
   settings_error.text = ""
-  var group := 1
+  title_input.text = str(parsed.get("title", ""))
+  hint_input.text = str(parsed.get("hint", ""))
   for goal in parsed.goals:
-    for target in goal:
-      _add_goal_row(group, str(target), goal[target])
-    group += 1
+    _add_goal_group(goal)
   for kind in inventory_fields:
     inventory_fields[kind].value = int(parsed.inventory.get(kind, 0))
   settings_dialog.popup_centered()
 
 func _apply_settings() -> void:
-  var groups := {}
-  for row in goal_rows.get_children():
-    if row.is_queued_for_deletion(): continue
-    var group := int(row.get_child(0).value)
-    var target: String = row.get_child(1).text.strip_edges()
-    if target.is_empty():
-      settings_error.text = "Each goal needs a target."
-      return
-    if not groups.has(group): groups[group] = []
-    var values: PackedStringArray = []
-    for i in range(2, 5): values.append(row.get_child(i).text.strip_edges())
-    groups[group].append(target + ": " + ", ".join(values))
-  if groups.is_empty():
-    settings_error.text = "Add at least one goal."
-    return
   var declarations := ""
-  var keys: Array = groups.keys()
-  keys.sort()
-  for key in keys: declarations += "goal: {" + "; ".join(groups[key]) + "};\n"
-  var inventory: PackedStringArray = []
+  var nonempty := 0
+  for group in goal_rows.get_children():
+    if group.is_queued_for_deletion(): continue
+    var clauses := PackedStringArray()
+    var rows: VBoxContainer = group.get_meta("rows")
+    for row in rows.get_children():
+      if row.is_queued_for_deletion(): continue
+      var target: String = row.get_child(0).text.strip_edges()
+      if target.is_empty():
+        settings_error.text = "Each condition needs a target."
+        return
+      var values := PackedStringArray()
+      for i in range(1, 4): values.append(row.get_child(i).text.strip_edges())
+      clauses.append(target + ": " + ", ".join(values))
+    if clauses.is_empty(): continue
+    nonempty += 1
+    declarations += "goal: {" + "; ".join(clauses) + "};\n"
+  if nonempty == 0:
+    settings_error.text = "Add at least one condition."
+    return
+  var inventory_parts := PackedStringArray()
   for kind in inventory_fields:
     var count := int(inventory_fields[kind].value)
-    if count > 0: inventory.append("%s=%d" % [kind, count])
-  if not inventory.is_empty(): declarations += "inventory: {" + ", ".join(inventory) + "};\n"
+    if count > 0: inventory_parts.append("%s=%d" % [kind, count])
+  if not inventory_parts.is_empty():
+    declarations += "inventory: {" + ", ".join(inventory_parts) + "};\n"
   var lines := PackedStringArray()
   for line in source.text.split("\n"):
+    var trimmed := line.strip_edges().to_lower()
+    if trimmed.begins_with("title:") or trimmed.begins_with("hint:"):
+      continue
     var comment := line.find("#")
     lines.append(line if comment < 0 else line.substr(0, comment) + " ".repeat(line.length() - comment))
   var regex := RegEx.new()
   regex.compile("(?is)\\b(goal|inventory)\\s*:\\s*\\{[^}]*\\}\\s*;?")
   var matches := regex.search_all("\n".join(lines))
   var updated := source.text
+  # Remove metadata lines from the original while retaining unrelated comments.
+  var metadata_lines := PackedStringArray()
+  for line in updated.split("\n"):
+    var trimmed := line.strip_edges().to_lower()
+    if not trimmed.begins_with("title:") and not trimmed.begins_with("hint:"):
+      metadata_lines.append(line)
+  updated = "\n".join(metadata_lines)
+  # Recompute source offsets after metadata removal.
+  lines.clear()
+  for line in updated.split("\n"):
+    var comment := line.find("#")
+    lines.append(line if comment < 0 else line.substr(0, comment) + " ".repeat(line.length() - comment))
+  matches = regex.search_all("\n".join(lines))
   for i in range(matches.size() - 1, -1, -1):
     updated = updated.substr(0, matches[i].get_start()) + updated.substr(matches[i].get_end())
-  updated += "\n" + declarations
+  var metadata := ""
+  if not title_input.text.strip_edges().is_empty():
+    metadata += "title: " + title_input.text.strip_edges().replace(";", ",").replace("\n", " ") + ";\n"
+  if not hint_input.text.strip_edges().is_empty():
+    metadata += "hint: " + hint_input.text.strip_edges().replace(";", ",").replace("\n", " ") + ";\n"
+  updated = metadata + updated + "\n" + declarations
   var result: Dictionary = PARSER.parse(updated)
   if result.has("error"):
-    settings_error.text = result.error
+    settings_error.text = str(result.error)
     return
   _set_source(updated)
   settings_dialog.hide()
+
+func _level_warnings(data: Dictionary) -> PackedStringArray:
+  var warnings := PackedStringArray()
+  if data.buildings.is_empty():
+    warnings.append("There are no buildings on the board.")
+  var has_emitter := false
+  var has_detector := false
+  var adjustable := false
+  for entry in data.buildings:
+    if entry.kind == "emitter": has_emitter = true
+    if entry.kind == "detector": has_detector = true
+    var flags := str(entry.get("fixed", ""))
+    var lock_rotation := "c" if entry.kind == "magnet" else "r"
+    if not "p" in flags or (entry.kind in ["mirror", "emitter", "magnet"] and not lock_rotation in flags):
+      adjustable = true
+  if not has_emitter: warnings.append("The board has no particle emitters.")
+  if not has_detector: warnings.append("The board has no detector for output goals.")
+  for kind in data.inventory:
+    if int(data.inventory[kind]) > 0: adjustable = true
+  if not adjustable: warnings.append("The player cannot change any building and has no inventory.")
+  for goal in data.goals:
+    for key in goal:
+      var values: Array = goal[key]
+      if key == "cost":
+        if float(values[1]) > float(values[0]) or float(values[2]) > float(values[1]):
+          warnings.append("Higher star tiers should have equal or lower cost limits.")
+      elif float(values[1]) < float(values[0]) or float(values[2]) < float(values[1]):
+        warnings.append("Higher star tiers should have equal or higher output targets.")
+  return warnings
 
 func _request_action(action: String) -> void:
   pending_action = action
