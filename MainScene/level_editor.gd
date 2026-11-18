@@ -9,8 +9,12 @@ const NEW_LEVEL := "9 x 9;\n\ngoal: {electron: 1/s, 2/s, 3/s};\n\n"
 var source: TextEdit
 var game
 var editor_panel: PanelContainer
+var inspector_panel: PanelContainer
+var inspector_heading: Label
+var test_game: Node2D
 var inspector_dialog: AcceptDialog
 var source_dialog: AcceptDialog
+var source_error: Label
 var status: Label
 var selected_label: Label
 var properties: LineEdit
@@ -38,18 +42,34 @@ var settings_dialog: AcceptDialog
 var goal_rows: VBoxContainer
 var inventory_fields := {}
 var updating := false
+var source_snapshot := ""
+var undo_stack: Array[String] = []
+var redo_stack: Array[String] = []
+var restoring_source := false
 var parsed: Dictionary = {}
 
 func _ready() -> void:
   get_tree().auto_accept_quit = false
   _build_ui()
   _set_source(NEW_LEVEL)
+  undo_stack.clear()
+  source_snapshot = source.text
 
 func _exit_tree() -> void:
   get_tree().auto_accept_quit = true
 
 func _unhandled_key_input(event: InputEvent) -> void:
+  if is_instance_valid(test_game): return
   if event is InputEventKey and event.pressed and not event.echo and not game.simulating:
+    if event.ctrl_pressed:
+      if event.keycode == KEY_S:
+        if event.shift_pressed: _save_as()
+        else: _save()
+      elif event.keycode == KEY_Z:
+        if event.shift_pressed: _redo_editor()
+        else: _undo_editor()
+      elif event.keycode == KEY_Y: _redo_editor()
+      return
     if event.keycode == KEY_R: _rotate_block()
     elif event.keycode == KEY_DELETE: _delete_selected()
 
@@ -91,6 +111,9 @@ func _build_ui() -> void:
   _button(bar, "Open...", func() -> void: _request_action("open"))
   _button(bar, "Save", _save)
   _button(bar, "Save as...", _save_as)
+  _button(bar, "Undo", _undo_editor)
+  _button(bar, "Redo", _redo_editor)
+  _button(bar, "Playtest", _start_playtest)
   _button(bar, "Level select", func() -> void: _request_action("back"))
   status = Label.new()
   status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -128,9 +151,34 @@ func _build_ui() -> void:
   _button(controls, "Properties...", func() -> void: inspector_dialog.popup_centered())
   _button(controls, "Delete", _delete_selected)
   _button(controls, "Source...", func() -> void: source_dialog.popup_centered_ratio(0.65))
-  _button(controls, "Back to edit", func() -> void: game._load_initial_board())
+  _button(controls, "Reset preview", func() -> void: game._load_initial_board())
   selected_label = _label("Nothing selected")
   column.add_child(selected_label)
+
+  inspector_panel = PanelContainer.new()
+  hud.add_child(inspector_panel)
+  inspector_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+  inspector_panel.offset_left = -256
+  inspector_panel.offset_right = -16
+  inspector_panel.offset_top = 115
+  inspector_panel.offset_bottom = -16
+  var inspector_margin := MarginContainer.new()
+  for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+    inspector_margin.add_theme_constant_override(side, 10)
+  inspector_panel.add_child(inspector_margin)
+  var inspector_column := VBoxContainer.new()
+  inspector_column.add_theme_constant_override("separation", 10)
+  inspector_margin.add_child(inspector_column)
+  inspector_heading = _label("Selected building")
+  inspector_column.add_child(inspector_heading)
+  var inspector_scroll := ScrollContainer.new()
+  inspector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+  inspector_column.add_child(inspector_scroll)
+  visual_form = VBoxContainer.new()
+  visual_form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  inspector_scroll.add_child(visual_form)
+  _button(inspector_column, "Delete selected [Del]", _delete_selected)
+  inspector_panel.hide()
 
   inspector_dialog = AcceptDialog.new()
   inspector_dialog.title = "Properties"
@@ -139,18 +187,14 @@ func _build_ui() -> void:
   var inspector := VBoxContainer.new()
   inspector.add_theme_constant_override("separation", 8)
   inspector_dialog.add_child(inspector)
-  visual_form = VBoxContainer.new()
-  inspector.add_child(visual_form)
   property_form = VBoxContainer.new()
   inspector.add_child(property_form)
-  property_form.hide()
   properties = LineEdit.new()
   properties.placeholder_text = "Declaration"
   inspector.add_child(properties)
-  properties.hide()
   property_error = _label("")
   inspector.add_child(property_error)
-  _button(inspector, "Apply changes", _apply_visual_properties)
+  _button(inspector, "Apply declaration", _apply_properties)
 
   source_dialog = AcceptDialog.new()
   source_dialog.title = "Level source"
@@ -169,6 +213,9 @@ func _build_ui() -> void:
   source.custom_minimum_size = Vector2(500, 350)
   source.text_changed.connect(_source_changed)
   source_dialog.add_child(source)
+  source_error = _label("")
+  source_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+  source_dialog.add_child(source_error)
   settings_dialog = AcceptDialog.new()
   settings_dialog.title = "Level settings"
   settings_dialog.min_size = Vector2i(580, 480)
@@ -209,12 +256,14 @@ func _build_ui() -> void:
   add_child(confirm)
 
 func _select_move_tool() -> void:
+  game.editor_brush = ""
   tool_select.select(0)
   palette.selected = ""
   palette.refresh()
   _select_block(-1)
 
 func _select_palette_kind(kind: String) -> void:
+  game.editor_brush = kind
   var kinds: Array = CATALOG.SCENES.keys()
   kinds.sort()
   tool_select.select(kinds.find(kind) + 1)
@@ -259,13 +308,20 @@ func _set_source(value: String) -> void:
 
 func _source_changed() -> void:
   if updating: return
+  if source.text != source_snapshot:
+    if not restoring_source:
+      undo_stack.append(source_snapshot)
+      if undo_stack.size() > 100: undo_stack.pop_front()
+      redo_stack.clear()
+    source_snapshot = source.text
   _select_block(-1)
   parsed = PARSER.parse(source.text)
   blocks.clear()
   if parsed.has("error"):
-    game.hide()
-    status.text = "Invalid: " + str(parsed.error)
+    source_error.text = "Source error: " + str(parsed.error)
+    status.text = "Invalid: " + str(parsed.error) + "  (showing last valid board)"
     return
+  source_error.text = ""
   updating = true
   width_input.value = parsed.width
   height_input.value = parsed.height
@@ -309,9 +365,7 @@ func _board_click(cell: Vector2i, button: int) -> void:
     for entry in blocks[i].entries:
       if Vector2i(entry.x, entry.y) == cell: hit = i
   if button == MOUSE_BUTTON_RIGHT:
-    if hit >= 0:
-      _select_block(hit, cell)
-      _delete_selected()
+    if hit >= 0: _select_block(hit, cell)
     return
   if button != MOUSE_BUTTON_LEFT: return
   if hit >= 0:
@@ -326,6 +380,9 @@ func _board_click(cell: Vector2i, button: int) -> void:
     kinds.sort()
     _place_editor_kind(kinds[tool_select.selected - 1], cell)
     return
+  if selected_block >= 0 and selected_cell != cell:
+    _move_block(selected_cell, cell)
+    return
   _select_block(-1)
   return
 
@@ -333,13 +390,17 @@ func _select_block(index: int, cell: Vector2i = Vector2i(-1, -1)) -> void:
   selected_block = index
   selected_cell = cell
   game.selected_building = game._building_at(cell) if index >= 0 else null
+  if is_instance_valid(inspector_panel): inspector_panel.visible = index >= 0
+  if is_instance_valid(palette): palette.visible = index < 0
   if index < 0:
     selected_label.text = "Nothing selected"
+    _build_visual_form()
     properties.text = ""
     properties.editable = false
     _clear_property_form()
   else:
     selected_label.text = "Selected: %s at %d, %d" % [blocks[index].entries[0].kind, cell.x, cell.y]
+    inspector_heading.text = "%s  (%d, %d)" % [str(blocks[index].entries[0].kind).capitalize(), cell.x, cell.y]
     properties.text = blocks[index].text.replace("\n", " ")
     properties.editable = true
     _build_property_form(properties.text)
@@ -382,6 +443,7 @@ func _replace_selected_cell(replacement: String) -> void:
   _replace_block(selected_block, ";\n".join(declarations))
 
 func _move_block(from_cell: Vector2i, to_cell: Vector2i) -> void:
+  if parsed.has("error"): return
   if to_cell.x < 0 or to_cell.y < 0 or to_cell.x >= parsed.width or to_cell.y >= parsed.height: return
   if from_cell == to_cell or game._building_at(to_cell) != null: return
   _select_at(from_cell)
@@ -405,7 +467,7 @@ func _visual_row(label_text: String, control: Control) -> void:
   var row := HBoxContainer.new()
   visual_form.add_child(row)
   var label := _label(label_text)
-  label.custom_minimum_size.x = 150
+  label.custom_minimum_size.x = 108
   row.add_child(label)
   control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   row.add_child(control)
@@ -424,6 +486,7 @@ func _build_visual_form() -> void:
     direction.select(["E", "SE", "S", "SW", "W", "NW", "N", "NE"].find(entry.facing))
     _visual_row("Direction", direction)
     visual_fields.facing = direction
+    direction.item_selected.connect(func(_index: int) -> void: _apply_visual_properties.call_deferred())
   if entry.kind == "magnet":
     var polarity := OptionButton.new()
     polarity.add_item("Positive")
@@ -431,6 +494,7 @@ func _build_visual_form() -> void:
     polarity.select(1 if str(entry.get("polarity", "+")) in ["negative", "-", "-1", "n"] else 0)
     _visual_row("Polarity", polarity)
     visual_fields.polarity = polarity
+    polarity.item_selected.connect(func(_index: int) -> void: _apply_visual_properties.call_deferred())
   if entry.kind in ["emitter", "detector"]:
     var particles := LineEdit.new()
     particles.text = ", ".join(entry.particles)
@@ -442,6 +506,8 @@ func _build_visual_form() -> void:
     particles.placeholder_text = "e.g. electron, positron"
     _visual_row("Particles", particles)
     visual_fields.particles = particles
+    particles.text_submitted.connect(func(_text: String) -> void: _apply_visual_properties.call_deferred())
+    particles.focus_exited.connect(func() -> void: _apply_visual_properties.call_deferred())
   if entry.kind == "emitter":
     var rate := SpinBox.new()
     rate.min_value = 0.01
@@ -450,15 +516,18 @@ func _build_visual_form() -> void:
     rate.value = float(entry.rate)
     _visual_row("Particles per second", rate)
     visual_fields.rate = rate
+    rate.value_changed.connect(func(_value: float) -> void: _apply_visual_properties.call_deferred())
   var fixed_position := CheckBox.new()
   fixed_position.button_pressed = "p" in str(entry.fixed)
   _visual_row("Lock position", fixed_position)
   visual_fields.fixed_position = fixed_position
+  fixed_position.toggled.connect(func(_value: bool) -> void: _apply_visual_properties.call_deferred())
   if entry.kind in ["mirror", "emitter", "magnet"]:
     var fixed_rotation := CheckBox.new()
     fixed_rotation.button_pressed = ("c" if entry.kind == "magnet" else "r") in str(entry.fixed)
     _visual_row("Lock rotation / polarity", fixed_rotation)
     visual_fields.fixed_rotation = fixed_rotation
+    fixed_rotation.toggled.connect(func(_value: bool) -> void: _apply_visual_properties.call_deferred())
 
 func _apply_visual_properties() -> void:
   if selected_block < 0: return
@@ -482,7 +551,6 @@ func _apply_visual_properties() -> void:
   var cell := selected_cell
   _replace_selected_cell(replacement)
   _select_at(cell)
-  inspector_dialog.hide()
 
 func _clear_property_form() -> void:
   property_fields.clear()
@@ -536,7 +604,10 @@ func _replace_block(index: int, replacement: String) -> void:
 
 func _apply_properties() -> void:
   if selected_block < 0: return
+  var cell := selected_cell
   _replace_block(selected_block, properties.text)
+  _select_at(cell)
+  inspector_dialog.hide()
 
 func _delete_selected() -> void:
   if selected_block < 0: return
@@ -684,3 +755,42 @@ func _write_file(target: String) -> void:
   path = target
   saved_text = source.text
   _source_changed()
+
+func _undo_editor() -> void:
+  if undo_stack.is_empty() or is_instance_valid(test_game): return
+  redo_stack.append(source.text)
+  restoring_source = true
+  _set_source(undo_stack.pop_back())
+  restoring_source = false
+
+func _redo_editor() -> void:
+  if redo_stack.is_empty() or is_instance_valid(test_game): return
+  undo_stack.append(source.text)
+  restoring_source = true
+  _set_source(redo_stack.pop_back())
+  restoring_source = false
+
+func _start_playtest() -> void:
+  if parsed.has("error") or parsed.is_empty() or is_instance_valid(test_game):
+    status.text = "Fix level syntax before playtesting."
+    return
+  game.hide()
+  game.get_node("SimulationControls").hide()
+  editor_panel.hide()
+  palette.hide()
+  inspector_panel.hide()
+  test_game = GAME.instantiate()
+  test_game.level_override = parsed.duplicate(true)
+  test_game.editor_playtest = true
+  add_child(test_game)
+  test_game.exit_playtest_requested.connect(_end_playtest)
+
+func _end_playtest() -> void:
+  if is_instance_valid(test_game): test_game.queue_free()
+  test_game = null
+  game.show()
+  game.get_node("SimulationControls").show()
+  editor_panel.show()
+  inspector_panel.visible = selected_block >= 0
+  palette.visible = selected_block < 0
+  game._fit_camera()
