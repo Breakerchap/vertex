@@ -1,0 +1,8 @@
+9 x 7;
+
+goal: {photon: 1/s, 1/s, 1/s};
+
+emitter: {x=1, y=2, E, [electron], rate=1, fixed=rp};
+emitter: {x=4, y=1, N, [positron], rate=1, fixed=rp};
+mirror: {x=4, y=4, NW, fixed=p};
+detector: {x=7, y=4, [photon], fixed=rp};

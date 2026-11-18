@@ -1,0 +1,7 @@
+9 x 7;
+
+goal: {electron: 1/s, 1/s, 1/s};
+
+emitter: {x=1, y=3, E, [electron], rate=1, fixed=rp};
+magnet: {x=4, y=3, -, fixed=rp};
+detector: {x=4, y=1, [electron], fixed=rp};

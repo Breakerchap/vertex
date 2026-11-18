@@ -1,0 +1,11 @@
+11 x 9;
+
+goal: {[electron AND photon]: 1/s, 1/s, 1/s};
+
+emitter: {x=1, y=2, E, [electron], rate=1, fixed=rp};
+emitter: {x=9, y=2, W, [positron], rate=1, fixed=rp};
+emitter: {x=1, y=6, E, [electron], rate=1, fixed=rp};
+mirror: {x=5, y=4, NW, fixed=p};
+magnet: {x=3, y=6, +, fixed=rp};
+detector: {x=9, y=4, [photon], fixed=rp};
+detector: {x=3, y=8, [electron], fixed=rp};

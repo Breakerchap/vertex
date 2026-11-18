@@ -1,6 +1,8 @@
 # Godot 4.2+ specific ignores
 ~*.dll
 
+.vscode/
+
 # Godot 4+ specific ignores
 .godot/
 .nomedia

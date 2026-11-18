@@ -174,7 +174,8 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
   building.set_meta("cell", cell)
   building.set_meta("kind", entry.kind)
   building.set_meta("fixed_position", "p" in str(entry.get("fixed", "")))
-  building.set_meta("fixed_rotation", "r" in str(entry.get("fixed", "")))
+  var fixed_flag := "c" if entry.kind == "magnet" else "r"
+  building.set_meta("fixed_rotation", fixed_flag in str(entry.get("fixed", "")))
   building.set_meta("from_inventory", from_inventory)
   if entry.kind in ["mirror", "emitter"]:
     var direction := DIRECTIONS.find(entry.get("facing", "E"))
@@ -201,7 +202,7 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
     building.sequence = sequence
   if entry.kind == "detector":
     var accepted: Array[String] = []
-    accepted.assign(entry.get("particles", ["photon"]))
+    accepted.assign(entry.get("accepted", entry.get("particles", ["photon"])))
     building.accepted = accepted
   add_child(building)
   if entry.kind in ["emitter", "detector"]:
@@ -317,8 +318,8 @@ func _refresh_ui() -> void:
         break
     if tracked != "photon" or goal.has("photon"):
       break
-  var recent_rate := float(windows.back().get(tracked, 0)) / WINDOW_SECONDS if not windows.is_empty() else 0.0
-  status_label.text = "%s   |   %s   |   Cost: %d   |   %s: %d   |   Last 5s: %.2f / s" % [title, mode, cost, tracked.capitalize(), int(total_counts.get(tracked, 0)), recent_rate]
+  var recent_rate := float(_goal_count(windows.back(), tracked)) / WINDOW_SECONDS if not windows.is_empty() else 0.0
+  status_label.text = "%s   |   %s   |   Cost: %d   |   %s: %d   |   Last 5s: %.2f / s" % [title, mode, cost, tracked.capitalize(), _goal_count(total_counts, tracked), recent_rate]
   stop_button.disabled = not simulating
   for child in inventory_box.get_children():
     inventory_box.remove_child(child)
@@ -407,6 +408,17 @@ func _on_simulation_stepped(delta: float) -> void:
     results.dialog_text = "%d / 3 stars\n\nSimulation time: %.1f s\nBuild cost: %d\nDetected:%s\n\nTwo observed and three simulated-ahead five-second windows met the goal. Future production is an estimate." % [stars, elapsed, cost, stats]
     results.popup_centered()
 
+func _goal_count(counts: Dictionary, key: String) -> int:
+  if not (key.begins_with("[") and key.ends_with("]")):
+    return int(counts.get(key, 0))
+  var names := key.substr(1, key.length() - 2).split(",", false)
+  var total := 0
+  for name in names:
+    # Colour-specific counts are also included in their broad flavour count.
+    if "_" in name and name.split("_")[0] in names: continue
+    total += int(counts.get(name, 0))
+  return total
+
 func _stable_stars(samples: Array[Dictionary]) -> int:
   if samples.is_empty(): return 0
   var best := 0
@@ -421,7 +433,7 @@ func _stable_stars(samples: Array[Dictionary]) -> int:
         var low := INF
         var high := 0.0
         for counts in samples:
-          var rate := float(counts.get(key, 0)) / WINDOW_SECONDS
+          var rate := float(_goal_count(counts, key)) / WINDOW_SECONDS
           low = minf(low, rate)
           high = maxf(high, rate)
         # Every five-second window must meet the goal. Small fluctuations are
