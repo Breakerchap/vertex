@@ -18,6 +18,12 @@ func _ready() -> void:
   assert(expression.buildings[0].accepted == ["up_r"])
   expression = PARSER.parse("2 x 2; goal: {electron: 1, 2, 3}; detector: {x=0,y=0,[electron OR (positron]};")
   assert(expression.has("error"))
+  var impossible := PARSER.parse("3 x 3; goal: {[electron AND photon]: 1, 1, 1};")
+  assert(impossible.has("error"), "Mutually exclusive goal expression must be rejected")
+  var overlap := PARSER.parse("3 x 3; goal: {photon: 1, 1, 1}; wall: {x=1,y=1}; mirror: {x=1,y=1};")
+  assert(overlap.has("error"), "Overlapping buildings must be rejected")
+  var metadata := PARSER.parse("3 x 3; title: A small test; hint: Try the mirror; goal: {photon: 1, 1, 1};")
+  assert(metadata.title == "A small test" and metadata.hint == "Try the mirror")
   var game = GAME.instantiate()
   game.level = level
   game._place_building(level.buildings[3], false)

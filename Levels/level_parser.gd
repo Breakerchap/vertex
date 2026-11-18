@@ -13,9 +13,13 @@ static func parse(source: String) -> Dictionary:
   var size_match := dimensions.search(text)
   if size_match == null:
     return {"error": "Missing grid size (for example 15 x 7)."}
-  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "goals": [], "buildings": [], "inventory": {}}
+  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "goals": [], "buildings": [], "inventory": {}, "title": "", "hint": ""}
   if data.width <= 0 or data.height <= 0:
     return {"error": "Grid dimensions must be positive."}
+  var metadata := RegEx.new()
+  metadata.compile("(?im)^\\s*(title|hint)\\s*:\\s*([^;\\n]+)\\s*;")
+  for item in metadata.search_all(text):
+    data[item.get_string(1).to_lower()] = item.get_string(2).strip_edges().trim_prefix('"').trim_suffix('"')
   var blocks := RegEx.new()
   var names: Array = CATALOG.SCENES.keys()
   names.append_array(["goal", "inventory", "magnetic_field"])
@@ -46,8 +50,12 @@ static func parse(source: String) -> Dictionary:
           var expression := _detector_expression(target.substr(1, target.length() - 2))
           if expression.has("error"):
             return expression
+          if expression.accepted.is_empty():
+            return {"error": "Goal expression matches no particle: " + target}
           goal["[" + ",".join(expression.accepted) + "]"] = values
         else:
+          if target != "cost" and not _valid_particle(target):
+            return {"error": "Unknown goal target: " + target}
           goal[target] = values
       if goal.is_empty():
         return {"error": "Empty goal."}
@@ -114,6 +122,12 @@ static func parse(source: String) -> Dictionary:
           data.buildings.append(placed)
   if data.goals.is_empty():
     return {"error": "The level needs at least one goal."}
+  var occupied := {}
+  for building in data.buildings:
+    var cell := Vector2i(building.x, building.y)
+    if occupied.has(cell):
+      return {"error": "Overlapping buildings at (%d, %d)." % [cell.x, cell.y]}
+    occupied[cell] = true
   return data
 
 static func _range_values(value: String) -> Array[int]:
