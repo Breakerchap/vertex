@@ -143,6 +143,7 @@ func _build_ui() -> void:
   palette = PALETTE.new()
   palette.infinite = true
   hud.add_child(palette)
+  game.external_palette = palette
   palette.mode_changed.connect(func(enabled: bool) -> void:
     if not enabled: _select_move_tool()
   )
@@ -373,6 +374,7 @@ func _resize_board(_value: float) -> void:
   _set_source(source.text.substr(0, found.get_start()) + "%d x %d" % [int(width_input.value), int(height_input.value)] + source.text.substr(found.get_end()))
 
 func _board_click(cell: Vector2i, button: int) -> void:
+  if parsed.has("error"): return
   var hit := -1
   for i in range(blocks.size()):
     for entry in blocks[i].entries:
@@ -762,7 +764,7 @@ func _level_warnings(data: Dictionary) -> PackedStringArray:
     if entry.kind == "detector": has_detector = true
     var flags := str(entry.get("fixed", ""))
     var lock_rotation := "c" if entry.kind == "magnet" else "r"
-    if not "p" in flags or (entry.kind in ["mirror", "emitter", "magnet"] and not lock_rotation in flags):
+    if "p" not in flags or (entry.kind in ["mirror", "emitter", "magnet"] and lock_rotation not in flags):
       adjustable = true
   if not has_emitter: warnings.append("The board has no particle emitters.")
   if not has_detector: warnings.append("The board has no detector for output goals.")
@@ -860,7 +862,7 @@ func _start_playtest() -> void:
     status.text = "Fix level syntax before playtesting."
     return
   game.hide()
-  game.get_node("SimulationControls").hide()
+  game.get_node("SimulationControls").visible = false
   editor_panel.hide()
   palette.hide()
   inspector_panel.hide()
@@ -874,7 +876,7 @@ func _end_playtest() -> void:
   if is_instance_valid(test_game): test_game.queue_free()
   test_game = null
   game.show()
-  game.get_node("SimulationControls").show()
+  game.get_node("SimulationControls").visible = true
   editor_panel.show()
   inspector_panel.visible = selected_block >= 0
   palette.visible = selected_block < 0

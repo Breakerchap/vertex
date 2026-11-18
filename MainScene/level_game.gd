@@ -29,6 +29,7 @@ var editor_preview := false
 var editor_playtest := false
 var level_override: Dictionary = {}
 var editor_brush := ""
+var external_palette: PanelContainer
 var diagnostic_overlay: Node2D
 var diagnostics_enabled := false
 var undo_history: Array[Dictionary] = []
@@ -193,14 +194,15 @@ func _create_hud() -> void:
   var actions := HBoxContainer.new()
   actions.add_theme_constant_override("separation", 6)
   column.add_child(actions)
-  rotate_button = _button(actions, "Rotate / polarity [R]", _rotate_selected)
+  rotate_button = _button(actions, "Rotate [R]", _rotate_selected)
   configure_button = _button(actions, "Configure...", _open_config)
   remove_button = _button(actions, "Remove [Del]", _remove_selected)
   stop_button = _button(actions, "Back to build [B]", stop_to_build)
-  _button(actions, "Reset level [X]", reset_level)
-  _button(actions, "Back to editor" if editor_playtest else "Level select", _return_to_select)
+  _button(actions, "Restart run", restart_run)
+  _button(actions, "Reset [X]", reset_level)
+  _button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
   var diagnostics := CheckButton.new()
-  diagnostics.text = "Show interactions"
+  diagnostics.text = "Interactions"
   diagnostics.tooltip_text = "Highlight reflections, detections, collisions and particles leaving the board"
   diagnostics.toggled.connect(func(enabled: bool) -> void:
     diagnostics_enabled = enabled
@@ -389,6 +391,7 @@ func _building_at(cell: Vector2i) -> Node:
   return null
 
 func _unhandled_input(event: InputEvent) -> void:
+  if not is_visible_in_tree(): return
   if editor_preview:
     if event is InputEventKey and event.pressed and not event.echo:
       if event.keycode == KEY_SPACE: $SimulationControls._toggle_running()
@@ -481,6 +484,7 @@ func _click_cell(cell: Vector2i, button_index: int) -> void:
 func _rotate_selected() -> void:
   if simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_rotation"):
     return
+  if selected_building.get_meta("kind") not in ["magnet", "emitter", "mirror"]: return
   _record_undo()
   if selected_building.get_meta("kind") == "magnet":
     selected_building.polarity *= -1
@@ -542,12 +546,18 @@ func _refresh_ui() -> void:
     var rate := float(_goal_count(window_counts, tracked)) / maxf(window_time, 0.001)
     measurement_label.text = "Measuring %d/2 stable windows  |  Current %s: %.2f/s  |  %.1f/5s" % [mini(windows.size() + 1, 2), tracked, rate, window_time]
   measurement_bar.value = window_time if simulating else 0.0
-  rotate_button.disabled = simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_rotation") if is_instance_valid(selected_building) else true
-  remove_button.disabled = simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position") if is_instance_valid(selected_building) else true
-  configure_button.disabled = simulating or not is_instance_valid(selected_building) or selected_building.get_meta("kind") not in ["emitter", "detector"] if is_instance_valid(selected_building) else true
+  var has_selection := is_instance_valid(selected_building)
+  rotate_button.disabled = simulating or not has_selection
+  remove_button.disabled = simulating or not has_selection
+  configure_button.disabled = simulating or not has_selection
+  if has_selection:
+    var kind: String = selected_building.get_meta("kind")
+    rotate_button.disabled = simulating or bool(selected_building.get_meta("fixed_rotation")) or kind not in ["emitter", "mirror", "magnet"]
+    remove_button.disabled = simulating or bool(selected_building.get_meta("fixed_position"))
+    configure_button.disabled = simulating or kind not in ["emitter", "detector"]
   if is_instance_valid(selected_building):
     var cell: Vector2i = selected_building.get_meta("cell")
-    var lock_note := "  ?  Position locked" if selected_building.get_meta("fixed_position") else "  ?  Drag to move"
+    var lock_note := " – Position locked" if selected_building.get_meta("fixed_position") else " – Drag or click empty cell to move"
     selection_label.text = "%s  (%d, %d)%s" % [str(selected_building.get_meta("kind")).capitalize(), cell.x, cell.y, lock_note]
   else:
     selection_label.text = "Select a building to move or rotate it"
@@ -602,6 +612,12 @@ func stop_to_build() -> void:
   _clear_stats()
   completed = false
   _refresh_ui()
+
+func restart_run() -> void:
+  if not simulating: return
+  stop_to_build()
+  begin_run()
+  running = true
 
 func reset_level() -> void:
   results.hide()

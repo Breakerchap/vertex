@@ -19,6 +19,7 @@ func _process(delta: float) -> void:
 ## Always align outlines and placement previews with grid cells, not sprite rotation.
 func _draw() -> void:
   var game = get_parent()
+  if game.level.is_empty() or game.level.has("error"): return
   if not game.simulating:
     for building in game.buildings:
       if not is_instance_valid(building): continue
@@ -35,9 +36,13 @@ func _draw() -> void:
     var hover: Vector2i = game._mouse_cell()
     if hover.x >= 0 and hover.y >= 0 and hover.x < int(game.level.get("width", 0)) and hover.y < int(game.level.get("height", 0)):
       var kind: String = game.editor_brush if game.editor_preview else game.selected_kind
+      if game.editor_preview and is_instance_valid(game.external_palette) and not game.external_palette.drag_kind.is_empty():
+        kind = game.external_palette.drag_kind
       if not game.editor_preview and is_instance_valid(game.palette) and not game.palette.drag_kind.is_empty():
         kind = game.palette.drag_kind
       var dragging_building: bool = game.drag_cell.x >= 0 and is_instance_valid(game.selected_building)
+      if kind.is_empty() and is_instance_valid(game.selected_building) and not game.selected_building.get_meta("fixed_position"):
+        dragging_building = true
       var can_place: bool = not kind.is_empty() or dragging_building
       if can_place:
         var occupied = game._building_at(hover)
