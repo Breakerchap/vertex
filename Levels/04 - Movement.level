@@ -1,3 +1,6 @@
+title: Movement;
+hint: This magnetic field can be moved. Work out where it needs to go.;
+
 9 x 9;
 
 goal: {positron: 1/s, 1/s, 1/s};

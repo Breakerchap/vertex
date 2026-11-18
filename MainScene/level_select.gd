@@ -11,7 +11,7 @@ func _ready() -> void:
   center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
   add_child(center)
   var box := VBoxContainer.new()
-  box.custom_minimum_size = Vector2(460, 0)
+  box.custom_minimum_size = Vector2(520, 0)
   box.add_theme_constant_override("separation", 12)
   center.add_child(box)
   var title := Label.new()
@@ -24,7 +24,7 @@ func _ready() -> void:
   subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
   box.add_child(subtitle)
   var list := ScrollContainer.new()
-  list.custom_minimum_size = Vector2(460, 280)
+  list.custom_minimum_size = Vector2(520, 300)
   box.add_child(list)
   var levels := VBoxContainer.new()
   levels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -32,26 +32,24 @@ func _ready() -> void:
   list.add_child(levels)
   var count := 0
   DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://levels"))
-  for directory in ["res://Levels", "user://levels"]:
-    if not DirAccess.dir_exists_absolute(directory): continue
-    var files := DirAccess.get_files_at(directory)
-    files.sort()
-    for file in files:
-      if not file.to_lower().ends_with(".level"):
-        continue
-      count += 1
-      var path: String = directory + "/" + file
-      var parsed: Dictionary = PARSER.parse(FileAccess.get_file_as_string(path))
-      var button := Button.new()
-      button.custom_minimum_size.y = 44
-      button.text = file.trim_suffix(".level") + ("  (custom)" if directory == "user://levels" else "")
-      if parsed.has("error"):
-        button.text += "  (invalid)"
-        button.tooltip_text = parsed.error
-        button.disabled = true
-      else:
-        button.pressed.connect(_open_level.bind(path))
-      levels.add_child(button)
+  for path in Global.level_paths():
+    count += 1
+    var parsed: Dictionary = PARSER.parse(FileAccess.get_file_as_string(path))
+    var name: String = str(parsed.get("title", ""))
+    if name.is_empty(): name = path.get_file().trim_suffix(".level")
+    var button := Button.new()
+    button.custom_minimum_size.y = 48
+    var custom := path.begins_with("user://")
+    var stars: int = Global.best_stars(path)
+    button.text = "%s   %s%s" % [name, "★".repeat(stars) + "☆".repeat(3 - stars), "  (custom)" if custom else ""]
+    button.tooltip_text = str(parsed.get("hint", ""))
+    if parsed.has("error"):
+      button.text = path.get_file() + "  (invalid)"
+      button.tooltip_text = str(parsed.error)
+      button.disabled = true
+    else:
+      button.pressed.connect(_open_level.bind(path))
+    levels.add_child(button)
   if count == 0:
     var empty := Label.new()
     empty.text = "No .level files found in Levels/."

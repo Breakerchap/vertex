@@ -1,3 +1,6 @@
+title: Polar Opposites;
+hint: Magnetic fields turn charged particles. Change the field to direct electrons into the detector.;
+
 9 x 7;
 
 goal: {electron: 1/s, 1/s, 1/s};

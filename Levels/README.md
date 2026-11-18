@@ -20,3 +20,9 @@ Magnetic fields: add `magnet: {x=3, y=2, polarity=positive, fixed=p};` (or `magn
 A grouped goal such as `goal: {[electron OR positron]: 1/s, 2/s, 3/s};` applies each threshold to the combined detected rate of the matching particle types. Goal expressions support `AND`, `OR`, parentheses and commas with the same meaning as detector expressions.
 
 Detector lists support expressions such as `[electron OR positron]` and `[(up OR down) AND up_r]`. Each arriving particle is tested against the expression; `AND` takes precedence over `OR`, and parentheses change the grouping. A comma is equivalent to `OR`. Broad names such as `up` also match their colour-specific forms, such as `up_r`.
+
+## Level presentation and progress
+
+Optional `title: First Contact;` and `hint: A short, non-spoiler prompt;` statements provide level names and an explanation above the build HUD. Completion stars are saved to `user://level_progress.cfg`, keyed by level path; reaching a better tier upgrades the saved result. The next-level action follows the level selector's ordering.
+
+A goal with two different particle outputs uses two semicolon-separated conditions in the **same** goal block, e.g. `goal: {electron: 1/s, 2/s, 3/s; photon: 1/s, 2/s, 3/s};`. A bracketed AND is for testing an individual particle's properties, not for requiring two simultaneous particle streams. Impossible bracket expressions and overlapping buildings are rejected when parsing.

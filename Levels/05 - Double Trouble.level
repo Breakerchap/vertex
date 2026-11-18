@@ -1,6 +1,9 @@
+title: Double Trouble;
+hint: Both electrons and photons must reach their detectors. Satisfy both targets.;
+
 11 x 9;
 
-goal: {[electron AND photon]: 1/s, 1/s, 1/s};
+goal: {electron: 1/s, 1/s, 1/s; photon: 1/s, 1/s, 1/s};
 
 emitter: {x=1, y=2, E, [electron], rate=1, fixed=rp};
 emitter: {x=9, y=2, W, [positron], rate=1, fixed=rp};

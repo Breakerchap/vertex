@@ -1,3 +1,6 @@
+title: Large Hadron;
+hint: Combine magnetic deflection with particle annihilation to produce photons.;
+
 11 x 9;
 
 goal: {photon: 1/s, 1/s, 1/s};
