@@ -22,7 +22,7 @@ func _ready() -> void:
   assert(impossible.has("error"), "Mutually exclusive goal expression must be rejected")
   var overlap := PARSER.parse("3 x 3; goal: {photon: 1, 1, 1}; wall: {x=1,y=1}; mirror: {x=1,y=1};")
   assert(overlap.has("error"), "Overlapping buildings must be rejected")
-  var metadata := PARSER.parse("3 x 3; title: A small test; hint: Try the mirror; goal: {photon: 1, 1, 1};")
+  var metadata := PARSER.parse("3 x 3;\ntitle: A small test;\nhint: Try the mirror;\ngoal: {photon: 1, 1, 1};")
   assert(metadata.title == "A small test" and metadata.hint == "Try the mirror")
   var game = GAME.instantiate()
   game.level = level
@@ -42,6 +42,10 @@ func _ready() -> void:
   assert(game.selected_building.polarity == -1)
   game._rotate_selected()
   assert(game.selected_building.polarity == 1)
+  game.undo_build()
+  assert(game.buildings[0].polarity == -1, "Build undo should restore polarity")
+  game.redo_build()
+  assert(game.buildings[0].polarity == 1, "Build redo should reapply polarity")
   game._place_building({"kind": "magnet", "x": 0, "y": 0, "fixed": "pc", "polarity": "-"}, false)
   game.selected_building = game.buildings[1]
   game._rotate_selected()
