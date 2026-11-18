@@ -3,6 +3,7 @@ extends Node2D
 
 signal particle_detected(particle_name: String)
 signal simulation_stepped(delta: float)
+signal particle_event(kind: String, at: Vector2)
 
 const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 
@@ -57,6 +58,7 @@ func step_simulation(delta: float) -> void:
     previous_positions[particle] = particle.global_position
     _advance_particle(particle, delta, obstacles, fields)
     if level_bounds_enabled and not particle.is_queued_for_deletion() and not level_bounds.has_point(particle.global_position):
+      particle_event.emit("exit", particle.global_position)
       particle.queue_free()
 
   var consumed: Dictionary = {}
@@ -81,6 +83,7 @@ func step_simulation(delta: float) -> void:
           t = clampf(-relative_start.dot(relative_motion) / relative_motion.length_squared(), 0.0, 1.0)
         if (relative_start + relative_motion * t).length_squared() <= contact_radius * contact_radius:
           var photon := a if a.flavour == Particle.Flavour.PHOTON else b
+          particle_event.emit("absorption", photon.global_position)
           photon.queue_free()
           consumed[photon] = true
           if photon == a:
@@ -148,15 +151,19 @@ func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node],
       continue
     if hit.has("field"):
       particle.magnetic_field = hit.field
+      particle_event.emit("field", particle.global_position)
       particle.magnetic_remaining = PI * 0.5
       particle.magnetic_turn_sign = 1.0 if particle.charge * hit.field.polarity > 0 else -1.0
       continue
     if hit.obstacle.has_method("accepts") and hit.obstacle.accepts(particle):
+      particle_event.emit("detection", particle.global_position)
       particle_detected.emit(particle.level_particle_name())
     if particle.flavour != Particle.Flavour.PHOTON or not hit.reflective:
+      particle_event.emit("absorption", particle.global_position)
       particle.queue_free()
       return
     var normal: Vector2 = hit.normal
+    particle_event.emit("reflection", particle.global_position)
     particle.direction = particle.direction.bounce(normal).normalized()
     particle.global_position += particle.direction * 0.001
 
@@ -186,6 +193,7 @@ func _particles() -> Array[Particle]:
 
 func _annihilate(a: Particle, b: Particle) -> void:
   var position_mid := (a.global_position + b.global_position) * 0.5
+  particle_event.emit("annihilation", position_mid)
   var relative := a.direction.normalized() - b.direction.normalized()
   if relative.is_zero_approx():
     relative = a.direction.normalized()
