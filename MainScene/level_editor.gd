@@ -74,6 +74,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
       return
     if event.keycode == KEY_R: _rotate_block()
     elif event.keycode == KEY_DELETE: _delete_selected()
+    elif event.keycode == KEY_ESCAPE: _select_move_tool()
 
 func _notification(what: int) -> void:
   if what == NOTIFICATION_WM_CLOSE_REQUEST:
@@ -174,6 +175,7 @@ func _build_ui() -> void:
   inspector_margin.add_child(inspector_column)
   inspector_heading = _label("Selected building")
   inspector_column.add_child(inspector_heading)
+  _button(inspector_column, "Back to tools [Esc]", _select_move_tool)
   var inspector_scroll := ScrollContainer.new()
   inspector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
   inspector_column.add_child(inspector_scroll)

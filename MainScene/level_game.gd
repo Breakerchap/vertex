@@ -63,6 +63,7 @@ var rotate_button: Button
 var configure_button: Button
 var remove_button: Button
 var next_level_button: Button
+var restart_button: Button
 var palette: PanelContainer
 var star_icons: Array[TextureRect] = []
 var results: AcceptDialog
@@ -198,7 +199,7 @@ func _create_hud() -> void:
   configure_button = _button(actions, "Configure...", _open_config)
   remove_button = _button(actions, "Remove [Del]", _remove_selected)
   stop_button = _button(actions, "Back to build [B]", stop_to_build)
-  _button(actions, "Restart run", restart_run)
+  restart_button = _button(actions, "Restart run", restart_run)
   _button(actions, "Reset [X]", reset_level)
   _button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
   var diagnostics := CheckButton.new()
@@ -562,6 +563,7 @@ func _refresh_ui() -> void:
   else:
     selection_label.text = "Select a building to move or rotate it"
   stop_button.disabled = not simulating
+  restart_button.disabled = not simulating
   palette.counts = inventory
   palette.selected = selected_kind
   palette.locked = simulating
@@ -645,6 +647,7 @@ func _clear_particles() -> void:
     particle.queue_free()
 
 func _clear_stats() -> void:
+  last_hud_update = 0.0
   total_counts.clear()
   window_counts.clear()
   windows.clear()
