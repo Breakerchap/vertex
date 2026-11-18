@@ -3,6 +3,8 @@ extends "res://Buildings/building.gd"
 
 const HALF_CELL: float = 51.2
 const EPSILON: float = 0.00001
+const PLUS_TEXTURE = preload("res://Buildings/MagneticField/plus_magnet.png")
+const MINUS_TEXTURE = preload("res://Buildings/MagneticField/minus_magnet.png")
 
 @export_enum("Positive:1", "Negative:-1") var polarity: int = 1:
   set(value):
@@ -15,15 +17,8 @@ func _ready() -> void:
     add_to_group("magnetic_fields")
 
 func _draw() -> void:
-  var colour := Color("ef8d88") if polarity > 0 else Color("81baf5")
-  draw_rect(Rect2(-HALF_CELL, -HALF_CELL, HALF_CELL * 2, HALF_CELL * 2), Color("19263a"))
-  draw_rect(Rect2(-46, -46, 92, 92), colour, false, 3.0)
-  draw_arc(Vector2.ZERO, 29.0, -PI * 0.8, PI * 0.8, 48, colour, 3.0)
-  draw_line(Vector2(-12, 0), Vector2(12, 0), colour, 5.0)
-  if polarity > 0:
-    draw_line(Vector2(0, -12), Vector2(0, 12), colour, 5.0)
-  draw_line(Vector2(19, -25), Vector2(29, -19), colour, 3.0)
-  draw_line(Vector2(29, -19), Vector2(30, -30), colour, 3.0)
+  var texture: Texture2D = PLUS_TEXTURE if polarity > 0 else MINUS_TEXTURE
+  draw_texture_rect(texture, Rect2(-HALF_CELL, -HALF_CELL, HALF_CELL * 2, HALF_CELL * 2), false)
 
 func turn_radius() -> float:
   return HALF_CELL * global_transform.x.length()

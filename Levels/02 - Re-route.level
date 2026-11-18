@@ -1,4 +1,4 @@
-15 x 7;
+15 x 8;
 
 goal: {photon: 1/s, 2/s, 2/s; cost: inf, inf, 10};
 

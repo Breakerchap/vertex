@@ -5,28 +5,43 @@ const PARSER = preload("res://Levels/level_parser.gd")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 
 func _ready() -> void:
+  get_window().size = Vector2i(1280, 720)
   var editor = EDITOR.instantiate()
   get_tree().root.add_child.call_deferred(editor)
   await get_tree().process_frame
+  assert(editor.editor_panel.get_parent() is CanvasLayer, "Editor controls must stay in screen space")
+  await get_tree().process_frame
+  var viewport_size := get_viewport().get_visible_rect().size
+  var panel_rect: Rect2 = editor.editor_panel.get_global_rect()
+  assert(panel_rect.position.x >= 0 and panel_rect.position.y >= 0)
+  assert(panel_rect.end.x <= viewport_size.x and panel_rect.end.y <= viewport_size.y)
   for file in DirAccess.get_files_at("res://Levels"):
     if file.ends_with(".level"):
       assert(not PARSER.parse(FileAccess.get_file_as_string("res://Levels/" + file)).has("error"), file)
   var original := "5 x 5;\n# preserve this comment\ngoal: {[electron OR positron]: 1/s, 2/s, 3/s};\nwall: {x=0..1, y=0, fixed=p};\nmagnet: {x=2,y=2,-,fixed=rp};\ninventory: {mirror=2};\n"
   editor._set_source(original)
+  assert(editor.game.editor_preview)
+  assert(editor.game.level.width == 5)
+  assert(editor.game.buildings.size() == 3)
   assert(editor.blocks.size() == 2)
   assert(editor.blocks[0].entries.size() == 2)
   assert(editor.tool_select.item_count == CATALOG.SCENES.size() + 1)
   editor._board_click(Vector2i(0, 0), MOUSE_BUTTON_RIGHT)
-  assert(editor.source.text == original, "Deleting one cell of a range must not delete the whole range")
+  assert(editor.game._building_at(Vector2i(0, 0)) == null)
+  assert(editor.game._building_at(Vector2i(1, 0)) != null, "Deleting one cell must preserve the rest of a range")
+  editor._set_source(original)
   editor._board_click(Vector2i(2, 2), MOUSE_BUTTON_LEFT)
   assert(editor.properties.text.contains("magnet"))
   assert(editor.property_fields.size() == 4)
-  editor._board_click(Vector2i(3, 2), MOUSE_BUTTON_LEFT)
+  editor._move_block(Vector2i(2, 2), Vector2i(3, 2))
   assert(editor.source.text.contains("x=3"))
+  assert(editor.game._building_at(Vector2i(3, 2)) != null)
+  assert(editor.game._building_at(Vector2i(2, 2)) == null)
   assert(editor.source.text.contains("# preserve this comment"))
   assert(editor.source.text.contains("[electron OR positron]"))
   var kinds: Array = CATALOG.SCENES.keys()
   kinds.sort()
+  editor.palette.click_mode = true
   editor.tool_select.select(kinds.find("mirror") + 1)
   editor._board_click(Vector2i(4, 4), MOUSE_BUTTON_LEFT)
   assert(not PARSER.parse(editor.source.text).has("error"))
