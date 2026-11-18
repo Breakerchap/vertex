@@ -2,6 +2,10 @@
 
 The level selector reads every `.level` file in this directory. See `Example Level.level` for the format. Coordinates start at the bottom-left; ranges include both ends. Directions are `E`, `SE`, `S`, `SW`, `W`, `NW`, `N`, and `NE`. `fixed=p` locks position, `fixed=r` locks rotation, and `fixed=rp` locks both; magnets use `c` to lock polarity. Emitters repeat their particle lists at the specified rate. Detectors absorb particles and count only the listed types toward production goals.
 
+Choose **Level editor** on the level select screen to create or open a level. Pick a building and click the grid to place it; choose **Select / move** to edit its properties or move it, and right-click to delete it. The source panel edits goals, inventory and any advanced syntax directly. A range represents multiple cells, so change it in the source instead of moving or deleting one cell. Save defaults to the game's custom levels folder; those files appear in level select. Files saved elsewhere can be reopened with the editor.
+
+The editor and parser use `Buildings/building_catalog.gd` for the available building scenes. Register new building kinds there when implementing them; the editor picks them up and exposes their declaration fields without a separate editor update. New game behavior still needs to be implemented in the game.
+
 In build mode, select an inventory item and click a free cell. Select a building and click a free cell to move it, press **R** to rotate, or right-click / press **Delete** to remove it. Fixed buildings obey their level flags. Inventory placement costs are shared across levels: wall 5, mirror 10, detector 30, and emitter 40; removing an inventory building refunds its cost. Pre-placed buildings are free.
 
 **Play/Pause** controls the simulation and **Step** pauses and advances 15 fixed simulation ticks smoothly, one per physics frame. **Space** toggles play, **.** advances 15 ticks, **B** stops and returns to build mode while keeping the layout, and **X** resets the level to its initial layout. The speed controls do not alter the step size.

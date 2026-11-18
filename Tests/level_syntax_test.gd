@@ -4,7 +4,7 @@ const GAME = preload("res://MainScene/level_game.tscn")
 const PARSER = preload("res://Levels/level_parser.gd")
 
 func _ready() -> void:
-  var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Levels/Magnet Stuff.level"))
+  var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Tests/magnet_fixture.level"))
   assert(not level.has("error"))
   assert(level.buildings[3].accepted == ["electron", "positron"])
   assert(level.goals[0].has("[electron,positron]"))
@@ -41,7 +41,7 @@ func _ready() -> void:
   game._rotate_selected()
   assert(game.selected_building.polarity == -1)
   game.free()
-  Global.selected_level = "res://Levels/Magnet Stuff.level"
+  Global.selected_level = "res://Tests/magnet_fixture.level"
   game = GAME.instantiate()
   get_tree().root.add_child.call_deferred(game)
   await get_tree().process_frame

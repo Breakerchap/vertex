@@ -1,6 +1,8 @@
 class_name LevelParser
 extends RefCounted
 
+const CATALOG = preload("res://Buildings/building_catalog.gd")
+
 static func parse(source: String) -> Dictionary:
   var lines := PackedStringArray()
   for line in source.split("\n"):
@@ -15,7 +17,9 @@ static func parse(source: String) -> Dictionary:
   if data.width <= 0 or data.height <= 0:
     return {"error": "Grid dimensions must be positive."}
   var blocks := RegEx.new()
-  blocks.compile("(?is)(goal|emitter|mirror|detector|wall|magnetic_field|magnet|inventory)\\s*:\\s*\\{([^}]*)\\}")
+  var names: Array = CATALOG.SCENES.keys()
+  names.append_array(["goal", "inventory", "magnetic_field"])
+  blocks.compile("(?is)\\b(" + "|".join(names) + ")\\s*:\\s*\\{([^}]*)\\}")
   for block in blocks.search_all(text):
     var kind := block.get_string(1).to_lower()
     if kind == "magnetic_field": kind = "magnet"
@@ -55,7 +59,7 @@ static func parse(source: String) -> Dictionary:
           return {"error": "Invalid inventory entry: " + item}
         var name := pair[0].strip_edges().to_lower()
         if name == "magnetic_field": name = "magnet"
-        if name not in ["mirror", "wall", "emitter", "detector", "magnet"]:
+        if not CATALOG.SCENES.has(name):
           return {"error": "Unknown inventory item: " + name}
         data.inventory[name] = int(pair[1])
     else:

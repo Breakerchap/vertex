@@ -30,29 +30,37 @@ func _ready() -> void:
   levels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   levels.add_theme_constant_override("separation", 8)
   list.add_child(levels)
-  var files := DirAccess.get_files_at("res://Levels")
-  files.sort()
   var count := 0
-  for file in files:
-    if not file.to_lower().ends_with(".level"):
-      continue
-    count += 1
-    var path := "res://Levels/" + file
-    var parsed: Dictionary = PARSER.parse(FileAccess.get_file_as_string(path))
-    var button := Button.new()
-    button.custom_minimum_size.y = 44
-    button.text = file.trim_suffix(".level")
-    if parsed.has("error"):
-      button.text += "  (invalid)"
-      button.tooltip_text = parsed.error
-      button.disabled = true
-    else:
-      button.pressed.connect(_open_level.bind(path))
-    levels.add_child(button)
+  DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://levels"))
+  for directory in ["res://Levels", "user://levels"]:
+    if not DirAccess.dir_exists_absolute(directory): continue
+    var files := DirAccess.get_files_at(directory)
+    files.sort()
+    for file in files:
+      if not file.to_lower().ends_with(".level"):
+        continue
+      count += 1
+      var path: String = directory + "/" + file
+      var parsed: Dictionary = PARSER.parse(FileAccess.get_file_as_string(path))
+      var button := Button.new()
+      button.custom_minimum_size.y = 44
+      button.text = file.trim_suffix(".level") + ("  (custom)" if directory == "user://levels" else "")
+      if parsed.has("error"):
+        button.text += "  (invalid)"
+        button.tooltip_text = parsed.error
+        button.disabled = true
+      else:
+        button.pressed.connect(_open_level.bind(path))
+      levels.add_child(button)
   if count == 0:
     var empty := Label.new()
     empty.text = "No .level files found in Levels/."
     levels.add_child(empty)
+  var editor := Button.new()
+  editor.text = "Level editor"
+  editor.custom_minimum_size.y = 44
+  editor.pressed.connect(func() -> void: get_tree().change_scene_to_file("res://MainScene/level_editor.tscn"))
+  box.add_child(editor)
 
 func _open_level(path: String) -> void:
   Global.selected_level = path

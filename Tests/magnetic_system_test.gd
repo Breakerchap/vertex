@@ -74,7 +74,7 @@ func _run() -> void:
   sim.free()
   var data: Dictionary = PARSER.parse("7 x 7; goal: {electron: 1/s, 2/s, 3/s}; magnetic_field: {x=3,y=2,polarity=negative,fixed=p}; inventory: {magnet=2};")
   _check(not data.has("error") and data.buildings[0].kind == "magnet" and data.buildings[0].polarity == "negative" and data.inventory.magnet == 2, "Magnetic field level syntax should parse.")
-  var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Levels/Magnet Stuff.level"))
+  var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Tests/magnet_fixture.level"))
   _check(not level.has("error"), "Magnet Stuff should parse: " + str(level.get("error", "")))
   if not level.has("error"):
     _check(level.goals[0].has("[electron,positron]"), "Grouped goals should preserve their particle list.")
