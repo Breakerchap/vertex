@@ -21,10 +21,20 @@ const FORECAST_WINDOWS: int = 3
 
 signal editor_cell_clicked(cell: Vector2i, button: int)
 signal editor_cell_dragged(from_cell: Vector2i, to_cell: Vector2i)
+signal exit_playtest_requested
 var drag_cell := Vector2i(-1, -1)
 var drag_start := Vector2.ZERO
 
 var editor_preview := false
+var editor_playtest := false
+var level_override: Dictionary = {}
+var editor_brush := ""
+var diagnostic_overlay: Node2D
+var diagnostics_enabled := false
+var undo_history: Array[Dictionary] = []
+var redo_history: Array[Dictionary] = []
+var restoring_history := false
+var last_hud_update := 0.0
 var editor_bottom_inset := 190.0
 var level: Dictionary = {}
 var buildings: Array[Node] = []
@@ -46,6 +56,12 @@ var config_rate_row: HBoxContainer
 var selection_label: Label
 var status_label: Label
 var goals_label: Label
+var measurement_label: Label
+var measurement_bar: ProgressBar
+var rotate_button: Button
+var configure_button: Button
+var remove_button: Button
+var next_level_button: Button
 var palette: PanelContainer
 var star_icons: Array[TextureRect] = []
 var results: AcceptDialog
@@ -60,12 +76,14 @@ func _ready() -> void:
     editor_overlay.set_script(OVERLAY)
     editor_overlay.z_index = 100
     add_child(editor_overlay)
+    diagnostic_overlay = editor_overlay
+    particle_event.connect(_on_particle_event)
     get_viewport().size_changed.connect(_fit_camera)
     return
-  if Global.selected_level.is_empty():
+  if Global.selected_level.is_empty() and level_override.is_empty():
     get_tree().call_deferred("change_scene_to_file", "res://MainScene/level_select.tscn")
     return
-  level = PARSER.parse(FileAccess.get_file_as_string(Global.selected_level))
+  level = level_override.duplicate(true) if not level_override.is_empty() else PARSER.parse(FileAccess.get_file_as_string(Global.selected_level))
   if level.has("error"):
     push_error("Cannot load level: " + str(level.error))
     get_tree().call_deferred("change_scene_to_file", "res://MainScene/level_select.tscn")
@@ -77,6 +95,8 @@ func _ready() -> void:
   overlay.set_script(OVERLAY)
   overlay.z_index = 100
   add_child(overlay)
+  diagnostic_overlay = overlay
+  particle_event.connect(_on_particle_event)
   _load_initial_board()
   get_viewport().size_changed.connect(_fit_camera)
   _fit_camera()
@@ -94,7 +114,7 @@ func _fit_camera() -> void:
   var camera: Camera2D = $Camera2D
   camera.position = Vector2(level.width - 1, level.height - 1) * CELL * 0.5
   var view := get_viewport_rect().size
-  var bottom_inset := editor_bottom_inset if editor_preview else 118.0
+  var bottom_inset := editor_bottom_inset if editor_preview else 186.0
   var top_inset := 80.0
   var available := Vector2(maxf(100.0, view.x - 290.0), maxf(100.0, view.y - top_inset - bottom_inset))
   var board := Vector2(level.width, level.height) * CELL
@@ -110,7 +130,7 @@ func _create_hud() -> void:
   panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
   panel.offset_left = 16
   panel.offset_right = -272
-  panel.offset_top = -118
+  panel.offset_top = -186
   panel.offset_bottom = -16
   layer.add_child(panel)
   var margin := MarginContainer.new()
@@ -118,9 +138,20 @@ func _create_hud() -> void:
     margin.add_theme_constant_override(side, 8)
   panel.add_child(margin)
   var column := VBoxContainer.new()
+  column.add_theme_constant_override("separation", 4)
   margin.add_child(column)
   status_label = Label.new()
   column.add_child(status_label)
+  goals_label = Label.new()
+  goals_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+  column.add_child(goals_label)
+  measurement_label = Label.new()
+  column.add_child(measurement_label)
+  measurement_bar = ProgressBar.new()
+  measurement_bar.custom_minimum_size.y = 8
+  measurement_bar.max_value = WINDOW_SECONDS
+  measurement_bar.show_percentage = false
+  column.add_child(measurement_bar)
   palette = PALETTE.new()
   layer.add_child(palette)
   palette.mode_changed.connect(func(enabled: bool) -> void:
@@ -162,12 +193,20 @@ func _create_hud() -> void:
   var actions := HBoxContainer.new()
   actions.add_theme_constant_override("separation", 6)
   column.add_child(actions)
-  _button(actions, "Rotate / polarity [R]", _rotate_selected)
-  _button(actions, "Configure...", _open_config)
-  _button(actions, "Remove [Del]", _remove_selected)
+  rotate_button = _button(actions, "Rotate / polarity [R]", _rotate_selected)
+  configure_button = _button(actions, "Configure...", _open_config)
+  remove_button = _button(actions, "Remove [Del]", _remove_selected)
   stop_button = _button(actions, "Back to build [B]", stop_to_build)
   _button(actions, "Reset level [X]", reset_level)
-  _button(actions, "Level select", _return_to_select)
+  _button(actions, "Back to editor" if editor_playtest else "Level select", _return_to_select)
+  var diagnostics := CheckButton.new()
+  diagnostics.text = "Show interactions"
+  diagnostics.tooltip_text = "Highlight reflections, detections, collisions and particles leaving the board"
+  diagnostics.toggled.connect(func(enabled: bool) -> void:
+    diagnostics_enabled = enabled
+    if is_instance_valid(diagnostic_overlay): diagnostic_overlay.queue_redraw()
+  )
+  actions.add_child(diagnostics)
   config_dialog = AcceptDialog.new()
   config_dialog.title = "Building settings"
   config_dialog.min_size = Vector2i(400, 160)
@@ -191,6 +230,9 @@ func _create_hud() -> void:
   results.ok_button_text = "Back to build"
   results.confirmed.connect(stop_to_build)
   results.canceled.connect(stop_to_build)
+  results.custom_action.connect(_result_action)
+  next_level_button = results.add_button("Next level", true, "next")
+  next_level_button.visible = not editor_playtest and not Global.next_level_path(Global.selected_level).is_empty()
   layer.add_child(results)
 
 func _config_label(value: String) -> Label:
@@ -221,6 +263,7 @@ func _apply_config() -> void:
     if not PARSER._valid_particle(particle):
       config_dialog.title = "Unknown particle: " + particle
       return
+  _record_undo()
   entry.particles = particles
   entry.x = cell.x
   entry.y = cell.y
@@ -268,6 +311,8 @@ func _load_initial_board() -> void:
   buildings.clear()
   inventory = level.inventory.duplicate(true)
   cost = 0
+  undo_history.clear()
+  redo_history.clear()
   selected_building = null
   selected_kind = ""
   for entry in level.buildings:
@@ -363,6 +408,13 @@ func _unhandled_input(event: InputEvent) -> void:
         editor_cell_clicked.emit(cell, event.button_index)
     return
   if event is InputEventKey and event.pressed and not event.echo:
+    if event.ctrl_pressed and event.keycode == KEY_Z:
+      if event.shift_pressed: redo_build()
+      else: undo_build()
+      return
+    if event.ctrl_pressed and event.keycode == KEY_Y:
+      redo_build()
+      return
     match event.keycode:
       KEY_B: stop_to_build()
       KEY_X: reset_level()
@@ -393,6 +445,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _move_selected_to(cell: Vector2i) -> void:
   if not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position"): return
   if cell.x < 0 or cell.y < 0 or cell.x >= level.width or cell.y >= level.height or _building_at(cell) != null: return
+  _record_undo()
   selected_building.position = _cell_position(cell)
   selected_building.set_meta("cell", cell)
   _refresh_ui()
@@ -404,16 +457,22 @@ func _click_cell(cell: Vector2i, button_index: int) -> void:
   var target := _building_at(cell)
   if button_index == MOUSE_BUTTON_RIGHT:
     selected_building = target
-    _remove_selected()
+    selected_kind = ""
   elif button_index == MOUSE_BUTTON_LEFT:
     if target != null:
       selected_building = target
       selected_kind = ""
     elif palette.click_mode and not selected_kind.is_empty() and int(inventory.get(selected_kind, 0)) > 0:
       var entry := {"kind": selected_kind, "x": cell.x, "y": cell.y}
+      _record_undo()
       _place_building(entry, true)
       inventory[selected_kind] -= 1
       cost += COSTS[selected_kind]
+    elif is_instance_valid(selected_building):
+      if not selected_building.get_meta("fixed_position"):
+        _move_selected_to(cell)
+      else:
+        selected_building = null
     else:
       selected_building = null
     _refresh_ui()
@@ -422,6 +481,7 @@ func _click_cell(cell: Vector2i, button_index: int) -> void:
 func _rotate_selected() -> void:
   if simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_rotation"):
     return
+  _record_undo()
   if selected_building.get_meta("kind") == "magnet":
     selected_building.polarity *= -1
     queue_redraw()
@@ -432,6 +492,7 @@ func _rotate_selected() -> void:
 func _remove_selected() -> void:
   if simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position"):
     return
+  _record_undo()
   var building := selected_building
   if building.get_meta("from_inventory"):
     var kind: String = building.get_meta("kind")
@@ -453,7 +514,8 @@ func _select_inventory(kind: String) -> void:
 
 func _refresh_ui() -> void:
   if not is_instance_valid(status_label): return
-  var title := Global.selected_level.get_file().trim_suffix(".level")
+  var title := str(level.get("title", ""))
+  if title.is_empty(): title = Global.selected_level.get_file().trim_suffix(".level")
   var mode := "SIMULATING" if simulating else "BUILD"
   var tracked := "photon"
   for goal in level.goals:
@@ -464,7 +526,25 @@ func _refresh_ui() -> void:
     if tracked != "photon" or goal.has("photon"):
       break
   var recent_rate := float(_goal_count(windows.back(), tracked)) / WINDOW_SECONDS if not windows.is_empty() else 0.0
-  status_label.text = "%s   |   %s   |   Cost: %d   |   %s: %d   |   Last 5s: %.2f / s" % [title, mode, cost, tracked.capitalize(), _goal_count(total_counts, tracked), recent_rate]
+  status_label.text = "%s   |   %s   |   Cost: %d   |   %s: %d   |   Last 5s: %.2f/s" % [title, mode, cost, tracked.capitalize(), _goal_count(total_counts, tracked), recent_rate]
+  var descriptions := PackedStringArray()
+  for index in range(level.goals.size()):
+    var terms := PackedStringArray()
+    for key in level.goals[index]:
+      var values: Array = level.goals[index][key]
+      var units := "" if key == "cost" else "/s"
+      terms.append("%s: %s / %s / %s%s" % [str(key).capitalize(), _goal_value(values[0]), _goal_value(values[1]), _goal_value(values[2]), units])
+    descriptions.append(("OR " if index > 0 else "Goals (★/★★/★★★): ") + "   ·   ".join(terms))
+  goals_label.text = "\n".join(descriptions)
+  if not simulating:
+    measurement_label.text = str(level.get("hint", "Place buildings, then press Play."))
+  else:
+    var rate := float(_goal_count(window_counts, tracked)) / maxf(window_time, 0.001)
+    measurement_label.text = "Measuring %d/2 stable windows  |  Current %s: %.2f/s  |  %.1f/5s" % [mini(windows.size() + 1, 2), tracked, rate, window_time]
+  measurement_bar.value = window_time if simulating else 0.0
+  rotate_button.disabled = simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_rotation") if is_instance_valid(selected_building) else true
+  remove_button.disabled = simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position") if is_instance_valid(selected_building) else true
+  configure_button.disabled = simulating or not is_instance_valid(selected_building) or selected_building.get_meta("kind") not in ["emitter", "detector"] if is_instance_valid(selected_building) else true
   if is_instance_valid(selected_building):
     var cell: Vector2i = selected_building.get_meta("cell")
     var lock_note := "  ?  Position locked" if selected_building.get_meta("fixed_position") else "  ?  Drag to move"
@@ -486,6 +566,7 @@ func _drop_inventory(kind: String, screen_position: Vector2) -> void:
   var cell := Vector2i(roundi(point.x), level.height - 1 - roundi(point.y))
   if cell.x < 0 or cell.y < 0 or cell.x >= level.width or cell.y >= level.height: return
   if _building_at(cell) != null: return
+  _record_undo()
   _place_building({"kind": kind, "x": cell.x, "y": cell.y}, true)
   inventory[kind] -= 1
   cost += COSTS[kind]
@@ -501,6 +582,7 @@ func begin_run() -> void:
   selected_kind = ""
   _clear_particles()
   _clear_stats()
+  if is_instance_valid(diagnostic_overlay): diagnostic_overlay.clear_events()
   _accumulated_time = 0.0
   for building in buildings:
     if building.get_meta("kind") == "emitter":
@@ -526,7 +608,20 @@ func reset_level() -> void:
   _load_initial_board()
 
 func _return_to_select() -> void:
-  get_tree().change_scene_to_file("res://MainScene/level_select.tscn")
+  if editor_playtest:
+    exit_playtest_requested.emit()
+  else:
+    get_tree().change_scene_to_file("res://MainScene/level_select.tscn")
+
+func _result_action(action: StringName) -> void:
+  if action != &"next" or editor_playtest: return
+  var path := Global.next_level_path(Global.selected_level)
+  if path.is_empty(): return
+  Global.selected_level = path
+  get_tree().change_scene_to_file("res://MainScene/level_game.tscn")
+
+func _goal_value(value: float) -> String:
+  return "∞" if is_inf(value) else str(value)
 
 func _clear_particles() -> void:
   for particle in _particles():
@@ -549,6 +644,9 @@ func _on_simulation_stepped(delta: float) -> void:
   if not simulating or completed: return
   elapsed += delta
   window_time += delta
+  if elapsed - last_hud_update >= 0.4:
+    last_hud_update = elapsed
+    _refresh_ui()
   if window_time + 0.000001 < WINDOW_SECONDS: return
   windows.append(window_counts.duplicate())
   window_counts.clear()
@@ -564,6 +662,7 @@ func _on_simulation_stepped(delta: float) -> void:
   var stars := _stable_stars(samples)
   if stars > 0:
     completed = true
+    if not editor_playtest: Global.record_best_stars(Global.selected_level, stars)
     running = false
     cancel_pending_steps()
     var stats := ""
@@ -573,7 +672,7 @@ func _on_simulation_stepped(delta: float) -> void:
     if stats.is_empty(): stats = "\nNo particles detected"
     for i in range(star_icons.size()):
       star_icons[i].texture = FILLED_STAR if i < stars else EMPTY_STAR
-    results.dialog_text = "Simulation time: %.1f s\nBuild cost: %d\nDetected:%s" % [elapsed, cost, stats]
+    results.dialog_text = "%d star(s) earned\nSimulation time: %.1f s\nBuild cost: %d\nDetected:%s" % [stars, elapsed, cost, stats]
     results.popup_centered()
 
 func _goal_count(counts: Dictionary, key: String) -> int:
@@ -610,3 +709,57 @@ func _stable_stars(samples: Array[Dictionary]) -> int:
           satisfied = false
       if satisfied: best = maxi(best, star)
   return best
+
+func _on_particle_event(kind: String, at: Vector2) -> void:
+  if diagnostics_enabled and is_instance_valid(diagnostic_overlay):
+    diagnostic_overlay.add_event(kind, at)
+
+# Store the actual configured state rather than the original level declaration.
+func _snapshot_build() -> Dictionary:
+  var entries: Array[Dictionary] = []
+  for building in buildings:
+    if not is_instance_valid(building): continue
+    var entry: Dictionary = building.get_meta("entry").duplicate(true)
+    var cell: Vector2i = building.get_meta("cell")
+    entry.x = cell.x
+    entry.y = cell.y
+    var kind: String = building.get_meta("kind")
+    if kind == "emitter": entry.facing = DIRECTIONS[building.orientation]
+    elif kind == "mirror": entry.facing = DIRECTIONS[posmod(building.orientation - 2, 8)]
+    elif kind == "magnet": entry.polarity = "+" if building.polarity > 0 else "-"
+    if kind == "emitter": entry.rate = building.rate
+    entries.append({"entry": entry, "inventory_piece": building.get_meta("from_inventory")})
+  return {"entries": entries, "inventory": inventory.duplicate(true), "cost": cost}
+
+func _record_undo() -> void:
+  if simulating or restoring_history: return
+  undo_history.append(_snapshot_build())
+  if undo_history.size() > 100: undo_history.pop_front()
+  redo_history.clear()
+
+func _restore_build(snapshot: Dictionary) -> void:
+  restoring_history = true
+  for building in buildings:
+    if is_instance_valid(building):
+      remove_child(building)
+      building.queue_free()
+  buildings.clear()
+  inventory = snapshot.inventory.duplicate(true)
+  cost = snapshot.cost
+  selected_kind = ""
+  selected_building = null
+  for item in snapshot.entries:
+    _place_building(item.entry, item.inventory_piece)
+  restoring_history = false
+  _refresh_ui()
+  queue_redraw()
+
+func undo_build() -> void:
+  if simulating or undo_history.is_empty(): return
+  redo_history.append(_snapshot_build())
+  _restore_build(undo_history.pop_back())
+
+func redo_build() -> void:
+  if simulating or redo_history.is_empty(): return
+  undo_history.append(_snapshot_build())
+  _restore_build(redo_history.pop_back())
