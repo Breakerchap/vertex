@@ -11,7 +11,7 @@ var game
 var editor_panel: PanelContainer
 var inspector_panel: PanelContainer
 var inspector_heading: Label
-var test_game: Node2D
+var test_game
 var inspector_dialog: AcceptDialog
 var source_dialog: AcceptDialog
 var source_error: Label
@@ -883,6 +883,8 @@ func _start_playtest() -> void:
   if parsed.has("error") or parsed.is_empty() or is_instance_valid(test_game):
     status.text = "Fix level syntax before playtesting."
     return
+  game.running = false
+  game.cancel_pending_steps()
   game.hide()
   game.get_node("SimulationControls").visible = false
   editor_panel.hide()
@@ -899,6 +901,7 @@ func _end_playtest() -> void:
   test_game = null
   game.show()
   game.get_node("SimulationControls").visible = true
+  game._load_initial_board()
   editor_panel.show()
   inspector_panel.visible = selected_block >= 0
   palette.visible = selected_block < 0

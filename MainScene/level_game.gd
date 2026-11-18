@@ -30,7 +30,7 @@ var editor_playtest := false
 var level_override: Dictionary = {}
 var editor_brush := ""
 var external_palette: PanelContainer
-var diagnostic_overlay: Node2D
+var diagnostic_overlay
 var diagnostics_enabled := false
 var undo_history: Array[Dictionary] = []
 var redo_history: Array[Dictionary] = []
