@@ -1,6 +1,5 @@
 extends Node
 
-enum Flavour { UP, DOWN, ELECTRON, PHOTON }
 var selected_level: String = ""
 
 const PROGRESS_FILE := "user://level_progress.cfg"
@@ -8,15 +7,19 @@ const PROGRESS_FILE := "user://level_progress.cfg"
 func best_stars(level_path: String) -> int:
   var progress := ConfigFile.new()
   if progress.load(PROGRESS_FILE) != OK: return 0
-  return clampi(int(progress.get_value("stars", level_path, 0)), 0, 3)
+  return _stored_stars(progress, level_path)
 
 func record_best_stars(level_path: String, stars: int) -> void:
   var progress := ConfigFile.new()
-  progress.load(PROGRESS_FILE)
-  if stars > best_stars(level_path):
+  var loaded := progress.load(PROGRESS_FILE) == OK
+  var previous := _stored_stars(progress, level_path) if loaded else 0
+  if stars > previous:
     progress.set_value("stars", level_path, clampi(stars, 0, 3))
     var error := progress.save(PROGRESS_FILE)
     if error != OK: push_warning("Could not save level progress: " + error_string(error))
+
+func _stored_stars(progress: ConfigFile, level_path: String) -> int:
+  return clampi(int(progress.get_value("stars", level_path, 0)), 0, 3)
 
 func level_paths() -> Array[String]:
   var result: Array[String] = []

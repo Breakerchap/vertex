@@ -1,5 +1,16 @@
 extends Node2D
 
+const CATALOG = preload("res://Buildings/building_catalog.gd")
+
+const EVENT_COLOURS := {
+  "reflection": Color("8fc7ff"),
+  "field": Color("ceaeff"),
+  "detection": Color("75dcb0"),
+  "annihilation": Color("ffe08a"),
+  "absorption": Color("ee8585"),
+  "exit": Color("ee8585"),
+}
+
 var events: Array[Dictionary] = []
 
 func add_event(kind: String, at: Vector2) -> void:
@@ -24,7 +35,7 @@ func _draw() -> void:
     for building in game.buildings:
       if not is_instance_valid(building): continue
       var fixed_position: bool = building.get_meta("fixed_position")
-      var can_rotate: bool = building.get_meta("kind") in ["emitter", "mirror", "magnet"] and not building.get_meta("fixed_rotation")
+      var can_rotate: bool = building.get_meta("kind") in CATALOG.ROTATABLE_KINDS and not building.get_meta("fixed_rotation")
       var colour := Color("66d8b2")
       if fixed_position:
         colour = Color("f4c55d") if can_rotate else Color("f17f81")
@@ -34,12 +45,14 @@ func _draw() -> void:
         draw_rect(rectangle.grow(-5.0), Color.WHITE, false, 2.0)
 
     var hover: Vector2i = game._mouse_cell()
-    if hover.x >= 0 and hover.y >= 0 and hover.x < int(game.level.get("width", 0)) and hover.y < int(game.level.get("height", 0)):
-      var kind: String = game.editor_brush if game.editor_preview else game.selected_kind
-      if game.editor_preview and is_instance_valid(game.external_palette) and not game.external_palette.drag_kind.is_empty():
-        kind = game.external_palette.drag_kind
-      if not game.editor_preview and is_instance_valid(game.palette) and not game.palette.drag_kind.is_empty():
-        kind = game.palette.drag_kind
+    if game.is_cell_on_board(hover):
+      var palette = game.external_palette if game.editor_preview else game.palette
+      var kind: String = game.selected_kind
+      if is_instance_valid(palette):
+        if game.editor_preview:
+          kind = palette.selected
+        if not palette.drag_kind.is_empty():
+          kind = palette.drag_kind
       var dragging_building: bool = game.drag_cell.x >= 0 and is_instance_valid(game.selected_building)
       if kind.is_empty() and is_instance_valid(game.selected_building) and not game.selected_building.get_meta("fixed_position"):
         dragging_building = true
@@ -55,16 +68,8 @@ func _draw() -> void:
         draw_rect(rect, colour, true)
         draw_rect(rect, Color("69d8ad") if valid else Color("ec7377"), false, 3.0)
 
-  var colours := {
-    "reflection": Color("8fc7ff"),
-    "field": Color("ceaeff"),
-    "detection": Color("75dcb0"),
-    "annihilation": Color("ffe08a"),
-    "absorption": Color("ee8585"),
-    "exit": Color("ee8585")
-  }
   for event in events:
-    var shade: Color = colours.get(event.kind, Color.WHITE)
+    var shade: Color = EVENT_COLOURS.get(event.kind, Color.WHITE)
     shade.a = clampf(float(event.life) / 2.0, 0.0, 1.0)
     var at: Vector2 = event.position
     draw_arc(at, 11.0 + (2.0 - float(event.life)) * 7.0, 0, TAU, 24, shade, 2.5)

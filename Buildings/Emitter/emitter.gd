@@ -13,7 +13,7 @@ const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
     orientation = posmod(value, 8)
     rotation = orientation * PI / 4.0
 
-@export var particleFlavour: Global.Flavour = Global.Flavour.ELECTRON
+@export var particleFlavour: Particle.Flavour = Particle.Flavour.ELECTRON
 @export var isAnti: bool = false
 @export var direction: Vector2 = Vector2.RIGHT
 ## Number of particles emitted per second.
@@ -39,16 +39,16 @@ func _ready() -> void:
       start_sequence()
 
 ## Emit one particle into the enclosing simulation, travelling in emitter-local coordinates.
-func emit_particle(flavour: Global.Flavour, anti: bool, travel: Vector2, colour: Particle.ColourCharge = Particle.ColourCharge.NONE) -> Particle:
+func emit_particle(flavour: Particle.Flavour, anti: bool, travel: Vector2, colour: Particle.ColourCharge = Particle.ColourCharge.NONE) -> Particle:
   var simulation := _simulation()
   if simulation == null:
     push_warning("Emitter must be a child of a ParticleSimulation")
     return null
   var scene: PackedScene
   match flavour:
-    Global.Flavour.UP, Global.Flavour.DOWN: scene = QUARK_SCENE
-    Global.Flavour.ELECTRON: scene = ELECTRON_SCENE
-    Global.Flavour.PHOTON: scene = PHOTON_SCENE
+    Particle.Flavour.UP, Particle.Flavour.DOWN: scene = QUARK_SCENE
+    Particle.Flavour.ELECTRON: scene = ELECTRON_SCENE
+    Particle.Flavour.PHOTON: scene = PHOTON_SCENE
     _:
       push_warning("No particle scene exists for flavour %s" % flavour)
       return null
@@ -56,12 +56,12 @@ func emit_particle(flavour: Global.Flavour, anti: bool, travel: Vector2, colour:
     push_warning("Cannot emit a particle with a zero direction")
     return null
   var particle := scene.instantiate() as Particle
-  particle.flavour = flavour as Particle.Flavour
+  particle.flavour = flavour
   particle.colour = colour
   particle.isAnti = anti
   particle.direction = global_transform.basis_xform(travel).normalized()
   simulation.add_child(particle)
-  var radius := particle.collision_radius * absf(particle.global_scale.x)
+  var radius := particle.world_collision_radius()
   particle.global_position = collision_shape.global_position + particle.direction * exit_distance(particle.direction, radius)
   return particle
 

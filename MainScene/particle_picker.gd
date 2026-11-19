@@ -31,11 +31,11 @@ func _ready() -> void:
   add_child(toolbar)
   if not sequence:
     for token in ["AND", "OR", "(", ")"]:
-      buttons[token] = _button(toolbar, token, _append.bind(token))
+      buttons[token] = UI.button(toolbar, token, _append.bind(token))
     buttons["("].tooltip_text = "Open bracket"
     buttons[")"].tooltip_text = "Close bracket"
-  undo_button = _button(toolbar, "Remove last", _remove_last)
-  clear_button = _button(toolbar, "Clear", func() -> void:
+  undo_button = UI.button(toolbar, "Remove last", _remove_last)
+  clear_button = UI.button(toolbar, "Clear", func() -> void:
     tokens.clear()
     _changed()
   )
@@ -101,10 +101,3 @@ func _refresh() -> void:
   buttons["OR"].disabled = needs_particle
   buttons["("].disabled = not needs_particle
   buttons[")"].disabled = needs_particle or tokens.count("(") <= tokens.count(")")
-
-func _button(parent: Control, title: String, action: Callable) -> Button:
-  var button := Button.new()
-  button.text = title
-  button.pressed.connect(action)
-  parent.add_child(button)
-  return button

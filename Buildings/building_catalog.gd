@@ -10,3 +10,11 @@ const SCENES := {
   "magnet": preload("res://Buildings/MagneticField/magnetic_field.tscn"),
 }
 const COSTS := {"mirror": 10, "wall": 5, "emitter": 40, "detector": 30, "magnet": 20}
+
+const DIRECTIONS := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
+const ROTATABLE_KINDS := ["emitter", "mirror", "magnet"]
+const NEGATIVE_POLARITIES := ["negative", "-", "-1", "n"]
+const VALID_POLARITIES := ["positive", "+", "+1", "1", "p"] + NEGATIVE_POLARITIES
+
+static func rotation_lock_flag(kind: String) -> String:
+  return "c" if kind == "magnet" else "r"

@@ -46,6 +46,18 @@ static func theme() -> Theme:
   shared.set_color("font_color", "PrimaryButton", ACCENT)
   return shared
 
+static func label(text: String) -> Label:
+  var control := Label.new()
+  control.text = text
+  return control
+
+static func button(parent: Node, text: String, action: Callable) -> Button:
+  var control := Button.new()
+  control.text = text
+  control.pressed.connect(action)
+  parent.add_child(control)
+  return control
+
 static func heading(label: Label, size: int = 19) -> void:
   label.add_theme_font_size_override("font_size", size)
   label.add_theme_color_override("font_color", TEXT)

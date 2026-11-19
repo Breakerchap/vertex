@@ -53,8 +53,7 @@ func _init(source: ParticleSimulation, buildings: Array[Node], seconds: float) -
   shadow.particle_detected.connect(_on_detected)
 
 func _on_detected(particle_name: String) -> void:
-  var family := PARTICLES.family(particle_name)
-  for key in [particle_name, family] if not family.is_empty() else [particle_name]:
+  for key in PARTICLES.detection_keys(particle_name):
     counts[key] = int(counts.get(key, 0)) + 1
 
 ## Advance one measurement window over as many rendered frames as needed.

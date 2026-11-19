@@ -3,7 +3,6 @@ extends Particle
 func _ready() -> void:
   size = 0.85
   speed = 400
-  spin = 0.5
   charge = 1 if flavour == Flavour.UP else -1
   textures = [preload("res://Particles/Electron/electron.png")]
   super._ready()

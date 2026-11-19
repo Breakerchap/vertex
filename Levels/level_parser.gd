@@ -45,107 +45,24 @@ static func parse(source: String) -> Dictionary:
   for item in find_metadata(text):
     data[item.get_string(1).to_lower()] = item.get_string(2).strip_edges().trim_prefix('"').trim_suffix('"')
   for block in find_blocks(text):
-    var kind := block.get_string(1).to_lower()
-    if kind == "magnetic_field": kind = "magnet"
+    var kind := building_kind(block.get_string(1))
     var body := block.get_string(2)
-    if kind == "goal":
-      var goal := {}
-      var targets := {}
-      for clause in body.split(";", false):
-        var parts := clause.split(":", true, 1)
-        if parts.size() != 2:
-          return {"error": "Invalid goal: " + clause}
-        var values := []
-        for value in parts[1].split(",", false):
-          var token := value.strip_edges().to_lower().replace("/s", "")
-          if token == "inf":
-            values.append(INF)
-          elif token.is_valid_float() and float(token) >= 0.0:
-            values.append(float(token))
-          else:
-            return {"error": "Invalid goal value: " + token}
-        if values.size() != 3:
-          return {"error": "Each goal needs three values (one per star)."}
-        var target := parts[0].strip_edges()
-        if target.begins_with("[") and target.ends_with("]"):
-          var expression := particle_expression(target.substr(1, target.length() - 2))
-          if expression.has("error"):
-            return expression
-          if expression.accepted.is_empty():
-            return {"error": "Goal expression matches no particle: " + target}
-          var key := "[" + ",".join(expression.accepted) + "]"
-          goal[key] = values
-          targets[key] = target
-        else:
-          target = target.to_lower()
-          if target != "cost" and not _valid_particle(target):
-            return {"error": "Unknown goal target: " + target}
-          goal[target] = values
-      if goal.is_empty():
-        return {"error": "Empty goal."}
-      data.goals.append(goal)
-      data.goal_targets.append(targets)
-    elif kind == "inventory":
-      for item in body.split(",", false):
-        var pair := item.split("=", true, 1)
-        if pair.size() != 2 or not pair[1].strip_edges().is_valid_int() or int(pair[1]) < 0:
-          return {"error": "Invalid inventory entry: " + item}
-        var name := pair[0].strip_edges().to_lower()
-        if name == "magnetic_field": name = "magnet"
-        if not CATALOG.SCENES.has(name):
-          return {"error": "Unknown inventory item: " + name}
-        data.inventory[name] = int(pair[1])
-    else:
-      var entry := {"kind": kind, "facing": "E", "fixed": "", "rate": 1.0, "particles": []}
-      var list_regex := RegEx.new()
-      list_regex.compile("\\[([^]]*)\\]")
-      var list_match := list_regex.search(body)
-      if list_match:
-        if kind == "detector":
-          var expression := particle_expression(list_match.get_string(1))
-          if expression.has("error"):
-            return expression
-          entry.particles = expression.particles
-          entry.accepted = expression.accepted
-          entry.particle_expression = list_match.get_string(1).strip_edges()
-        else:
-          for value in list_match.get_string(1).split(",", false):
-            entry.particles.append(value.strip_edges().to_lower())
-        body = body.substr(0, list_match.get_start()) + body.substr(list_match.get_end())
-      for part in body.split(",", false):
-        var token := part.strip_edges()
-        if token.is_empty():
-          continue
-        var pair := token.split("=", true, 1)
-        if pair.size() == 2:
-          entry[pair[0].strip_edges().to_lower()] = pair[1].strip_edges().to_lower()
-        elif kind == "magnet" and token in ["+", "-", "+1", "-1"]:
-          entry.polarity = token
-        else:
-          entry.facing = token.to_upper()
-      if kind == "magnet" and str(entry.get("polarity", "positive")) not in ["positive", "negative", "+", "-", "+1", "-1", "1", "p", "n"]:
-        return {"error": "Invalid magnetic polarity: " + str(entry.polarity)}
-      if not entry.has("x") or not entry.has("y"):
-        return {"error": kind + " needs x and y coordinates."}
-      if entry.facing not in ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]:
-        return {"error": "Invalid direction: " + entry.facing}
-      if not str(entry.rate).is_valid_float() or float(entry.rate) <= 0.0:
-        return {"error": "Emitter rate must be positive."}
-      for name in entry.particles:
-        if not _valid_particle(name):
-          return {"error": "Unknown particle: " + name}
-      var xs := _range_values(str(entry.x))
-      var ys := _range_values(str(entry.y))
-      if xs.is_empty() or ys.is_empty():
-        return {"error": "Invalid coordinate or range for " + kind}
-      for x in xs:
-        for y in ys:
-          if x < 0 or y < 0 or x >= data.width or y >= data.height:
-            return {"error": "%s coordinate (%d, %d) is outside the grid." % [kind, x, y]}
-          var placed: Dictionary = entry.duplicate(true)
-          placed.x = x
-          placed.y = y
-          data.buildings.append(placed)
+    match kind:
+      "goal":
+        var result := _parse_goal(body)
+        if result.has("error"):
+          return result
+        data.goals.append(result.goal)
+        data.goal_targets.append(result.targets)
+      "inventory":
+        var result := _parse_inventory(body, data.inventory)
+        if result.has("error"):
+          return result
+      _:
+        var result := parse_building(kind, body, data.width, data.height)
+        if result.has("error"):
+          return result
+        data.buildings.append_array(result.entries)
   if data.goals.is_empty():
     return {"error": "The level needs at least one goal."}
   var occupied := {}
@@ -155,6 +72,112 @@ static func parse(source: String) -> Dictionary:
       return {"error": "Overlapping buildings at (%d, %d)." % [cell.x, cell.y]}
     occupied[cell] = true
   return data
+
+static func building_kind(name: String) -> String:
+  var kind := name.to_lower()
+  return "magnet" if kind == "magnetic_field" else kind
+
+static func _parse_goal(body: String) -> Dictionary:
+  var goal := {}
+  var targets := {}
+  for clause in body.split(";", false):
+    var parts := clause.split(":", true, 1)
+    if parts.size() != 2:
+      return {"error": "Invalid goal: " + clause}
+    var values := []
+    for value in parts[1].split(",", false):
+      var token := value.strip_edges().to_lower().replace("/s", "")
+      if token == "inf":
+        values.append(INF)
+      elif token.is_valid_float() and float(token) >= 0.0:
+        values.append(float(token))
+      else:
+        return {"error": "Invalid goal value: " + token}
+    if values.size() != 3:
+      return {"error": "Each goal needs three values (one per star)."}
+    var target := parts[0].strip_edges()
+    if target.begins_with("[") and target.ends_with("]"):
+      var expression := particle_expression(target.substr(1, target.length() - 2))
+      if expression.has("error"):
+        return expression
+      if expression.accepted.is_empty():
+        return {"error": "Goal expression matches no particle: " + target}
+      var key := "[" + ",".join(expression.accepted) + "]"
+      goal[key] = values
+      targets[key] = target
+    else:
+      target = target.to_lower()
+      if target != "cost" and not _valid_particle(target):
+        return {"error": "Unknown goal target: " + target}
+      goal[target] = values
+  if goal.is_empty():
+    return {"error": "Empty goal."}
+  return {"goal": goal, "targets": targets}
+
+static func _parse_inventory(body: String, inventory: Dictionary) -> Dictionary:
+  for item in body.split(",", false):
+    var pair := item.split("=", true, 1)
+    if pair.size() != 2 or not pair[1].strip_edges().is_valid_int() or int(pair[1]) < 0:
+      return {"error": "Invalid inventory entry: " + item}
+    var name := building_kind(pair[0].strip_edges())
+    if not CATALOG.SCENES.has(name):
+      return {"error": "Unknown inventory item: " + name}
+    inventory[name] = int(pair[1])
+  return {}
+
+static func parse_building(kind: String, body: String, width: int, height: int) -> Dictionary:
+  var entry := {"kind": kind, "facing": "E", "fixed": "", "rate": 1.0, "particles": []}
+  var list_regex := RegEx.new()
+  list_regex.compile("\\[([^]]*)\\]")
+  var list_match := list_regex.search(body)
+  if list_match:
+    if kind == "detector":
+      var expression := particle_expression(list_match.get_string(1))
+      if expression.has("error"):
+        return expression
+      entry.particles = expression.particles
+      entry.accepted = expression.accepted
+      entry.particle_expression = list_match.get_string(1).strip_edges()
+    else:
+      for value in list_match.get_string(1).split(",", false):
+        entry.particles.append(value.strip_edges().to_lower())
+    body = body.substr(0, list_match.get_start()) + body.substr(list_match.get_end())
+  for part in body.split(",", false):
+    var token := part.strip_edges()
+    if token.is_empty():
+      continue
+    var pair := token.split("=", true, 1)
+    if pair.size() == 2:
+      entry[pair[0].strip_edges().to_lower()] = pair[1].strip_edges().to_lower()
+    elif kind == "magnet" and token in ["+", "-", "+1", "-1"]:
+      entry.polarity = token
+    else:
+      entry.facing = token.to_upper()
+  if kind == "magnet" and str(entry.get("polarity", "positive")) not in CATALOG.VALID_POLARITIES:
+    return {"error": "Invalid magnetic polarity: " + str(entry.polarity)}
+  if not entry.has("x") or not entry.has("y"):
+    return {"error": kind + " needs x and y coordinates."}
+  if entry.facing not in CATALOG.DIRECTIONS:
+    return {"error": "Invalid direction: " + entry.facing}
+  if not str(entry.rate).is_valid_float() or float(entry.rate) <= 0.0:
+    return {"error": "Emitter rate must be positive."}
+  for name in entry.particles:
+    if not _valid_particle(name):
+      return {"error": "Unknown particle: " + name}
+  var xs := _range_values(str(entry.x))
+  var ys := _range_values(str(entry.y))
+  if xs.is_empty() or ys.is_empty():
+    return {"error": "Invalid coordinate or range for " + kind}
+  var entries: Array[Dictionary] = []
+  for x in xs:
+    for y in ys:
+      if x < 0 or y < 0 or x >= width or y >= height:
+        return {"error": "%s coordinate (%d, %d) is outside the grid." % [kind, x, y]}
+      var placed: Dictionary = entry.duplicate(true)
+      placed.x = x
+      placed.y = y
+      entries.append(placed)
+  return {"entries": entries}
 
 static func _range_values(value: String) -> Array[int]:
   var result: Array[int] = []

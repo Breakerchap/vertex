@@ -16,13 +16,13 @@ var level_bounds_enabled: bool = false
 var level_bounds: Rect2
 
 func _physics_process(delta: float) -> void:
+  var step_duration := 1.0 / float(Engine.physics_ticks_per_second)
   if not running:
     if _pending_steps > 0:
       _pending_steps -= 1
-      step_simulation(1.0 / float(Engine.physics_ticks_per_second))
+      step_simulation(step_duration)
     return
   _pending_steps = 0
-  var step_duration := 1.0 / float(Engine.physics_ticks_per_second)
   _accumulated_time += delta * maxf(get_playback_speed(), 0.0)
   while running and _accumulated_time + 0.0000001 >= step_duration:
     _accumulated_time = maxf(0.0, _accumulated_time - step_duration)
@@ -43,22 +43,15 @@ func request_steps(count: int) -> void:
 func cancel_pending_steps() -> void:
   _pending_steps = 0
 
-## Pause and advance one fixed physics tick, independent of the speed setting.
-func step_once() -> void:
-  running = false
-  cancel_pending_steps()
-  _accumulated_time = 0.0
-  step_simulation(1.0 / float(Engine.physics_ticks_per_second))
-
 ## Advances every particle and resolves collisions once per explicit call.
 func step_simulation(delta: float) -> void:
   assert(delta >= 0.0, "Simulation delta cannot be negative")
   for emitter in get_tree().get_nodes_in_group("particle_emitters"):
-    if is_ancestor_of(emitter) and not emitter.is_queued_for_deletion():
+    if _is_active_descendant(emitter):
       emitter.step_emission(delta)
   var particles := _particles()
   var obstacles := _obstacles()
-  var fields := _fields()
+  var fields := _active_descendants("magnetic_fields")
   var previous_positions := {}
   for particle in particles:
     previous_positions[particle] = particle.global_position
@@ -67,18 +60,19 @@ func step_simulation(delta: float) -> void:
       particle_event.emit("exit", particle.global_position)
       particle.queue_free()
 
-  var consumed: Dictionary = {}
+  _resolve_particle_contacts(particles, previous_positions)
+  simulation_stepped.emit(delta)
+
+func _resolve_particle_contacts(particles: Array[Particle], previous_positions: Dictionary) -> void:
   for i in range(particles.size()):
     var a: Particle = particles[i]
-    if not is_instance_valid(a) or a.is_queued_for_deletion() or consumed.has(a):
+    if not is_instance_valid(a) or a.is_queued_for_deletion():
       continue
     for j in range(i + 1, particles.size()):
       var b: Particle = particles[j]
-      if not is_instance_valid(b) or b.is_queued_for_deletion() or consumed.has(b):
+      if not is_instance_valid(b) or b.is_queued_for_deletion():
         continue
-      var radius_a : float = a.collision_radius * absf(a.global_scale.x)
-      var radius_b : float = b.collision_radius * absf(b.global_scale.x)
-      var contact_radius := radius_a + radius_b
+      var contact_radius := a.world_collision_radius() + b.world_collision_radius()
       var photon_electron := (a.flavour == Particle.Flavour.PHOTON and b.flavour == Particle.Flavour.ELECTRON) or (b.flavour == Particle.Flavour.PHOTON and a.flavour == Particle.Flavour.ELECTRON)
       if photon_electron:
         # Relative swept movement catches particles that cross between ticks.
@@ -91,7 +85,6 @@ func step_simulation(delta: float) -> void:
           var photon := a if a.flavour == Particle.Flavour.PHOTON else b
           particle_event.emit("absorption", photon.global_position)
           photon.queue_free()
-          consumed[photon] = true
           if photon == a:
             break
           continue
@@ -99,10 +92,7 @@ func step_simulation(delta: float) -> void:
         continue
       if a.flavour == b.flavour and a.isAnti != b.isAnti:
         _annihilate(a, b)
-        consumed[a] = true
-        consumed[b] = true
         break
-  simulation_stepped.emit(delta)
 
 ## Sweep against buildings and follow smooth magnetic arcs in fixed-size segments.
 func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node], fields: Array[Node]) -> void:
@@ -127,13 +117,13 @@ func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node],
       turn = angle * particle.magnetic_turn_sign
       motion = particle.direction.normalized().rotated(turn * 0.5) * (2.0 * radius * sin(angle * 0.5))
     var hit: Dictionary = {}
+    var particle_radius := particle.world_collision_radius()
     for obstacle in obstacles:
-      var radius := particle.collision_radius * absf(particle.global_scale.x)
       var candidate: Dictionary
       if particle.flavour == Particle.Flavour.PHOTON and obstacle.has_method("sweep_photon"):
-        candidate = obstacle.sweep_photon(particle.global_position, motion, radius)
+        candidate = obstacle.sweep_photon(particle.global_position, motion, particle_radius)
       else:
-        candidate = obstacle.sweep(particle.global_position, motion, radius)
+        candidate = obstacle.sweep(particle.global_position, motion, particle_radius)
       if not candidate.is_empty() and (hit.is_empty() or candidate.fraction < hit.fraction):
         hit = candidate
         hit["obstacle"] = obstacle
@@ -173,22 +163,21 @@ func _advance_particle(particle: Particle, delta: float, obstacles: Array[Node],
     particle.direction = particle.direction.bounce(normal).normalized()
     particle.global_position += particle.direction * 0.001
 
-func _fields() -> Array[Node]:
+func _obstacles() -> Array[Node]:
+  # Check mirrors first so they keep priority when two impacts have the same fraction.
+  var obstacles := _active_descendants("particle_mirrors")
+  obstacles.append_array(_active_descendants("particle_blockers"))
+  return obstacles
+
+func _active_descendants(group: StringName) -> Array[Node]:
   var result: Array[Node] = []
-  for field in get_tree().get_nodes_in_group("magnetic_fields"):
-    if is_ancestor_of(field) and not field.is_queued_for_deletion():
-      result.append(field)
+  for node in get_tree().get_nodes_in_group(group):
+    if _is_active_descendant(node):
+      result.append(node)
   return result
 
-func _obstacles() -> Array[Node]:
-  var result: Array[Node] = []
-  for mirror in get_tree().get_nodes_in_group("particle_mirrors"):
-    if is_ancestor_of(mirror) and not mirror.is_queued_for_deletion():
-      result.append(mirror)
-  for blocker in get_tree().get_nodes_in_group("particle_blockers"):
-    if is_ancestor_of(blocker) and not blocker.is_queued_for_deletion():
-      result.append(blocker)
-  return result
+func _is_active_descendant(node: Node) -> bool:
+  return is_ancestor_of(node) and not node.is_queued_for_deletion()
 
 func _particles() -> Array[Particle]:
   var result: Array[Particle] = []

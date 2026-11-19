@@ -11,11 +11,8 @@ const OVERLAY = preload("res://MainScene/placement_overlay.gd")
 const PALETTE = preload("res://MainScene/building_palette.gd")
 const OUTPUT_METER = preload("res://MainScene/output_meter.gd")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
-const CELL: float = 102.4
-const SCENES := CATALOG.SCENES
-# Costs are shared by all levels, as described by the level format.
-const COSTS := CATALOG.COSTS
-const DIRECTIONS := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
+const BUILDING = preload("res://Buildings/building.gd")
+const CELL := BUILDING.GRID_SIZE
 const SIDEBAR_WIDTH := 288.0
 const RECENT_SECONDS := 2.0
 const SPEED_RAMP_START := 3.0
@@ -33,17 +30,14 @@ var drag_start := Vector2.ZERO
 var editor_preview := false
 var editor_playtest := false
 var level_override: Dictionary = {}
-var editor_brush := ""
 var external_palette: PanelContainer
 var diagnostic_overlay
 var undo_history: Array[Dictionary] = []
 var redo_history: Array[Dictionary] = []
-var restoring_history := false
 var last_hud_update := 0.0
 var editor_bottom_inset := 190.0
 var editor_sidebar_width := 256.0
 var hud_panel: PanelContainer
-var sidebar: VBoxContainer
 var level: Dictionary = {}
 var buildings: Array[Node] = []
 var inventory: Dictionary = {}
@@ -68,7 +62,6 @@ var output_rows: Array[Dictionary] = []
 var rotate_button: Button
 var rotate_left_button: Button
 var remove_button: Button
-var next_level_button: Button
 var restart_button: Button
 var palette: PanelContainer
 var results: AcceptDialog
@@ -79,12 +72,7 @@ func _ready() -> void:
   RenderingServer.set_default_clear_color(UI.BACKGROUND)
   $SimulationControls/Panel.theme = UI.theme()
   if editor_preview:
-    var editor_overlay := Node2D.new()
-    editor_overlay.set_script(OVERLAY)
-    editor_overlay.z_index = 100
-    add_child(editor_overlay)
-    diagnostic_overlay = editor_overlay
-    particle_event.connect(_on_particle_event)
+    _add_diagnostic_overlay()
     get_viewport().size_changed.connect(_fit_camera)
     return
   if Global.selected_level.is_empty() and level_override.is_empty():
@@ -98,15 +86,18 @@ func _ready() -> void:
   particle_detected.connect(_on_particle_detected)
   simulation_stepped.connect(_on_simulation_stepped)
   _create_hud()
+  _add_diagnostic_overlay()
+  _load_initial_board()
+  get_viewport().size_changed.connect(_fit_camera)
+  _fit_camera()
+
+func _add_diagnostic_overlay() -> void:
   var overlay := Node2D.new()
   overlay.set_script(OVERLAY)
   overlay.z_index = 100
   add_child(overlay)
   diagnostic_overlay = overlay
   particle_event.connect(_on_particle_event)
-  _load_initial_board()
-  get_viewport().size_changed.connect(_fit_camera)
-  _fit_camera()
 
 func _exit_tree() -> void:
   _cancel_forecast()
@@ -169,15 +160,15 @@ func _create_hud() -> void:
   column.add_child(selection_label)
   var actions := HFlowContainer.new()
   column.add_child(actions)
-  rotate_left_button = _button(actions, "↶  Q", _rotate_selected.bind(-1))
+  rotate_left_button = UI.button(actions, "↶  Q", _rotate_selected.bind(-1))
   rotate_left_button.tooltip_text = "Rotate counterclockwise"
-  rotate_button = _button(actions, "↷  E", _rotate_selected)
+  rotate_button = UI.button(actions, "↷  E", _rotate_selected)
   rotate_button.tooltip_text = "Rotate clockwise"
-  remove_button = _button(actions, "Remove  Del", _remove_selected)
+  remove_button = UI.button(actions, "Remove  Del", _remove_selected)
   stop_button = $SimulationControls.enable_build(stop_to_build)
-  restart_button = _button(actions, "Restart", restart_run)
-  _button(actions, "Reset  X", reset_level)
-  _button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
+  restart_button = UI.button(actions, "Restart", restart_run)
+  UI.button(actions, "Reset  X", reset_level)
+  UI.button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
   results = AcceptDialog.new()
   results.theme = UI.theme()
   results.title = "Level complete"
@@ -185,14 +176,9 @@ func _create_hud() -> void:
   results.confirmed.connect(stop_to_build)
   results.canceled.connect(stop_to_build)
   results.custom_action.connect(_result_action)
-  next_level_button = results.add_button("Next level", true, "next")
+  var next_level_button := results.add_button("Next level", true, "next")
   next_level_button.visible = not editor_playtest and not Global.next_level_path(Global.selected_level).is_empty()
   layer.add_child(results)
-
-func _label(value: String) -> Label:
-  var label := Label.new()
-  label.text = value
-  return label
 
 func _add_level_heading(layer: CanvasLayer) -> void:
   var header := VBoxContainer.new()
@@ -205,13 +191,13 @@ func _add_level_heading(layer: CanvasLayer) -> void:
   layer.add_child(header)
   var title := str(level.get("title", ""))
   if title.is_empty(): title = "Playtest" if editor_playtest else Global.selected_level.get_file().get_basename()
-  var heading := _label(title)
+  var heading := UI.label(title)
   UI.heading(heading, 25)
   heading.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
   header.add_child(heading)
 
 func _add_sidebar(layer: CanvasLayer) -> void:
-  sidebar = VBoxContainer.new()
+  var sidebar := VBoxContainer.new()
   sidebar.name = "Sidebar"
   sidebar.theme = UI.theme()
   sidebar.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
@@ -255,7 +241,7 @@ func _add_goals(rows: VBoxContainer) -> void:
   var targets: Array = level.get("goal_targets", [])
   for index in range(level.goals.size()):
     if index > 0:
-      var divider := _label("OR")
+      var divider := UI.label("OR")
       UI.muted(divider, 11)
       rows.add_child(divider)
     var goal: Dictionary = level.goals[index]
@@ -283,11 +269,11 @@ func _add_goals(rows: VBoxContainer) -> void:
       details.add_theme_constant_override("separation", 0)
       row.add_child(details)
       if output_count > 1:
-        var name_label := _label(title)
+        var name_label := UI.label(title)
         UI.muted(name_label, 12)
         name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
         details.add_child(name_label)
-      var rate_label := _label("")
+      var rate_label := UI.label("")
       rate_label.add_theme_color_override("font_color", UI.ACCENT)
       rate_label.tooltip_text = "Recent output · " + title
       rate_label.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -299,13 +285,13 @@ func _add_goals(rows: VBoxContainer) -> void:
       output_rows.append({"key": key, "meter": meter, "label": rate_label})
   var hint := str(level.get("hint", ""))
   if not hint.is_empty():
-    var prompt := _label(hint)
+    var prompt := UI.label(hint)
     UI.muted(prompt)
     prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(prompt)
 
 func _add_goal_cells(table: GridContainer, title: String, values: Array, heading := false) -> void:
-  var label := _label(title)
+  var label := UI.label(title)
   label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
   label.tooltip_text = title
@@ -313,7 +299,7 @@ func _add_goal_cells(table: GridContainer, title: String, values: Array, heading
   if heading: UI.heading(label, 15)
   table.add_child(label)
   for value in values:
-    var cell := _label(value)
+    var cell := UI.label(value)
     cell.custom_minimum_size.x = 43
     cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     cell.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -322,24 +308,13 @@ func _add_goal_cells(table: GridContainer, title: String, values: Array, heading
     if heading: cell.add_theme_color_override("font_color", UI.GOLD)
     table.add_child(cell)
 
-func _button(parent: Node, title: String, action: Callable) -> Button:
-  var button := Button.new()
-  button.text = title
-  button.pressed.connect(action)
-  parent.add_child(button)
-  return button
-
 func _load_initial_board() -> void:
   running = false
   cancel_pending_steps()
   simulating = false
   completed = false
   _clear_particles()
-  for building in buildings:
-    if is_instance_valid(building):
-      remove_child(building)
-      building.queue_free()
-  buildings.clear()
+  _clear_buildings()
   inventory = level.inventory.duplicate(true)
   cost = 0
   undo_history.clear()
@@ -354,23 +329,30 @@ func _load_initial_board() -> void:
   _refresh_ui()
   queue_redraw()
 
+func _clear_buildings() -> void:
+  for building in buildings:
+    if is_instance_valid(building):
+      remove_child(building)
+      building.queue_free()
+  buildings.clear()
+
 func _place_building(entry: Dictionary, from_inventory: bool) -> void:
-  var scene: PackedScene = SCENES[entry.kind]
+  var scene: PackedScene = CATALOG.SCENES[entry.kind]
   var building := scene.instantiate()
   var cell := Vector2i(int(entry.x), int(entry.y))
   building.position = _cell_position(cell)
   building.set_meta("entry", entry.duplicate(true))
   building.set_meta("cell", cell)
   building.set_meta("kind", entry.kind)
-  building.set_meta("fixed_position", "p" in str(entry.get("fixed", "")))
-  var fixed_flag := "c" if entry.kind == "magnet" else "r"
-  building.set_meta("fixed_rotation", fixed_flag in str(entry.get("fixed", "")))
+  var fixed := str(entry.get("fixed", ""))
+  building.set_meta("fixed_position", "p" in fixed)
+  building.set_meta("fixed_rotation", CATALOG.rotation_lock_flag(entry.kind) in fixed)
   building.set_meta("from_inventory", from_inventory)
   if entry.kind in ["mirror", "emitter"]:
-    var direction := DIRECTIONS.find(entry.get("facing", "E"))
+    var direction := CATALOG.DIRECTIONS.find(entry.get("facing", "E"))
     building.orientation = (direction + 2) % 8 if entry.kind == "mirror" else direction
   if entry.kind == "magnet":
-    building.polarity = -1 if str(entry.get("polarity", "positive")) in ["negative", "-", "-1", "n"] else 1
+    building.polarity = -1 if str(entry.get("polarity", "positive")) in CATALOG.NEGATIVE_POLARITIES else 1
   if entry.kind == "emitter":
     building.start_on_ready = false
     building.rate = float(entry.get("rate", 1.0))
@@ -400,8 +382,17 @@ func _cell_position(cell: Vector2i) -> Vector2:
   return Vector2(cell.x, level.height - 1 - cell.y) * CELL
 
 func _mouse_cell() -> Vector2i:
-  var point := get_global_mouse_position() / CELL
-  return Vector2i(roundi(point.x), level.height - 1 - roundi(point.y))
+  return _world_to_cell(get_global_mouse_position())
+
+func screen_to_cell(screen_position: Vector2) -> Vector2i:
+  return _world_to_cell(get_canvas_transform().affine_inverse() * screen_position)
+
+func _world_to_cell(world_position: Vector2) -> Vector2i:
+  var point := world_position / CELL
+  return Vector2i(roundi(point.x), int(level.get("height", 0)) - 1 - roundi(point.y))
+
+func is_cell_on_board(cell: Vector2i) -> bool:
+  return cell.x >= 0 and cell.y >= 0 and cell.x < level.get("width", 0) and cell.y < level.get("height", 0)
 
 func _building_at(cell: Vector2i) -> Node:
   for building in buildings:
@@ -416,18 +407,7 @@ func _unhandled_input(event: InputEvent) -> void:
       if event.keycode == KEY_SPACE: $SimulationControls._toggle_running()
       elif event.keycode == KEY_PERIOD: $SimulationControls._step_once()
       return
-    if not simulating and event is InputEventMouseButton:
-      var cell := _mouse_cell()
-      if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
-        if drag_cell.x >= 0 and event.position.distance_to(drag_start) > 8.0:
-          editor_cell_dragged.emit(drag_cell, cell)
-        drag_cell = Vector2i(-1, -1)
-      elif event.pressed and cell.x >= 0 and cell.y >= 0 and cell.x < level.get("width", 0) and cell.y < level.get("height", 0):
-        if event.button_index == MOUSE_BUTTON_LEFT: drag_cell = Vector2i(-1, -1)
-        if event.button_index == MOUSE_BUTTON_LEFT and _building_at(cell) != null:
-          drag_cell = cell
-          drag_start = event.position
-        editor_cell_clicked.emit(cell, event.button_index)
+    _handle_board_input(event)
     return
   if event is InputEventKey and event.pressed and not event.echo:
     if event.ctrl_pressed and event.keycode == KEY_Z:
@@ -451,23 +431,35 @@ func _unhandled_input(event: InputEvent) -> void:
         _refresh_ui()
         queue_redraw()
     return
-  if simulating or not event is InputEventMouseButton: return
+  _handle_board_input(event)
+
+func _handle_board_input(event: InputEvent) -> void:
+  if simulating or not event is InputEventMouseButton:
+    return
   var cell := _mouse_cell()
   if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
     if drag_cell.x >= 0 and event.position.distance_to(drag_start) > 8.0:
-      _move_selected_to(cell)
+      if editor_preview:
+        editor_cell_dragged.emit(drag_cell, cell)
+      else:
+        _move_selected_to(cell)
     drag_cell = Vector2i(-1, -1)
     return
-  if not event.pressed or cell.x < 0 or cell.y < 0 or cell.x >= level.width or cell.y >= level.height: return
-  if event.button_index == MOUSE_BUTTON_LEFT: drag_cell = Vector2i(-1, -1)
-  if event.button_index == MOUSE_BUTTON_LEFT and _building_at(cell) != null:
-    drag_cell = cell
-    drag_start = event.position
-  _click_cell(cell, event.button_index)
+  if not event.pressed or not is_cell_on_board(cell):
+    return
+  if event.button_index == MOUSE_BUTTON_LEFT:
+    drag_cell = Vector2i(-1, -1)
+    if _building_at(cell) != null:
+      drag_cell = cell
+      drag_start = event.position
+  if editor_preview:
+    editor_cell_clicked.emit(cell, event.button_index)
+  else:
+    _click_cell(cell, event.button_index)
 
 func _move_selected_to(cell: Vector2i) -> void:
   if not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position"): return
-  if cell.x < 0 or cell.y < 0 or cell.x >= level.width or cell.y >= level.height or _building_at(cell) != null: return
+  if not is_cell_on_board(cell) or _building_at(cell) != null: return
   _record_undo()
   selected_building.position = _cell_position(cell)
   selected_building.set_meta("cell", cell)
@@ -475,7 +467,7 @@ func _move_selected_to(cell: Vector2i) -> void:
   queue_redraw()
 
 func _click_cell(cell: Vector2i, button_index: int) -> void:
-  if simulating or cell.x < 0 or cell.y < 0 or cell.x >= level.width or cell.y >= level.height:
+  if simulating or not is_cell_on_board(cell):
     return
   var target := _building_at(cell)
   if button_index == MOUSE_BUTTON_RIGHT:
@@ -486,11 +478,7 @@ func _click_cell(cell: Vector2i, button_index: int) -> void:
       selected_building = target
       selected_kind = ""
     elif not selected_kind.is_empty() and int(inventory.get(selected_kind, 0)) > 0:
-      var entry := {"kind": selected_kind, "x": cell.x, "y": cell.y}
-      _record_undo()
-      _place_building(entry, true)
-      inventory[selected_kind] -= 1
-      cost += COSTS[selected_kind]
+      _place_inventory_building(selected_kind, cell)
       if inventory[selected_kind] == 0:
         selected_kind = ""
     elif is_instance_valid(selected_building):
@@ -506,12 +494,13 @@ func _click_cell(cell: Vector2i, button_index: int) -> void:
 func _rotate_selected(turn: int = 1) -> void:
   if simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_rotation"):
     return
-  if selected_building.get_meta("kind") not in ["magnet", "emitter", "mirror"]: return
+  var kind: String = selected_building.get_meta("kind")
+  if kind not in CATALOG.ROTATABLE_KINDS: return
   _record_undo()
-  if selected_building.get_meta("kind") == "magnet":
+  if kind == "magnet":
     selected_building.polarity *= -1
-  elif selected_building.get_meta("kind") in ["emitter", "mirror"]:
-    selected_building.orientation = posmod(selected_building.orientation + turn, DIRECTIONS.size())
+  else:
+    selected_building.orientation = posmod(selected_building.orientation + turn, CATALOG.DIRECTIONS.size())
   _refresh_ui()
   queue_redraw()
 
@@ -523,7 +512,7 @@ func _remove_selected() -> void:
   if building.get_meta("from_inventory"):
     var kind: String = building.get_meta("kind")
     inventory[kind] = int(inventory.get(kind, 0)) + 1
-    cost -= COSTS[kind]
+    cost -= CATALOG.COSTS[kind]
   buildings.erase(building)
   remove_child(building)
   building.queue_free()
@@ -544,7 +533,7 @@ func _refresh_ui() -> void:
   var has_selection := is_instance_valid(selected_building)
   var kind: String = selected_building.get_meta("kind") if has_selection else ""
   var magnet := kind == "magnet"
-  var can_rotate: bool = has_selection and kind in ["emitter", "mirror", "magnet"] and not selected_building.get_meta("fixed_rotation")
+  var can_rotate: bool = has_selection and kind in CATALOG.ROTATABLE_KINDS and not selected_building.get_meta("fixed_rotation")
   rotate_left_button.visible = not magnet
   rotate_left_button.disabled = simulating or not can_rotate
   rotate_button.text = "Flip polarity  Q / E" if magnet else "↷  E"
@@ -573,17 +562,18 @@ func _refresh_output() -> void:
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
   if simulating or int(inventory.get(kind, 0)) <= 0: return
-  var point: Vector2 = get_canvas_transform().affine_inverse() * screen_position / CELL
-  var cell := Vector2i(roundi(point.x), level.height - 1 - roundi(point.y))
-  if cell.x < 0 or cell.y < 0 or cell.x >= level.width or cell.y >= level.height: return
-  if _building_at(cell) != null: return
-  _record_undo()
-  _place_building({"kind": kind, "x": cell.x, "y": cell.y}, true)
-  inventory[kind] -= 1
-  cost += COSTS[kind]
+  var cell := screen_to_cell(screen_position)
+  if not is_cell_on_board(cell) or _building_at(cell) != null: return
+  _place_inventory_building(kind, cell)
   selected_building = _building_at(cell)
   _refresh_ui()
   queue_redraw()
+
+func _place_inventory_building(kind: String, cell: Vector2i) -> void:
+  _record_undo()
+  _place_building({"kind": kind, "x": cell.x, "y": cell.y}, true)
+  inventory[kind] -= 1
+  cost += CATALOG.COSTS[kind]
 
 func begin_run() -> void:
   if simulating: return
@@ -653,8 +643,7 @@ func _clear_stats() -> void:
   if is_instance_valid(diagnostic_overlay): diagnostic_overlay.clear_events()
 
 func _on_particle_detected(name: String) -> void:
-  var family := PARTICLES.family(name)
-  for key in [name, family] if not family.is_empty() else [name]:
+  for key in PARTICLES.detection_keys(name):
     total_counts[key] = int(total_counts.get(key, 0)) + 1
     recent_counts[key] = int(recent_counts.get(key, 0)) + 1
     step_counts[key] = int(step_counts.get(key, 0)) + 1
@@ -762,33 +751,31 @@ func _snapshot_build() -> Dictionary:
     entry.x = cell.x
     entry.y = cell.y
     var kind: String = building.get_meta("kind")
-    if kind == "emitter": entry.facing = DIRECTIONS[building.orientation]
-    elif kind == "mirror": entry.facing = DIRECTIONS[posmod(building.orientation - 2, 8)]
-    elif kind == "magnet": entry.polarity = "+" if building.polarity > 0 else "-"
-    if kind == "emitter": entry.rate = building.rate
+    match kind:
+      "emitter":
+        entry.facing = CATALOG.DIRECTIONS[building.orientation]
+        entry.rate = building.rate
+      "mirror":
+        entry.facing = CATALOG.DIRECTIONS[posmod(building.orientation - 2, CATALOG.DIRECTIONS.size())]
+      "magnet":
+        entry.polarity = "+" if building.polarity > 0 else "-"
     entries.append({"entry": entry, "inventory_piece": building.get_meta("from_inventory")})
   return {"entries": entries, "inventory": inventory.duplicate(true), "cost": cost}
 
 func _record_undo() -> void:
-  if simulating or restoring_history: return
+  if simulating: return
   undo_history.append(_snapshot_build())
   if undo_history.size() > 100: undo_history.pop_front()
   redo_history.clear()
 
 func _restore_build(snapshot: Dictionary) -> void:
-  restoring_history = true
-  for building in buildings:
-    if is_instance_valid(building):
-      remove_child(building)
-      building.queue_free()
-  buildings.clear()
+  _clear_buildings()
   inventory = snapshot.inventory.duplicate(true)
   cost = snapshot.cost
   selected_kind = ""
   selected_building = null
   for item in snapshot.entries:
     _place_building(item.entry, item.inventory_piece)
-  restoring_history = false
   _refresh_ui()
   queue_redraw()
 

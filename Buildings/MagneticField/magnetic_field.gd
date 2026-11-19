@@ -1,7 +1,7 @@
 @tool
 extends "res://Buildings/building.gd"
 
-const HALF_CELL: float = 51.2
+const HALF_CELL := GRID_SIZE * 0.5
 const EPSILON: float = 0.00001
 const PLUS_TEXTURE = preload("res://Buildings/MagneticField/plus_magnet.png")
 const MINUS_TEXTURE = preload("res://Buildings/MagneticField/minus_magnet.png")

@@ -8,7 +8,6 @@ var flavour: Flavour
 var speed: int = 250
 var charge: int
 var colour: ColourCharge
-var spin: float
 @export var isAnti: bool = false
 var size: float = 1.0
 @export var textures: Array[Texture2D]
@@ -35,8 +34,8 @@ func _ready() -> void:
     if textures.size() > 1:
       sprite.texture = textures[1]
 
-func advance(delta: float) -> void:
-  global_position += direction.normalized() * speed * delta
+func world_collision_radius() -> float:
+  return collision_radius * absf(global_scale.x)
 
 ## Name used by level goals and detectors.
 func level_particle_name() -> String:

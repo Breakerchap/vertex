@@ -40,7 +40,7 @@ func _ready() -> void:
   editor._set_source(original)
   editor._board_click(Vector2i(2, 2), MOUSE_BUTTON_LEFT)
   editor._open_properties()
-  assert(editor.properties.text.contains("magnet"))
+  assert(editor.inspector_heading.text.begins_with("Magnet"))
   assert(editor.property_fields.size() == 4)
   editor.inspector_dialog.hide()
   editor._move_block(Vector2i(2, 2), Vector2i(3, 2))
