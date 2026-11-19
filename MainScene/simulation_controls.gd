@@ -6,6 +6,7 @@ const SPEEDS: Array[float] = [0.25, 0.5, 1.0, 2.0, 4.0]
 @onready var simulation: ParticleSimulation = get_parent() as ParticleSimulation
 @onready var play_pause: Button = $Panel/Margin/Controls/PlayPause
 @onready var step_button: Button = $Panel/Margin/Controls/Step
+@onready var build_button: Button = $Panel/Margin/Controls/Build
 @onready var slower: Button = $Panel/Margin/Controls/Slower
 @onready var speed_label: Label = $Panel/Margin/Controls/Speed
 @onready var faster: Button = $Panel/Margin/Controls/Faster
@@ -21,6 +22,11 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
   _update_controls()
+
+func enable_build(action: Callable) -> Button:
+  build_button.pressed.connect(action)
+  build_button.show()
+  return build_button
 
 func _toggle_running() -> void:
   if simulation.has_method("begin_run") and simulation.completed:
@@ -40,27 +46,28 @@ func _step_once() -> void:
   _update_controls()
 
 func _change_speed(direction: int) -> void:
-  var current := simulation.simulation_speed
+  var current := simulation.get_playback_speed()
   if direction < 0:
     for i in range(SPEEDS.size() - 1, -1, -1):
       if SPEEDS[i] < current - 0.0001:
-        simulation.simulation_speed = SPEEDS[i]
+        simulation.set_playback_speed(SPEEDS[i])
         break
   else:
     for speed in SPEEDS:
       if speed > current + 0.0001:
-        simulation.simulation_speed = speed
+        simulation.set_playback_speed(speed)
         break
   _update_controls()
 
 func _reset_speed() -> void:
-  simulation.simulation_speed = 1.0
+  simulation.set_playback_speed(1.0)
   _update_controls()
 
 func _update_controls() -> void:
   play_pause.text = "Pause" if simulation.running else "Play"
   play_pause.tooltip_text = "Pause the simulation (Space)" if simulation.running else "Run the simulation (Space)"
-  speed_label.text = "%s×" % str(simulation.simulation_speed)
-  slower.disabled = simulation.simulation_speed <= SPEEDS.front()
-  faster.disabled = simulation.simulation_speed >= SPEEDS.back()
-  reset_speed.disabled = is_equal_approx(simulation.simulation_speed, 1.0)
+  var speed := simulation.get_playback_speed()
+  speed_label.text = "%s×" % String.num(speed, 2)
+  slower.disabled = speed <= SPEEDS.front()
+  faster.disabled = speed >= SPEEDS.back()
+  reset_speed.disabled = is_equal_approx(speed, 1.0)

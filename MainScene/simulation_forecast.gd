@@ -1,12 +1,25 @@
 extends RefCounted
 
-## Runs independent fixed-step copies of the current board and particle state.
-static func predict(source: ParticleSimulation, buildings: Array[Node], seconds: float, count: int) -> Array[Dictionary]:
-  var shadow := ParticleSimulation.new()
+const PARTICLES = preload("res://Particles/particle_catalog.gd")
+const FRAME_BUDGET_USEC := 3000
+
+var shadow: ParticleSimulation
+var counts: Dictionary = {}
+var steps_per_window: int
+var steps_remaining := 0
+var delta: float
+
+## Copy the board and in-flight state so the prediction never advances the live run.
+func _init(source: ParticleSimulation, buildings: Array[Node], seconds: float) -> void:
+  steps_per_window = roundi(seconds * Engine.physics_ticks_per_second)
+  delta = 1.0 / float(Engine.physics_ticks_per_second)
+  shadow = ParticleSimulation.new()
   shadow.running = false
   shadow.level_bounds_enabled = source.level_bounds_enabled
   shadow.level_bounds = source.level_bounds
+  shadow.hide()
   source.get_tree().root.add_child(shadow)
+  shadow.set_physics_process(false)
   var field_copies := {}
   for original in buildings:
     var copy = original.duplicate()
@@ -37,25 +50,28 @@ static func predict(source: ParticleSimulation, buildings: Array[Node], seconds:
     copy.magnetic_last_field = field_copies.get(original.magnetic_last_field)
     copy.magnetic_remaining = original.magnetic_remaining
     copy.magnetic_turn_sign = original.magnetic_turn_sign
-  var tally := {"counts": {}}
-  shadow.particle_detected.connect(func(name: String) -> void:
-    var keys := [name, name.split("_")[0]] if "_" in name else [name]
-    for key in keys:
-      tally.counts[key] = int(tally.counts.get(key, 0)) + 1
-  )
-  var windows: Array[Dictionary] = []
-  var steps := roundi(seconds * Engine.physics_ticks_per_second)
-  var delta := 1.0 / float(Engine.physics_ticks_per_second)
-  for _window in range(count):
-    tally.counts = {}
-    for _step in range(steps):
-      shadow.step_simulation(delta)
-      # The forecast runs without rendering frames, so process its deferred
-      # particle deletions explicitly to keep long forecasts bounded.
-      for child in shadow.get_children():
-        if child is Particle and child.is_queued_for_deletion():
-          child.free()
-    windows.append(tally.counts.duplicate())
-  source.get_tree().root.remove_child(shadow)
+  shadow.particle_detected.connect(_on_detected)
+
+func _on_detected(particle_name: String) -> void:
+  var family := PARTICLES.family(particle_name)
+  for key in [particle_name, family] if not family.is_empty() else [particle_name]:
+    counts[key] = int(counts.get(key, 0)) + 1
+
+## Advance one measurement window over as many rendered frames as needed.
+func advance() -> bool:
+  if steps_remaining == 0:
+    counts.clear()
+    steps_remaining = steps_per_window
+  var deadline := Time.get_ticks_usec() + FRAME_BUDGET_USEC
+  while steps_remaining > 0:
+    shadow.step_simulation(delta)
+    for child in shadow.get_children():
+      if child is Particle and child.is_queued_for_deletion():
+        child.free()
+    steps_remaining -= 1
+    if Time.get_ticks_usec() >= deadline: break
+  return steps_remaining == 0
+
+func dispose() -> void:
   shadow.queue_free()
-  return windows
+  shadow = null

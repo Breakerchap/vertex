@@ -55,7 +55,6 @@ func _draw() -> void:
         draw_rect(rect, colour, true)
         draw_rect(rect, Color("69d8ad") if valid else Color("ec7377"), false, 3.0)
 
-  if not game.diagnostics_enabled: return
   var colours := {
     "reflection": Color("8fc7ff"),
     "field": Color("ceaeff"),

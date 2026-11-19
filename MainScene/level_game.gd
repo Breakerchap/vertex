@@ -2,7 +2,6 @@ extends "res://Particles/particle_simulation.gd"
 
 const PARSER = preload("res://Levels/level_parser.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
-const PARTICLE_PICKER = preload("res://MainScene/particle_picker.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
 const ENTRY = preload("res://Buildings/Emitter/particle_emission.gd")
 const TILE = preload("res://tile.png")
@@ -10,17 +9,20 @@ const FORECAST = preload("res://MainScene/simulation_forecast.gd")
 const PREVIEW = preload("res://Buildings/particle_preview.gd")
 const OVERLAY = preload("res://MainScene/placement_overlay.gd")
 const PALETTE = preload("res://MainScene/building_palette.gd")
-const FILLED_STAR = preload("res://filled_star.png")
-const EMPTY_STAR = preload("res://empty_star.png")
+const OUTPUT_METER = preload("res://MainScene/output_meter.gd")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 const CELL: float = 102.4
 const SCENES := CATALOG.SCENES
 # Costs are shared by all levels, as described by the level format.
 const COSTS := CATALOG.COSTS
 const DIRECTIONS := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
-const WINDOW_SECONDS: float = 5.0
-const OBSERVED_WINDOWS: int = 2
-const FORECAST_WINDOWS: int = 3
+const SIDEBAR_WIDTH := 288.0
+const RECENT_SECONDS := 2.0
+const SPEED_RAMP_START := 3.0
+const SPEED_RAMP_END := 6.0
+const WATCH_SECONDS := 7.0
+const FORECAST_WINDOW_SECONDS := 10.0
+const FORECAST_WINDOWS := 6
 
 signal editor_cell_clicked(cell: Vector2i, button: int)
 signal editor_cell_dragged(from_cell: Vector2i, to_cell: Vector2i)
@@ -34,7 +36,6 @@ var level_override: Dictionary = {}
 var editor_brush := ""
 var external_palette: PanelContainer
 var diagnostic_overlay
-var diagnostics_enabled := false
 var undo_history: Array[Dictionary] = []
 var redo_history: Array[Dictionary] = []
 var restoring_history := false
@@ -42,6 +43,7 @@ var last_hud_update := 0.0
 var editor_bottom_inset := 190.0
 var editor_sidebar_width := 256.0
 var hud_panel: PanelContainer
+var sidebar: VBoxContainer
 var level: Dictionary = {}
 var buildings: Array[Node] = []
 var inventory: Dictionary = {}
@@ -50,32 +52,25 @@ var selected_building: Node = null
 var cost: int = 0
 var simulating: bool = false
 var total_counts: Dictionary = {}
-var window_counts: Dictionary = {}
-var windows: Array[Dictionary] = []
-var window_time: float = 0.0
+var recent_counts: Dictionary = {}
+var step_counts: Dictionary = {}
+var recent_samples: Array[Dictionary] = []
 var elapsed: float = 0.0
-var tracked_target := ""
-var tracked_label := ""
+var automatic_speed := true
+var next_forecast_at := WATCH_SECONDS
+var forecast: FORECAST
+var forecast_candidates: Array[Dictionary] = []
+var forecast_counts: Dictionary = {}
+var forecast_windows := 0
 var completed: bool = false
-var config_dialog: AcceptDialog
-var config_rate: SpinBox
-var config_particles: Control
-var config_heading: Label
-var config_error: Label
-var config_rate_row: HBoxContainer
 var selection_label: Label
-var status_label: Label
-var measurement_label: Label
-var diagnostic_legend: Label
-var measurement_bar: ProgressBar
+var output_rows: Array[Dictionary] = []
 var rotate_button: Button
 var rotate_left_button: Button
-var configure_button: Button
 var remove_button: Button
 var next_level_button: Button
 var restart_button: Button
 var palette: PanelContainer
-var star_icons: Array[TextureRect] = []
 var results: AcceptDialog
 var stop_button: Button
 
@@ -84,8 +79,6 @@ func _ready() -> void:
   RenderingServer.set_default_clear_color(UI.BACKGROUND)
   $SimulationControls/Panel.theme = UI.theme()
   if editor_preview:
-    particle_detected.connect(_on_particle_detected)
-    simulation_stepped.connect(_on_simulation_stepped)
     var editor_overlay := Node2D.new()
     editor_overlay.set_script(OVERLAY)
     editor_overlay.z_index = 100
@@ -115,12 +108,24 @@ func _ready() -> void:
   get_viewport().size_changed.connect(_fit_camera)
   _fit_camera()
 
+func _exit_tree() -> void:
+  _cancel_forecast()
+
 func _draw() -> void:
   if level.is_empty() or level.has("error"):
     return
   for x in range(level.width):
     for y in range(level.height):
       draw_texture_rect(TILE, Rect2(Vector2(x, y) * CELL - Vector2.ONE * CELL * 0.5, Vector2.ONE * CELL), false)
+
+func get_playback_speed() -> float:
+  if editor_preview or not automatic_speed or not simulating:
+    return super.get_playback_speed()
+  return lerpf(1.0, 2.0, smoothstep(SPEED_RAMP_START, SPEED_RAMP_END, elapsed))
+
+func set_playback_speed(speed: float) -> void:
+  automatic_speed = false
+  super.set_playback_speed(speed)
 
 func _fit_camera() -> void:
   if level.is_empty():
@@ -129,13 +134,13 @@ func _fit_camera() -> void:
   camera.position = Vector2(level.width - 1, level.height - 1) * CELL * 0.5
   var view := get_viewport_rect().size
   var bottom_inset := editor_bottom_inset if editor_preview else hud_panel.size.y + 28.0
-  var top_inset := 74.0 if editor_preview else 134.0
-  var sidebar := editor_sidebar_width if editor_preview else 256.0
-  var available := Vector2(maxf(100.0, view.x - sidebar - 36.0), maxf(100.0, view.y - top_inset - bottom_inset))
+  var top_inset := 74.0 if editor_preview else 115.0
+  var right_inset := editor_sidebar_width if editor_preview else SIDEBAR_WIDTH + 16.0
+  var available := Vector2(maxf(100.0, view.x - right_inset - 36.0), maxf(100.0, view.y - top_inset - bottom_inset))
   var board := Vector2(level.width, level.height) * CELL
   var zoom_amount := minf(1.0, minf(available.x / board.x, available.y / board.y))
   camera.zoom = Vector2.ONE * zoom_amount
-  camera.offset = Vector2(sidebar, bottom_inset - top_inset) * 0.5 / zoom_amount
+  camera.offset = Vector2(right_inset, bottom_inset - top_inset) * 0.5 / zoom_amount
 
 func _create_hud() -> void:
   var layer := CanvasLayer.new()
@@ -147,8 +152,8 @@ func _create_hud() -> void:
   panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
   panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
   panel.offset_left = 16
-  panel.offset_right = -272
-  panel.offset_top = -191
+  panel.offset_right = -SIDEBAR_WIDTH - 32.0
+  panel.offset_top = -16
   panel.offset_bottom = -16
   layer.add_child(panel)
   panel.resized.connect(_fit_camera)
@@ -157,50 +162,8 @@ func _create_hud() -> void:
   var column := VBoxContainer.new()
   column.add_theme_constant_override("separation", 4)
   margin.add_child(column)
-  status_label = Label.new()
-  UI.muted(status_label)
-  column.add_child(status_label)
-  _add_goal_table(column)
-  measurement_label = Label.new()
-  UI.muted(measurement_label)
-  column.add_child(measurement_label)
-  measurement_bar = ProgressBar.new()
-  measurement_bar.custom_minimum_size.y = 8
-  measurement_bar.max_value = WINDOW_SECONDS
-  measurement_bar.show_percentage = false
-  column.add_child(measurement_bar)
-  palette = PALETTE.new()
-  layer.add_child(palette)
-  palette.kind_selected.connect(_select_inventory)
-  palette.kind_dropped.connect(_drop_inventory)
+  _add_sidebar(layer)
   _add_level_heading(layer)
-  var stars_panel := PanelContainer.new()
-  stars_panel.theme = UI.theme()
-  stars_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-  stars_panel.offset_left = -256
-  stars_panel.offset_right = -16
-  stars_panel.offset_top = 16
-  stars_panel.offset_bottom = 88
-  layer.add_child(stars_panel)
-  var stars_column := VBoxContainer.new()
-  stars_panel.add_child(stars_column)
-  var stars_title := Label.new()
-  stars_title.text = "Goal progress"
-  UI.muted(stars_title)
-  stars_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-  stars_column.add_child(stars_title)
-  var stars_row := HBoxContainer.new()
-  stars_row.alignment = BoxContainer.ALIGNMENT_CENTER
-  stars_column.add_child(stars_row)
-  for i in range(3):
-    var icon := TextureRect.new()
-    icon.custom_minimum_size = Vector2(34, 34)
-    icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-    icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-    icon.texture = EMPTY_STAR
-    icon.tooltip_text = "%d-star tier" % [i + 1]
-    stars_row.add_child(icon)
-    star_icons.append(icon)
   selection_label = Label.new()
   UI.muted(selection_label)
   column.add_child(selection_label)
@@ -210,52 +173,11 @@ func _create_hud() -> void:
   rotate_left_button.tooltip_text = "Rotate counterclockwise"
   rotate_button = _button(actions, "↷  E", _rotate_selected)
   rotate_button.tooltip_text = "Rotate clockwise"
-  configure_button = _button(actions, "Configure…", _open_config)
   remove_button = _button(actions, "Remove  Del", _remove_selected)
-  stop_button = _button(actions, "Build  B", stop_to_build)
-  restart_button = _button(actions, "Restart run", restart_run)
+  stop_button = $SimulationControls.enable_build(stop_to_build)
+  restart_button = _button(actions, "Restart", restart_run)
   _button(actions, "Reset  X", reset_level)
   _button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
-  var diagnostics := CheckButton.new()
-  diagnostics.text = "Interactions"
-  diagnostics.tooltip_text = "Highlight reflections, detections, collisions and particles leaving the board"
-  diagnostics.toggled.connect(func(enabled: bool) -> void:
-    diagnostics_enabled = enabled
-    if is_instance_valid(diagnostic_overlay): diagnostic_overlay.queue_redraw()
-    _refresh_ui()
-  )
-  actions.add_child(diagnostics)
-  diagnostic_legend = Label.new()
-  diagnostic_legend.text = "Blue reflect  ·  Green detect  ·  Gold annihilate  ·  Red absorb/exit  ·  Purple field"
-  diagnostic_legend.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-  UI.muted(diagnostic_legend, 12)
-  diagnostic_legend.hide()
-  column.add_child(diagnostic_legend)
-  config_dialog = AcceptDialog.new()
-  config_dialog.title = "Building settings"
-  config_dialog.min_size = Vector2i(400, 160)
-  config_dialog.theme = UI.theme()
-  config_dialog.ok_button_text = "Cancel"
-  layer.add_child(config_dialog)
-  var config_column := VBoxContainer.new()
-  config_dialog.add_child(config_column)
-  config_heading = _config_label("")
-  UI.heading(config_heading, 16)
-  config_column.add_child(config_heading)
-  config_rate_row = HBoxContainer.new()
-  config_column.add_child(config_rate_row)
-  config_rate_row.add_child(_config_label("Particles per second"))
-  config_rate = SpinBox.new()
-  config_rate.min_value = 0.0
-  config_rate.max_value = 1000
-  config_rate.allow_greater = true
-  config_rate.step = 0.0
-  config_rate_row.add_child(config_rate)
-  config_error = _config_label("")
-  config_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-  config_error.add_theme_color_override("font_color", UI.ERROR)
-  config_column.add_child(config_error)
-  _button(config_column, "Apply changes", _apply_config).theme_type_variation = "PrimaryButton"
   results = AcceptDialog.new()
   results.theme = UI.theme()
   results.title = "Level complete"
@@ -267,7 +189,7 @@ func _create_hud() -> void:
   next_level_button.visible = not editor_playtest and not Global.next_level_path(Global.selected_level).is_empty()
   layer.add_child(results)
 
-func _config_label(value: String) -> Label:
+func _label(value: String) -> Label:
   var label := Label.new()
   label.text = value
   return label
@@ -277,133 +199,128 @@ func _add_level_heading(layer: CanvasLayer) -> void:
   header.theme = UI.theme()
   header.set_anchors_preset(Control.PRESET_TOP_WIDE)
   header.offset_left = 16
-  header.offset_right = -272
+  header.offset_right = -SIDEBAR_WIDTH - 32.0
   header.offset_top = 72
   header.mouse_filter = Control.MOUSE_FILTER_IGNORE
   layer.add_child(header)
   var title := str(level.get("title", ""))
   if title.is_empty(): title = "Playtest" if editor_playtest else Global.selected_level.get_file().get_basename()
-  var heading := _config_label(title)
+  var heading := _label(title)
   UI.heading(heading, 25)
   heading.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
   header.add_child(heading)
-  var hint := str(level.get("hint", ""))
-  if not hint.is_empty():
-    var prompt := _config_label(hint)
-    UI.muted(prompt)
-    prompt.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    prompt.tooltip_text = hint
-    prompt.mouse_filter = Control.MOUSE_FILTER_STOP
-    header.add_child(prompt)
 
-func _add_goal_table(column: VBoxContainer) -> void:
-  var table_header := HBoxContainer.new()
-  column.add_child(table_header)
-  _add_goal_cells(table_header, "Goals", ["★", "★★", "★★★"], true)
+func _add_sidebar(layer: CanvasLayer) -> void:
+  sidebar = VBoxContainer.new()
+  sidebar.name = "Sidebar"
+  sidebar.theme = UI.theme()
+  sidebar.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+  sidebar.offset_left = -SIDEBAR_WIDTH - 16.0
+  sidebar.offset_right = -16
+  sidebar.offset_top = 16
+  sidebar.offset_bottom = -16
+  sidebar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+  layer.add_child(sidebar)
+  var panel := PanelContainer.new()
+  panel.name = "GoalPanel"
+  sidebar.add_child(panel)
+  var margin := UI.margin()
+  panel.add_child(margin)
   var scroll := ScrollContainer.new()
-  scroll.custom_minimum_size.y = 54
-  scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
   scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-  column.add_child(scroll)
+  margin.add_child(scroll)
   var rows := VBoxContainer.new()
   rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   scroll.add_child(rows)
+  _add_goals(rows)
+  palette = PALETTE.new()
+  sidebar.add_child(palette)
+  palette.kind_selected.connect(_select_inventory)
+  palette.kind_dropped.connect(_drop_inventory)
+  var toolbar: PanelContainer = $SimulationControls/Panel
+  var fit := func() -> void:
+    var view := get_viewport_rect().size
+    var toolbar_end := toolbar.get_rect().end
+    sidebar.offset_top = 16.0 if toolbar_end.x + 8.0 <= view.x - SIDEBAR_WIDTH - 16.0 else toolbar_end.y + 8.0
+    var available := view.y - sidebar.offset_top - 16.0
+    var frame_height := panel.get_combined_minimum_size().y - scroll.get_combined_minimum_size().y
+    scroll.custom_minimum_size.y = minf(rows.get_combined_minimum_size().y, maxf(44.0, available * 0.46 - frame_height))
+    palette.height_limit = available - frame_height - scroll.custom_minimum_size.y - sidebar.get_theme_constant("separation")
+  rows.minimum_size_changed.connect(fit)
+  get_viewport().size_changed.connect(fit)
+  toolbar.resized.connect(fit)
+  fit.call()
+
+func _add_goals(rows: VBoxContainer) -> void:
+  var targets: Array = level.get("goal_targets", [])
   for index in range(level.goals.size()):
     if index > 0:
-      var divider := _config_label("OR")
+      var divider := _label("OR")
       UI.muted(divider, 11)
       rows.add_child(divider)
-    for key in level.goals[index]:
-      var targets: Array = level.get("goal_targets", [])
+    var goal: Dictionary = level.goals[index]
+    var table := GridContainer.new()
+    table.columns = 4
+    table.add_theme_constant_override("h_separation", 5)
+    table.add_theme_constant_override("v_separation", 3)
+    rows.add_child(table)
+    _add_goal_cells(table, "Stars", ["★", "★★", "★★★"], true)
+    var output_count := goal.size() - int(goal.has("cost"))
+    for key in goal:
       var target: String = targets[index].get(key, key) if index < targets.size() else key
-      var label := "Max build cost" if key == "cost" else PARTICLES.label(target) if PARTICLES.TYPES.has(target) else target
-      if tracked_target.is_empty() and key != "cost":
-        tracked_target = key
-        tracked_label = label
+      var title: String = "Cost" if key == "cost" else (PARTICLES.label(target) if PARTICLES.TYPES.has(target) else target)
       var thresholds: Array[String] = []
-      for value in level.goals[index][key]:
-        if is_inf(value): thresholds.append("∞")
-        else: thresholds.append(("$" if key == "cost" else "") + _goal_value(value) + ("" if key == "cost" else "/s"))
+      for value in goal[key]:
+        var amount := str(value).trim_suffix(".0")
+        thresholds.append("∞" if is_inf(value) else amount + ("" if key == "cost" else "/s"))
+      _add_goal_cells(table, title, thresholds)
+      if key == "cost": continue
       var row := HBoxContainer.new()
       rows.add_child(row)
-      _add_goal_cells(row, label, thresholds)
+      var details := VBoxContainer.new()
+      details.custom_minimum_size.x = 85 if output_count > 1 else 59
+      details.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+      details.add_theme_constant_override("separation", 0)
+      row.add_child(details)
+      if output_count > 1:
+        var name_label := _label(title)
+        UI.muted(name_label, 12)
+        name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+        details.add_child(name_label)
+      var rate_label := _label("")
+      rate_label.add_theme_color_override("font_color", UI.ACCENT)
+      rate_label.tooltip_text = "Recent output · " + title
+      rate_label.mouse_filter = Control.MOUSE_FILTER_STOP
+      details.add_child(rate_label)
+      var meter := OUTPUT_METER.new()
+      meter.set_thresholds(goal[key])
+      meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+      row.add_child(meter)
+      output_rows.append({"key": key, "meter": meter, "label": rate_label})
+  var hint := str(level.get("hint", ""))
+  if not hint.is_empty():
+    var prompt := _label(hint)
+    UI.muted(prompt)
+    prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(prompt)
 
-func _add_goal_cells(row: HBoxContainer, target: String, values: Array, heading: bool = false) -> void:
-  var name_label := _config_label(target)
-  name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-  name_label.tooltip_text = target
-  name_label.mouse_filter = Control.MOUSE_FILTER_STOP
-  if heading: UI.heading(name_label, 16)
-  row.add_child(name_label)
+func _add_goal_cells(table: GridContainer, title: String, values: Array, heading := false) -> void:
+  var label := _label(title)
+  label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+  label.tooltip_text = title
+  label.mouse_filter = Control.MOUSE_FILTER_STOP
+  if heading: UI.heading(label, 15)
+  table.add_child(label)
   for value in values:
-    var threshold := _config_label(value)
-    threshold.custom_minimum_size.x = 68
-    threshold.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    threshold.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    threshold.tooltip_text = value
-    threshold.mouse_filter = Control.MOUSE_FILTER_STOP
-    if heading: threshold.add_theme_color_override("font_color", UI.GOLD)
-    row.add_child(threshold)
-
-func _open_config() -> void:
-  if simulating or not is_instance_valid(selected_building): return
-  var kind: String = selected_building.get_meta("kind")
-  if kind not in ["emitter", "detector"]: return
-  var entry: Dictionary = selected_building.get_meta("entry")
-  if is_instance_valid(config_particles):
-    config_particles.get_parent().remove_child(config_particles)
-    config_particles.queue_free()
-  config_particles = PARTICLE_PICKER.new()
-  config_particles.sequence = kind == "emitter"
-  var default_particles := ["electron"] if config_particles.sequence else ["photon"]
-  var authored: String = entry.get("particle_expression", ", ".join(entry.get("particles", default_particles)))
-  config_particles.load_text(authored)
-  config_heading.get_parent().add_child(config_particles)
-  config_heading.get_parent().move_child(config_particles, 1)
-  config_heading.text = "Emission order" if kind == "emitter" else "Accepted particles"
-  config_error.text = ""
-  config_dialog.title = "%s settings" % kind.capitalize()
-  config_rate_row.visible = kind == "emitter"
-  if kind == "emitter": config_rate.value = selected_building.rate
-  config_dialog.popup_centered()
-
-func _apply_config() -> void:
-  if not is_instance_valid(selected_building): return
-  var kind: String = selected_building.get_meta("kind")
-  var cell: Vector2i = selected_building.get_meta("cell")
-  var entry: Dictionary = selected_building.get_meta("entry").duplicate(true)
-  var from_inventory: bool = selected_building.get_meta("from_inventory")
-  var expression: String = config_particles.source_text()
-  if kind == "emitter":
-    if config_rate.value <= 0.0:
-      config_error.text = "Emission rate must be greater than zero."
-      return
-    var sequence: Array[String] = []
-    for name in expression.split(",", false):
-      sequence.append(name.strip_edges())
-    entry.particles = sequence
-    entry.rate = config_rate.value
-    entry.facing = DIRECTIONS[selected_building.orientation]
-  else:
-    var parsed_expression := {"particles": [], "accepted": []} if expression.is_empty() else PARSER.particle_expression(expression)
-    if parsed_expression.has("error"):
-      config_error.text = parsed_expression.error
-      return
-    entry.particle_expression = expression
-    entry.particles = parsed_expression.particles
-    entry.accepted = parsed_expression.accepted
-  entry.x = cell.x
-  entry.y = cell.y
-  _record_undo()
-  var old := selected_building
-  buildings.erase(old)
-  remove_child(old)
-  old.queue_free()
-  _place_building(entry, from_inventory)
-  selected_building = buildings.back()
-  config_dialog.hide()
-  _refresh_ui()
+    var cell := _label(value)
+    cell.custom_minimum_size.x = 43
+    cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    cell.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    cell.tooltip_text = value
+    cell.mouse_filter = Control.MOUSE_FILTER_STOP
+    if heading: cell.add_theme_color_override("font_color", UI.GOLD)
+    table.add_child(cell)
 
 func _button(parent: Node, title: String, action: Callable) -> Button:
   var button := Button.new()
@@ -622,25 +539,8 @@ func _select_inventory(kind: String) -> void:
   queue_redraw()
 
 func _refresh_ui() -> void:
-  if not is_instance_valid(status_label): return
-  var mode := "Build"
-  if simulating: mode = "Complete" if completed else "Simulation"
-  status_label.text = "%s  •  Build cost $%d" % [mode, cost]
-  if simulating:
-    measurement_label.text = "Measuring stable output  •  Window %d/%d  •  %.1f / %.0f s" % [mini(windows.size() + 1, OBSERVED_WINDOWS), OBSERVED_WINDOWS, window_time, WINDOW_SECONDS]
-    if not windows.is_empty() and not tracked_target.is_empty():
-      var recent_rate := float(_goal_count(windows.back(), tracked_target)) / WINDOW_SECONDS
-      status_label.text += "  •  Last window  %.2f/s" % recent_rate
-      status_label.tooltip_text = tracked_label
-    else:
-      status_label.tooltip_text = ""
-  else:
-    measurement_label.text = "Press Play or Space to measure output." if not tracked_target.is_empty() else "Press Play or Space to check the cost limit."
-    status_label.tooltip_text = ""
-  status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-  measurement_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-  measurement_bar.value = window_time if simulating else 0.0
-  diagnostic_legend.visible = diagnostics_enabled
+  if not is_instance_valid(palette): return
+  _refresh_output()
   var has_selection := is_instance_valid(selected_building)
   var kind: String = selected_building.get_meta("kind") if has_selection else ""
   var magnet := kind == "magnet"
@@ -651,27 +551,25 @@ func _refresh_ui() -> void:
   rotate_button.tooltip_text = "Flip between positive and negative" if magnet else "Rotate clockwise"
   rotate_button.disabled = simulating or not can_rotate
   remove_button.disabled = simulating or not has_selection or selected_building.get_meta("fixed_position")
-  configure_button.disabled = simulating or kind not in ["emitter", "detector"]
+  selection_label.visible = has_selection
   if has_selection:
     var cell: Vector2i = selected_building.get_meta("cell")
-    var move_hint := "Position locked" if selected_building.get_meta("fixed_position") else "Drag or click an empty tile to move"
+    selection_label.text = "%s (%d, %d)" % [kind.capitalize(), cell.x, cell.y]
     if magnet:
-      move_hint = ("Positive" if selected_building.polarity > 0 else "Negative") + " polarity  •  " + move_hint
-    selection_label.text = "%s (%d, %d)  •  %s" % [kind.capitalize(), cell.x, cell.y, move_hint]
-  elif not selected_kind.is_empty():
-    selection_label.text = "Click an empty tile to place a %s." % selected_kind
-  else:
-    selection_label.text = "Select a building on the board or choose one from inventory."
-  selection_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+      selection_label.text += "  %s" % ("+" if selected_building.polarity > 0 else "−")
   stop_button.disabled = not simulating
   restart_button.disabled = not simulating
   palette.counts = inventory
+  palette.build_cost = cost
   palette.selected = selected_kind
   palette.locked = simulating
   palette.refresh()
-  var earned := _stable_stars(windows) if simulating and not windows.is_empty() else 0
-  for i in range(star_icons.size()):
-    star_icons[i].texture = FILLED_STAR if i < earned else EMPTY_STAR
+
+func _refresh_output() -> void:
+  for row in output_rows:
+    var rate := float(_goal_count(recent_counts, row.key)) / RECENT_SECONDS
+    row.label.text = "%s/s" % String.num(rate, 2)
+    row.meter.set_rate(rate, simulating)
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
   if simulating or int(inventory.get(kind, 0)) <= 0: return
@@ -695,7 +593,6 @@ func begin_run() -> void:
   selected_kind = ""
   _clear_particles()
   _clear_stats()
-  if is_instance_valid(diagnostic_overlay): diagnostic_overlay.clear_events()
   _accumulated_time = 0.0
   for building in buildings:
     if building.get_meta("kind") == "emitter":
@@ -739,62 +636,96 @@ func _result_action(action: StringName) -> void:
   Global.selected_level = path
   get_tree().change_scene_to_file("res://MainScene/level_game.tscn")
 
-func _goal_value(value: float) -> String:
-  return "∞" if is_inf(value) else str(value)
-
 func _clear_particles() -> void:
   for particle in _particles():
     remove_child(particle)
     particle.queue_free()
 
 func _clear_stats() -> void:
+  _cancel_forecast()
+  next_forecast_at = WATCH_SECONDS
   last_hud_update = 0.0
   total_counts.clear()
-  window_counts.clear()
-  windows.clear()
-  window_time = 0.0
+  recent_counts.clear()
+  step_counts.clear()
+  recent_samples.clear()
   elapsed = 0.0
+  if is_instance_valid(diagnostic_overlay): diagnostic_overlay.clear_events()
 
 func _on_particle_detected(name: String) -> void:
   var family := PARTICLES.family(name)
   for key in [name, family] if not family.is_empty() else [name]:
     total_counts[key] = int(total_counts.get(key, 0)) + 1
-    window_counts[key] = int(window_counts.get(key, 0)) + 1
+    recent_counts[key] = int(recent_counts.get(key, 0)) + 1
+    step_counts[key] = int(step_counts.get(key, 0)) + 1
 
 func _on_simulation_stepped(delta: float) -> void:
   if not simulating or completed: return
   elapsed += delta
-  window_time += delta
-  if elapsed - last_hud_update >= 0.4:
+  if not step_counts.is_empty():
+    recent_samples.append({"time": elapsed, "counts": step_counts})
+    step_counts = {}
+  while not recent_samples.is_empty() and recent_samples.front().time <= elapsed - RECENT_SECONDS + 0.000001:
+    var expired: Dictionary = recent_samples.pop_front().counts
+    for key in expired:
+      recent_counts[key] -= expired[key]
+  if elapsed - last_hud_update >= 0.15:
     last_hud_update = elapsed
-    _refresh_ui()
-  if window_time + 0.000001 < WINDOW_SECONDS: return
-  windows.append(window_counts.duplicate())
-  window_counts.clear()
-  window_time -= WINDOW_SECONDS
-  if windows.size() > OBSERVED_WINDOWS: windows.pop_front()
+    _refresh_output()
+  if forecast != null or elapsed + 0.000001 < next_forecast_at: return
+  next_forecast_at = elapsed + 0.25
+  for goal in level.goals:
+    for tier in range(3):
+      var eligible := true
+      for key in goal:
+        var threshold: float = goal[key][tier]
+        if key == "cost":
+          if cost > threshold: eligible = false
+        elif is_inf(threshold) or (threshold > 0.0 and _goal_count(total_counts, key) == 0):
+          eligible = false
+      if eligible:
+        forecast_candidates.append({"goal": goal, "tier": tier})
+  if not forecast_candidates.is_empty():
+    forecast = FORECAST.new(self, buildings, FORECAST_WINDOW_SECONDS)
+
+func _process(_delta: float) -> void:
+  if forecast == null or not forecast.advance(): return
+  for key in forecast.counts:
+    forecast_counts[key] = int(forecast_counts.get(key, 0)) + int(forecast.counts[key])
+  forecast_windows += 1
+  var finished := forecast_windows == FORECAST_WINDOWS
+  var stars := 0
+  for i in range(forecast_candidates.size() - 1, -1, -1):
+    var candidate := forecast_candidates[i]
+    if not _meets_output(candidate, forecast.counts, FORECAST_WINDOW_SECONDS, true):
+      forecast_candidates.remove_at(i)
+    elif finished and _meets_output(candidate, forecast_counts, FORECAST_WINDOWS * FORECAST_WINDOW_SECONDS, false):
+      stars = maxi(stars, candidate.tier + 1)
+  if finished or forecast_candidates.is_empty():
+    _cancel_forecast()
+    next_forecast_at = elapsed + 2.0
+    if stars > 0: _finish_run(stars)
+
+func _cancel_forecast() -> void:
+  if forecast != null:
+    forecast.dispose()
+    forecast = null
+  forecast_candidates.clear()
+  forecast_counts.clear()
+  forecast_windows = 0
+
+func _finish_run(stars: int) -> void:
+  completed = true
+  running = false
+  cancel_pending_steps()
+  if not editor_playtest: Global.record_best_stars(Global.selected_level, stars)
   _refresh_ui()
-  if editor_preview: return
-  if windows.size() < OBSERVED_WINDOWS or _stable_stars(windows) == 0: return
-  # Check additional windows on an isolated copy: the live board, emitter
-  # timers, particles and statistics are not advanced by this prediction.
-  var samples: Array[Dictionary] = windows.duplicate(true)
-  samples.append_array(FORECAST.predict(self, buildings, WINDOW_SECONDS, FORECAST_WINDOWS))
-  var stars := _stable_stars(samples)
-  if stars > 0:
-    completed = true
-    if not editor_playtest: Global.record_best_stars(Global.selected_level, stars)
-    running = false
-    cancel_pending_steps()
-    var stats := ""
-    var latest: Dictionary = windows.back()
-    for kind in total_counts:
-      stats += "\n%s: %d total, %.2f / s in the last 5s" % [str(kind).capitalize(), int(total_counts[kind]), float(latest.get(kind, 0)) / WINDOW_SECONDS]
-    if stats.is_empty(): stats = "\nNo particles detected"
-    for i in range(star_icons.size()):
-      star_icons[i].texture = FILLED_STAR if i < stars else EMPTY_STAR
-    results.dialog_text = "%d star(s) earned\nSimulation time: %.1f s\nBuild cost: %d\nDetected:%s" % [stars, elapsed, cost, stats]
-    results.popup_centered()
+  var stats := ""
+  for kind in total_counts:
+    stats += "\n%s: %d total · %.2f/s recent" % [PARTICLES.label(kind), int(total_counts[kind]), float(recent_counts.get(kind, 0)) / RECENT_SECONDS]
+  if stats.is_empty(): stats = "\nNo particles detected"
+  results.dialog_text = "%d star(s) earned\nBuild cost: $%d\n\nDetected%s" % [stars, cost, stats]
+  results.popup_centered()
 
 func _goal_count(counts: Dictionary, key: String) -> int:
   if not (key.begins_with("[") and key.ends_with("]")):
@@ -807,32 +738,18 @@ func _goal_count(counts: Dictionary, key: String) -> int:
     total += int(counts.get(name, 0))
   return total
 
-func _stable_stars(samples: Array[Dictionary]) -> int:
-  if samples.is_empty(): return 0
-  var best := 0
-  for goal in level.goals:
-    for star in range(1, 4):
-      var satisfied := true
-      for key in goal:
-        var threshold: float = goal[key][star - 1]
-        if key == "cost":
-          if cost > threshold: satisfied = false
-          continue
-        var low := INF
-        var high := 0.0
-        for counts in samples:
-          var rate := float(_goal_count(counts, key)) / WINDOW_SECONDS
-          low = minf(low, rate)
-          high = maxf(high, rate)
-        # Every five-second window must meet the goal. Small fluctuations are
-        # allowed because whole-particle counts can straddle window boundaries.
-        if low + 0.0001 < threshold or high - low > maxf(0.4, high * 0.2):
-          satisfied = false
-      if satisfied: best = maxi(best, star)
-  return best
+func _meets_output(candidate: Dictionary, counts: Dictionary, seconds: float, allow_fraction: bool) -> bool:
+  for key in candidate.goal:
+    if key == "cost": continue
+    var required: float = candidate.goal[key][candidate.tier] * seconds
+    # A whole-particle count can round down in one window. The full forecast
+    # still has to meet the authored average.
+    if allow_fraction: required = floorf(required + 0.000001)
+    if _goal_count(counts, key) + 0.000001 < required: return false
+  return true
 
 func _on_particle_event(kind: String, at: Vector2) -> void:
-  if diagnostics_enabled and is_instance_valid(diagnostic_overlay):
+  if is_instance_valid(diagnostic_overlay):
     diagnostic_overlay.add_event(kind, at)
 
 # Store the actual configured state rather than the original level declaration.

@@ -30,12 +30,10 @@ func _ready() -> void:
   assert(game.buildings[0].accepted == ["electron", "positron"])
   game.buildings[0].free()
   game.buildings.clear()
-  var samples: Array[Dictionary] = [{"electron": 5, "positron": 0}]
-  assert(game._stable_stars(samples) == 1)
-  samples = [{"electron": 3, "positron": 2}]
-  assert(game._stable_stars(samples) == 1)
-  samples = [{"electron": 4, "positron": 0}]
-  assert(game._stable_stars(samples) == 0)
+  var candidate := {"goal": level.goals[0], "tier": 0}
+  assert(game._meets_output(candidate, {"electron": 10, "positron": 0}, 10.0, false))
+  assert(game._meets_output(candidate, {"electron": 6, "positron": 4}, 10.0, false))
+  assert(not game._meets_output(candidate, {"electron": 9, "positron": 0}, 10.0, false))
   assert(game._goal_count({"up": 4, "up_r": 2}, "[up,up_r]") == 4)
   game._place_building(level.buildings[2], false)
   game.selected_building = game.buildings[0]
@@ -67,22 +65,38 @@ func _ready() -> void:
   key.keycode = KEY_E
   game._unhandled_input(key)
   assert(game.selected_building.orientation == mirror_orientation)
-  var detector = game.buildings[3]
-  game.selected_building = detector
-  game._open_config()
-  assert(game.config_particles.source_text() == "electron OR positron")
-  game._apply_config()
-  assert(game.selected_building.accepted == ["electron", "positron"])
+  assert(not game.has_method("_open_config"))
+  assert(game.buildings[3].accepted == ["electron", "positron"])
+  assert(game.output_rows[0].meter.markers.size() == 2)
+  assert(game.output_rows[0].meter.markers[1].tiers == PackedStringArray(["2", "3"]))
   # Turn the positron beam towards the detector.
   game.selected_building = game.buildings[2]
   game._rotate_selected()
   game.begin_run()
-  for tick in range(60 * 30):
-    if game.completed: break
+  assert(game.get_playback_speed() == 1.0)
+  for tick in range(roundi(60 * game.WATCH_SECONDS)):
+    assert(game.forecast == null, "The player should see the machine run before a forecast starts")
     game.step_simulation(1.0 / 60.0)
+    if tick == 60 * 4:
+      assert(game.get_playback_speed() > 1.0 and game.get_playback_speed() < 2.0)
     for child in game.get_children():
       if child is Particle and child.is_queued_for_deletion(): child.free()
+  assert(game.forecast != null)
+  assert(game.get_playback_speed() == 2.0)
+  assert(game.recent_counts.positron > 0)
+  var live_counts: Dictionary = game.total_counts.duplicate()
+  for frame in range(240):
+    if game.completed: break
+    await get_tree().process_frame
   assert(game.completed, "A positron beam meeting the grouped goal should complete the level")
+  assert(game.results.dialog_text.begins_with("1 star(s) earned"))
+  assert(game.total_counts == live_counts, "The forecast must leave the live simulation alone")
+  game.stop_to_build()
+  game.begin_run()
+  assert(game.get_playback_speed() == 1.0)
+  game.set_playback_speed(0.5)
+  game.elapsed = game.WATCH_SECONDS
+  assert(game.get_playback_speed() == 0.5, "A manual speed should override the automatic ramp")
   game.free()
   print("Level syntax checks passed")
   get_tree().quit()

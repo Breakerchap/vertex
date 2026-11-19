@@ -25,19 +25,10 @@ func _ready() -> void:
   var box := VBoxContainer.new()
   box.add_theme_constant_override("separation", 13)
   margin.add_child(box)
-  var header := HBoxContainer.new()
-  box.add_child(header)
   var title := Label.new()
   title.text = "Vertex"
   UI.heading(title, 32)
-  title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  header.add_child(title)
-  var editor := Button.new()
-  editor.text = "Level editor"
-  editor.theme_type_variation = "PrimaryButton"
-  editor.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-  editor.pressed.connect(func() -> void: get_tree().change_scene_to_file("res://MainScene/level_editor.tscn"))
-  header.add_child(editor)
+  box.add_child(title)
   var subtitle := Label.new()
   subtitle.text = "Levels"
   UI.heading(subtitle, 19)
@@ -89,8 +80,15 @@ func _ready() -> void:
     row.add_child(progress)
   if paths.is_empty():
     var empty := Label.new()
-    empty.text = "No .level files found in Levels/."
+    empty.text = "No levels"
     levels.add_child(empty)
+  var editor := Button.new()
+  editor.name = "LevelEditor"
+  editor.text = "Level editor"
+  editor.theme_type_variation = "PrimaryButton"
+  editor.custom_minimum_size.y = 44
+  editor.pressed.connect(func() -> void: get_tree().change_scene_to_file("res://MainScene/level_editor.tscn"))
+  box.add_child(editor)
 
 func _open_level(path: String) -> void:
   Global.selected_level = path

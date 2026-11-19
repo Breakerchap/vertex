@@ -42,6 +42,11 @@ text = "Pause"
 tooltip_text = "Advance 15 simulation steps (.)"
 text = "Step"
 
+[node name="Build" type="Button" parent="Panel/Margin/Controls"]
+visible = false
+tooltip_text = "Stop the simulation and return to build mode (B)"
+text = "Build  B"
+
 [node name="Slower" type="Button" parent="Panel/Margin/Controls"]
 custom_minimum_size = Vector2(32, 0)
 tooltip_text = "Slow down the simulation"

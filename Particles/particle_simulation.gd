@@ -23,10 +23,16 @@ func _physics_process(delta: float) -> void:
     return
   _pending_steps = 0
   var step_duration := 1.0 / float(Engine.physics_ticks_per_second)
-  _accumulated_time += delta * maxf(simulation_speed, 0.0)
+  _accumulated_time += delta * maxf(get_playback_speed(), 0.0)
   while running and _accumulated_time + 0.0000001 >= step_duration:
     _accumulated_time = maxf(0.0, _accumulated_time - step_duration)
     step_simulation(step_duration)
+
+func get_playback_speed() -> float:
+  return simulation_speed
+
+func set_playback_speed(speed: float) -> void:
+  simulation_speed = speed
 
 ## Queue fixed-size steps, advancing one per physics frame while paused.
 func request_steps(count: int) -> void:
