@@ -1,0 +1,19 @@
+title: 03 - Magnet;
+hint: Can you get 2 photons/s?;
+10 x 9;
+
+goal: {photon: 1/s, 2/s, 2/s};
+
+emitter: {x=1, y=4, E, [electron], rate=1, fixed=pr}
+emitter: {x=4, y=1, N, [positron], rate=1, fixed=pr}
+
+detector: {x=9, y=8, [photon], fixed=p}
+magnet: {x=4, y=4, +, fixed=pc}
+
+
+
+detector: {x=0, y=0, [photon], fixed=p}
+
+
+
+inventory: {magnet=8};

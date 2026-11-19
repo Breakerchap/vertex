@@ -1,11 +1,10 @@
-title: First Contact;
-hint: An electron and a positron annihilate into photons. Get one to the detector.;
-
-9 x 7;
+title: 01 - First Contact;
+hint: Walls block particles;
+9 x 6;
 
 goal: {photon: 1/s, 1/s, 1/s};
 
-emitter: {x=1, y=2, E, [electron], rate=1, fixed=rp};
-emitter: {x=4, y=1, N, [positron], rate=1, fixed=rp};
-mirror: {x=4, y=4, NW, fixed=p};
-detector: {x=7, y=4, [photon], fixed=rp};
+emitter: {x=1, y=2, E, [electron], rate=1, fixed=pr}
+emitter: {x=7, y=2, W, [positron], rate=1, fixed=pr}
+wall: {x=5, y=2}
+detector: {x=4, y=4, [photon], fixed=p}
