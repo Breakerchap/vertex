@@ -49,7 +49,7 @@ func _draw() -> void:
         var valid: bool = occupied == null
         if dragging_building:
           valid = valid and not game.selected_building.get_meta("fixed_position")
-        var pos := game._cell_position(hover)
+        var pos : Vector2 = game._cell_position(hover)
         var rect := Rect2(pos - Vector2.ONE * game.CELL * 0.47, Vector2.ONE * game.CELL * 0.94)
         var colour := Color("69d8ad", 0.22) if valid else Color("ec7377", 0.24)
         draw_rect(rect, colour, true)
