@@ -53,8 +53,26 @@ func _ready() -> void:
   game.free()
   Global.selected_level = "res://Tests/magnet_fixture.level"
   game = GAME.instantiate()
+  game.editor_playtest = true
   get_tree().root.add_child.call_deferred(game)
   await get_tree().process_frame
+  game._place_building({"kind": "mirror", "x": 0, "y": 0}, true)
+  game.selected_building = game._building_at(Vector2i(0, 0))
+  var mirror_orientation: int = game.selected_building.orientation
+  var key := InputEventKey.new()
+  key.pressed = true
+  key.keycode = KEY_Q
+  game._unhandled_input(key)
+  assert(game.selected_building.orientation == posmod(mirror_orientation - 1, 8))
+  key.keycode = KEY_E
+  game._unhandled_input(key)
+  assert(game.selected_building.orientation == mirror_orientation)
+  var detector = game.buildings[3]
+  game.selected_building = detector
+  game._open_config()
+  assert(game.config_particles.source_text() == "electron OR positron")
+  game._apply_config()
+  assert(game.selected_building.accepted == ["electron", "positron"])
   # Turn the positron beam towards the detector.
   game.selected_building = game.buildings[2]
   game._rotate_selected()

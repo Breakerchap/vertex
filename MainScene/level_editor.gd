@@ -4,6 +4,8 @@ const PARSER = preload("res://Levels/level_parser.gd")
 const PALETTE = preload("res://MainScene/building_palette.gd")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 const GAME = preload("res://MainScene/level_game.tscn")
+const PARTICLE_PICKER = preload("res://MainScene/particle_picker.gd")
+const UI = preload("res://MainScene/workspace_theme.gd")
 const NEW_LEVEL := "9 x 9;\n\ngoal: {electron: 1/s, 2/s, 3/s};\n\n"
 
 var source: TextEdit
@@ -12,17 +14,16 @@ var editor_panel: PanelContainer
 var inspector_panel: PanelContainer
 var inspector_heading: Label
 var test_game
+var editor_heading: Label
 var inspector_dialog: AcceptDialog
 var source_dialog: AcceptDialog
 var source_error: Label
 var status: Label
-var selected_label: Label
 var properties: LineEdit
 var property_form: VBoxContainer
-var property_fields: Array[LineEdit] = []
+var property_fields: Array[Control] = []
 var property_prefix := ""
 var property_suffix := ""
-var tool_select: OptionButton
 var palette: PanelContainer
 var width_input: SpinBox
 var height_input: SpinBox
@@ -38,6 +39,8 @@ var visual_fields := {}
 var visual_form: VBoxContainer
 var settings_error: Label
 var property_error: Label
+var declaration_error: Label
+var edit_range := false
 var settings_dialog: AcceptDialog
 var title_input: LineEdit
 var hint_input: LineEdit
@@ -72,7 +75,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
         else: _undo_editor()
       elif event.keycode == KEY_Y: _redo_editor()
       return
-    if event.keycode == KEY_R: _rotate_block()
+    if event.keycode == KEY_Q: _rotate_block(-1)
+    elif event.keycode in [KEY_E, KEY_R]: _rotate_block(1)
     elif event.keycode == KEY_DELETE: _delete_selected()
     elif event.keycode == KEY_ESCAPE: _select_move_tool()
 
@@ -85,24 +89,30 @@ func _build_ui() -> void:
   game = GAME.instantiate()
   game.editor_preview = true
   add_child(game)
+  game.editor_sidebar_width = 290
   game.editor_cell_clicked.connect(_board_click)
   game.editor_cell_dragged.connect(_move_block)
 
   var hud := CanvasLayer.new()
   add_child(hud)
+  editor_heading = _label("Level editor")
+  UI.heading(editor_heading, 21)
+  editor_heading.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+  editor_heading.offset_left = -290
+  editor_heading.offset_top = 23
+  hud.add_child(editor_heading)
   var panel := PanelContainer.new()
   editor_panel = panel
   hud.add_child(panel)
   panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
   panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
   panel.offset_left = 16
-  panel.offset_right = -272
-  panel.offset_top = -174
+  panel.offset_right = -306
+  panel.offset_top = -137
   panel.offset_bottom = -16
+  panel.theme = UI.theme()
   panel.resized.connect(_update_camera_inset)
-  var margin := MarginContainer.new()
-  for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
-    margin.add_theme_constant_override(side, 8)
+  var margin := UI.margin(10)
   panel.add_child(margin)
   var column := VBoxContainer.new()
   column.add_theme_constant_override("separation", 8)
@@ -116,13 +126,12 @@ func _build_ui() -> void:
   _button(bar, "Save as...", _save_as)
   _button(bar, "Undo", _undo_editor)
   _button(bar, "Redo", _redo_editor)
-  _button(bar, "Playtest", _start_playtest)
-  _button(bar, "Level select", func() -> void: _request_action("back"))
+  _button(bar, "Source…", func() -> void: source_dialog.popup_centered_ratio(0.7))
+  _button(bar, "Levels", func() -> void: _request_action("back"))
   status = Label.new()
   status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
   status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-  bar.add_child(status)
+  UI.muted(status)
   var controls := HFlowContainer.new()
   controls.add_theme_constant_override("separation", 6)
   column.add_child(controls)
@@ -132,62 +141,58 @@ func _build_ui() -> void:
   height_input = _spin(controls)
   width_input.value_changed.connect(_resize_board)
   height_input.value_changed.connect(_resize_board)
-  tool_select = OptionButton.new()
-  tool_select.add_item("Select / move")
-  var kinds: Array = CATALOG.SCENES.keys()
-  kinds.sort()
-  for kind in kinds: tool_select.add_item(str(kind).capitalize())
-  tool_select.hide()
-  controls.add_child(tool_select)
-  tool_select.item_selected.connect(func(_index: int) -> void: _select_block(-1))
-  _button(controls, "Select / move", _select_move_tool)
   palette = PALETTE.new()
   palette.infinite = true
   hud.add_child(palette)
+  palette.offset_left = -290
   game.external_palette = palette
-  palette.mode_changed.connect(func(enabled: bool) -> void:
-    if not enabled: _select_move_tool()
-  )
   palette.kind_selected.connect(_select_palette_kind)
   palette.kind_dropped.connect(_drop_palette_kind)
-  _button(controls, "Level settings...", _open_settings)
-  _button(controls, "Rotate [R]", _rotate_block)
-  _button(controls, "Properties...", func() -> void: inspector_dialog.popup_centered())
-  _button(controls, "Delete", _delete_selected)
-  _button(controls, "Source...", func() -> void: source_dialog.popup_centered_ratio(0.65))
-  _button(controls, "Reset preview", func() -> void: game._load_initial_board())
-  selected_label = _label("Nothing selected")
-  column.add_child(selected_label)
+  _button(controls, "Level settings…", _open_settings)
+  _button(controls, "Reset preview", _reset_preview)
+  _button(controls, "Playtest", _start_playtest).theme_type_variation = "PrimaryButton"
+  column.add_child(status)
 
   inspector_panel = PanelContainer.new()
   hud.add_child(inspector_panel)
   inspector_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-  inspector_panel.offset_left = -256
+  inspector_panel.offset_left = -290
   inspector_panel.offset_right = -16
-  inspector_panel.offset_top = 115
+  inspector_panel.offset_top = 72
   inspector_panel.offset_bottom = -16
-  var inspector_margin := MarginContainer.new()
-  for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
-    inspector_margin.add_theme_constant_override(side, 10)
+  inspector_panel.theme = UI.theme()
+  var inspector_margin := UI.margin(12)
   inspector_panel.add_child(inspector_margin)
   var inspector_column := VBoxContainer.new()
   inspector_column.add_theme_constant_override("separation", 10)
   inspector_margin.add_child(inspector_column)
   inspector_heading = _label("Selected building")
+  UI.heading(inspector_heading)
   inspector_column.add_child(inspector_heading)
-  _button(inspector_column, "Back to tools [Esc]", _select_move_tool)
+  var inspector_actions := HFlowContainer.new()
+  inspector_column.add_child(inspector_actions)
+  _button(inspector_actions, "Tools  Esc", _select_move_tool)
+  _button(inspector_actions, "Delete  Del", _delete_selected)
   var inspector_scroll := ScrollContainer.new()
   inspector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+  inspector_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
   inspector_column.add_child(inspector_scroll)
   visual_form = VBoxContainer.new()
   visual_form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   inspector_scroll.add_child(visual_form)
-  _button(inspector_column, "Delete selected [Del]", _delete_selected)
+  property_error = _label("")
+  property_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+  property_error.add_theme_color_override("font_color", UI.ERROR)
+  inspector_column.add_child(property_error)
+  _button(inspector_column, "Apply building", _apply_visual_properties).theme_type_variation = "PrimaryButton"
+  _button(inspector_column, "Advanced properties…", _open_properties)
   inspector_panel.hide()
 
   inspector_dialog = AcceptDialog.new()
   inspector_dialog.title = "Properties"
   inspector_dialog.min_size = Vector2i(420, 250)
+  inspector_dialog.theme = UI.theme()
+  inspector_dialog.ok_button_text = "Close"
   add_child(inspector_dialog)
   var inspector := VBoxContainer.new()
   inspector.add_theme_constant_override("separation", 8)
@@ -195,14 +200,16 @@ func _build_ui() -> void:
   property_form = VBoxContainer.new()
   inspector.add_child(property_form)
   properties = LineEdit.new()
-  properties.placeholder_text = "Declaration"
-  inspector.add_child(properties)
-  property_error = _label("")
-  inspector.add_child(property_error)
-  _button(inspector, "Apply declaration", _apply_properties)
+  declaration_error = _label("")
+  declaration_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+  declaration_error.add_theme_color_override("font_color", UI.ERROR)
+  inspector.add_child(declaration_error)
+  _button(inspector, "Apply properties", _apply_properties).theme_type_variation = "PrimaryButton"
 
   source_dialog = AcceptDialog.new()
   source_dialog.title = "Level source"
+  source_dialog.theme = UI.theme()
+  source_dialog.ok_button_text = "Close"
   add_child(source_dialog)
   source = CodeEdit.new()
   source.set_draw_line_numbers(true)
@@ -215,7 +222,7 @@ func _build_ui() -> void:
   for word in ["x", "y", "fixed", "rate", "AND", "OR"]:
     highlighter.add_keyword_color(word, Color("b5a6f1"))
   source.syntax_highlighter = highlighter
-  source.custom_minimum_size = Vector2(500, 350)
+  source.custom_minimum_size = Vector2(360, 300)
   source.text_changed.connect(_source_changed)
   source_dialog.add_child(source)
   source_error = _label("")
@@ -223,13 +230,16 @@ func _build_ui() -> void:
   source_dialog.add_child(source_error)
   settings_dialog = AcceptDialog.new()
   settings_dialog.title = "Level settings"
-  settings_dialog.min_size = Vector2i(580, 480)
+  settings_dialog.min_size = Vector2i(480, 420)
+  settings_dialog.theme = UI.theme()
+  settings_dialog.ok_button_text = "Cancel"
   add_child(settings_dialog)
   var settings_root := VBoxContainer.new()
   settings_dialog.add_child(settings_root)
   var settings_scroll := ScrollContainer.new()
-  settings_scroll.custom_minimum_size = Vector2(540, 380)
+  settings_scroll.custom_minimum_size = Vector2(440, 320)
   settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+  settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
   settings_root.add_child(settings_scroll)
   var settings_column := VBoxContainer.new()
   settings_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -242,12 +252,19 @@ func _build_ui() -> void:
   hint_input = LineEdit.new()
   hint_input.placeholder_text = "e.g. Guide a photon into the detector"
   settings_column.add_child(hint_input)
-  settings_column.add_child(_label("Goals: each solution must satisfy all its conditions"))
+  var goal_title := _label("Goals")
+  UI.heading(goal_title)
+  settings_column.add_child(goal_title)
+  var goal_help := _label("Meet every condition in any one solution to earn stars.")
+  UI.muted(goal_help)
+  settings_column.add_child(goal_help)
   goal_rows = VBoxContainer.new()
   goal_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   settings_column.add_child(goal_rows)
   _button(settings_column, "+ Add alternative solution", func() -> void: _add_goal_group())
-  settings_column.add_child(_label("Starting inventory"))
+  var inventory_title := _label("Starting inventory")
+  UI.heading(inventory_title)
+  settings_column.add_child(inventory_title)
   for kind in CATALOG.SCENES:
     var row := HBoxContainer.new()
     settings_column.add_child(row)
@@ -256,11 +273,12 @@ func _build_ui() -> void:
     row.add_child(label)
     var count := _spin(row)
     count.min_value = 0
-    count.max_value = 999
     inventory_fields[kind] = count
   settings_error = _label("")
+  settings_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+  settings_error.add_theme_color_override("font_color", UI.ERROR)
   settings_root.add_child(settings_error)
-  _button(settings_root, "Apply settings", _apply_settings)
+  _button(settings_root, "Apply settings", _apply_settings).theme_type_variation = "PrimaryButton"
   file_dialog = FileDialog.new()
   file_dialog.access = FileDialog.ACCESS_FILESYSTEM
   file_dialog.filters = PackedStringArray(["*.level ; Level files"])
@@ -273,16 +291,12 @@ func _build_ui() -> void:
 
 func _select_move_tool() -> void:
   game.editor_brush = ""
-  tool_select.select(0)
   palette.selected = ""
   palette.refresh()
   _select_block(-1)
 
 func _select_palette_kind(kind: String) -> void:
   game.editor_brush = kind
-  var kinds: Array = CATALOG.SCENES.keys()
-  kinds.sort()
-  tool_select.select(kinds.find(kind) + 1)
   palette.selected = kind
   palette.refresh()
   _select_block(-1)
@@ -299,11 +313,17 @@ func _update_camera_inset() -> void:
   game.editor_bottom_inset = editor_panel.size.y + 16.0
   game._fit_camera()
 
-func _button(parent: Node, text_value: String, action: Callable) -> void:
+func _button(parent: Node, text_value: String, action: Callable) -> Button:
   var button := Button.new()
   button.text = text_value
   button.pressed.connect(action)
   parent.add_child(button)
+  return button
+
+func _reset_preview() -> void:
+  game._load_initial_board()
+  if selected_block >= 0:
+    game.selected_building = game._building_at(selected_cell)
 
 func _label(text_value: String) -> Label:
   var label := Label.new()
@@ -314,6 +334,7 @@ func _spin(parent: Node) -> SpinBox:
   var spin := SpinBox.new()
   spin.min_value = 1
   spin.max_value = 200
+  spin.allow_greater = true
   spin.custom_minimum_size.x = 75
   parent.add_child(spin)
   return spin
@@ -330,12 +351,14 @@ func _source_changed() -> void:
       if undo_stack.size() > 100: undo_stack.pop_front()
       redo_stack.clear()
     source_snapshot = source.text
-  _select_block(-1)
   parsed = PARSER.parse(source.text)
+  _select_block(-1)
   blocks.clear()
   if parsed.has("error"):
     source_error.text = "Source error: " + str(parsed.error)
-    status.text = "Invalid: " + str(parsed.error) + "  (showing last valid board)"
+    status.text = "Invalid source • Showing last valid board"
+    status.tooltip_text = str(parsed.error)
+    status.add_theme_color_override("font_color", UI.ERROR)
     return
   source_error.text = ""
   updating = true
@@ -350,33 +373,36 @@ func _source_changed() -> void:
   var warnings := _level_warnings(parsed)
   status.text = (path.get_file() if not path.is_empty() else "Untitled") + ("  • unsaved" if source.text != saved_text else "") + ("  • %d warning(s)" % warnings.size() if not warnings.is_empty() else "")
   status.tooltip_text = "\n".join(warnings)
+  status.add_theme_color_override("font_color", UI.MUTED)
   source_error.text = "\n".join(warnings)
 
 # Mask comments without changing offsets so editing preserves the original text.
 func _index_blocks() -> void:
-  var lines := PackedStringArray()
-  for line in source.text.split("\n"):
-    var comment := line.find("#")
-    lines.append(line if comment < 0 else line.substr(0, comment) + " ".repeat(line.length() - comment))
-  var masked := "\n".join(lines)
-  var pattern := RegEx.new()
-  pattern.compile("(?is)\\b([a-z_][a-z_0-9]*)\\s*:\\s*\\{[^}]*\\}")
-  for result in pattern.search_all(masked):
+  var masked: String = PARSER.mask_comments(source.text)
+  for result in PARSER.find_blocks(masked):
     var kind := result.get_string(1).to_lower()
     if kind == "magnetic_field": kind = "magnet"
     if not CATALOG.SCENES.has(kind): continue
-    var text := source.text.substr(result.get_start(), result.get_end() - result.get_start())
+    var last: int = result.get_end(2) + 1
+    var text := source.text.substr(result.get_start(), last - result.get_start())
     var fragment: Dictionary = PARSER.parse("%d x %d; goal: {electron: 1, 1, 1};\n%s" % [parsed.width, parsed.height, text])
     if fragment.has("error") or fragment.buildings.is_empty(): continue
-    blocks.append({"start": result.get_start(), "end": result.get_end(), "text": text, "entries": fragment.buildings})
+    blocks.append({"start": result.get_start(), "end": result.get_end(), "statement_end": result.get_end(), "text": text, "entries": fragment.buildings})
 
 func _resize_board(_value: float) -> void:
   if updating: return
-  var regex := RegEx.new()
-  regex.compile("(?i)(\\d+)\\s*x\\s*(\\d+)")
-  var found := regex.search(source.text)
+  var found: RegExMatch = PARSER.find_dimensions(PARSER.mask_comments(source.text))
   if found == null: return
-  _set_source(source.text.substr(0, found.get_start()) + "%d x %d" % [int(width_input.value), int(height_input.value)] + source.text.substr(found.get_end()))
+  var updated := source.text.left(found.get_start()) + "%d x %d" % [int(width_input.value), int(height_input.value)] + source.text.substr(found.get_end())
+  var result := PARSER.parse(updated)
+  if result.has("error"):
+    status.text = result.error
+    updating = true
+    width_input.value = int(found.get_string(1))
+    height_input.value = int(found.get_string(2))
+    updating = false
+    return
+  _set_source(updated)
 
 func _board_click(cell: Vector2i, button: int) -> void:
   if parsed.has("error"): return
@@ -386,19 +412,17 @@ func _board_click(cell: Vector2i, button: int) -> void:
       if Vector2i(entry.x, entry.y) == cell: hit = i
   if button == MOUSE_BUTTON_RIGHT:
     if hit >= 0: _select_block(hit, cell)
+    else: _select_move_tool()
     return
   if button != MOUSE_BUTTON_LEFT: return
   if hit >= 0:
-    if palette.click_mode:
-      tool_select.select(0)
-      palette.selected = ""
-      palette.refresh()
+    game.editor_brush = ""
+    palette.selected = ""
+    palette.refresh()
     _select_block(hit, cell)
     return
-  if palette.click_mode and tool_select.selected > 0:
-    var kinds: Array = CATALOG.SCENES.keys()
-    kinds.sort()
-    _place_editor_kind(kinds[tool_select.selected - 1], cell)
+  if not game.editor_brush.is_empty():
+    _place_editor_kind(game.editor_brush, cell)
     return
   if selected_block >= 0 and selected_cell != cell:
     _move_block(selected_cell, cell)
@@ -407,23 +431,21 @@ func _board_click(cell: Vector2i, button: int) -> void:
   return
 
 func _select_block(index: int, cell: Vector2i = Vector2i(-1, -1)) -> void:
+  edit_range = false
   selected_block = index
   selected_cell = cell
   game.selected_building = game._building_at(cell) if index >= 0 else null
   if is_instance_valid(inspector_panel): inspector_panel.visible = index >= 0
   if is_instance_valid(palette): palette.visible = index < 0
   if index < 0:
-    selected_label.text = "Nothing selected"
     _build_visual_form()
     properties.text = ""
     properties.editable = false
     _clear_property_form()
   else:
-    selected_label.text = "Selected: %s at %d, %d" % [blocks[index].entries[0].kind, cell.x, cell.y]
     inspector_heading.text = "%s  (%d, %d)" % [str(blocks[index].entries[0].kind).capitalize(), cell.x, cell.y]
-    properties.text = blocks[index].text.replace("\n", " ")
+    properties.text = PARSER.mask_comments(blocks[index].text).replace("\n", " ")
     properties.editable = true
-    _build_property_form(properties.text)
     _build_visual_form()
 
 func _place_editor_kind(kind: String, cell: Vector2i) -> void:
@@ -444,23 +466,30 @@ func _select_at(cell: Vector2i) -> void:
         return
 
 func _single_declaration(text_value: String, cell: Vector2i) -> String:
-  var x_regex := RegEx.new()
-  var y_regex := RegEx.new()
-  x_regex.compile("(?i)\\bx\\s*=\\s*-?\\d+(?:\\.\\.-?\\d+)?")
-  y_regex.compile("(?i)\\by\\s*=\\s*-?\\d+(?:\\.\\.-?\\d+)?")
-  return y_regex.sub(x_regex.sub(text_value, "x=%d" % cell.x), "y=%d" % cell.y)
+  var result := text_value
+  for axis in ["x", "y"]:
+    var regex := RegEx.new()
+    regex.compile("(?i)\\b" + axis + "\\s*=\\s*[+-]?\\d+(?:\\.\\.[+-]?\\d+)?")
+    var found := regex.search(PARSER.mask_comments(result))
+    if found != null:
+      var value := cell.x if axis == "x" else cell.y
+      result = result.left(found.get_start()) + "%s=%d" % [axis, value] + result.substr(found.get_end())
+  return result
 
-func _replace_selected_cell(replacement: String) -> void:
-  if selected_block < 0: return
+func _replace_selected_cell(replacement: String) -> bool:
+  if selected_block < 0: return false
   var block: Dictionary = blocks[selected_block]
-  var declarations: PackedStringArray = []
-  for entry in block.entries:
-    var cell := Vector2i(entry.x, entry.y)
-    if cell == selected_cell:
-      if not replacement.is_empty(): declarations.append(replacement.trim_suffix(";"))
-    else:
-      declarations.append(_single_declaration(block.text, cell).trim_suffix(";"))
-  _replace_block(selected_block, ";\n".join(declarations))
+  var declarations := PackedStringArray()
+  if edit_range:
+    if not replacement.is_empty(): declarations.append(replacement.trim_suffix(";"))
+  else:
+    for entry in block.entries:
+      var cell := Vector2i(entry.x, entry.y)
+      if cell == selected_cell:
+        if not replacement.is_empty(): declarations.append(replacement.trim_suffix(";"))
+      else:
+        declarations.append(_single_declaration(block.text, cell).trim_suffix(";"))
+  return _replace_block(selected_block, ";\n".join(declarations))
 
 func _move_block(from_cell: Vector2i, to_cell: Vector2i) -> void:
   if parsed.has("error"): return
@@ -469,28 +498,39 @@ func _move_block(from_cell: Vector2i, to_cell: Vector2i) -> void:
   _select_at(from_cell)
   if selected_block < 0: return
   var replacement := _single_declaration(blocks[selected_block].text, to_cell)
-  _replace_selected_cell(replacement)
-  _select_at(to_cell)
+  if _replace_selected_cell(replacement): _select_at(to_cell)
 
-func _rotate_block() -> void:
-  if selected_block < 0: return
-  var entry: Dictionary = blocks[selected_block].entries[0]
-  if entry.kind not in ["mirror", "emitter", "magnet"]: return
-  _build_visual_form()
-  if entry.kind == "magnet":
+func _rotate_block(turn: int = 1) -> void:
+  if selected_block < 0 or game.simulating: return
+  if visual_fields.has("polarity"):
     visual_fields.polarity.select(1 - visual_fields.polarity.selected)
+  elif visual_fields.has("facing") and blocks[selected_block].entries[0].kind in ["mirror", "emitter"]:
+    visual_fields.facing.select(posmod(visual_fields.facing.selected + turn, game.DIRECTIONS.size()))
   else:
-    visual_fields.facing.select((visual_fields.facing.selected + 1) % 8)
+    return
   _apply_visual_properties()
 
 func _visual_row(label_text: String, control: Control) -> void:
   var row := HBoxContainer.new()
   visual_form.add_child(row)
   var label := _label(label_text)
-  label.custom_minimum_size.x = 108
+  label.custom_minimum_size.x = 92
   row.add_child(label)
   control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   row.add_child(control)
+
+func _coordinate_row(axis: String, maximum: int, start: int, end: int) -> void:
+  var inputs := HBoxContainer.new()
+  for item in [start, end]:
+    if inputs.get_child_count() > 0: inputs.add_child(_label("to"))
+    var field := SpinBox.new()
+    field.max_value = maximum
+    field.value = item
+    field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    field.get_line_edit().custom_minimum_size.x = 0
+    inputs.add_child(field)
+    visual_fields[axis if not visual_fields.has(axis) else axis + "_end"] = field
+  _visual_row(axis.to_upper(), inputs)
 
 func _build_visual_form() -> void:
   for child in visual_form.get_children():
@@ -499,28 +539,28 @@ func _build_visual_form() -> void:
   visual_fields.clear()
   property_error.text = ""
   if selected_block < 0: return
-  var entry: Dictionary = blocks[selected_block].entries[0]
-  var x_field := SpinBox.new()
-  x_field.min_value = 0
-  x_field.max_value = parsed.width - 1
-  x_field.value = selected_cell.x
-  _visual_row("X", x_field)
-  visual_fields.x = x_field
-  x_field.value_changed.connect(func(_value: float) -> void: _apply_visual_properties.call_deferred())
-  var y_field := SpinBox.new()
-  y_field.min_value = 0
-  y_field.max_value = parsed.height - 1
-  y_field.value = selected_cell.y
-  _visual_row("Y", y_field)
-  visual_fields.y = y_field
-  y_field.value_changed.connect(func(_value: float) -> void: _apply_visual_properties.call_deferred())
-  if entry.kind in ["mirror", "emitter"]:
+  var block: Dictionary = blocks[selected_block]
+  var entry: Dictionary = block.entries[0]
+  if block.entries.size() > 1:
+    var entire := CheckBox.new()
+    entire.text = "Edit all %d cells in range" % block.entries.size()
+    entire.button_pressed = edit_range
+    entire.toggled.connect(func(value: bool) -> void:
+      edit_range = value
+      _build_visual_form()
+    )
+    visual_form.add_child(entire)
+  var first := Vector2i(entry.x, entry.y) if edit_range else selected_cell
+  var last_entry: Dictionary = block.entries.back()
+  var last := Vector2i(last_entry.x, last_entry.y) if edit_range else selected_cell
+  _coordinate_row("x", parsed.width - 1, first.x, last.x)
+  _coordinate_row("y", parsed.height - 1, first.y, last.y)
+  if entry.kind in ["mirror", "emitter"] or entry.facing != "E":
     var direction := OptionButton.new()
-    for name in ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]: direction.add_item(name)
-    direction.select(["E", "SE", "S", "SW", "W", "NW", "N", "NE"].find(entry.facing))
+    for name in game.DIRECTIONS: direction.add_item(name)
+    direction.select(game.DIRECTIONS.find(entry.facing))
     _visual_row("Direction", direction)
     visual_fields.facing = direction
-    direction.item_selected.connect(func(_index: int) -> void: _apply_visual_properties.call_deferred())
   if entry.kind == "magnet":
     var polarity := OptionButton.new()
     polarity.add_item("Positive")
@@ -528,66 +568,92 @@ func _build_visual_form() -> void:
     polarity.select(1 if str(entry.get("polarity", "+")) in ["negative", "-", "-1", "n"] else 0)
     _visual_row("Polarity", polarity)
     visual_fields.polarity = polarity
-    polarity.item_selected.connect(func(_index: int) -> void: _apply_visual_properties.call_deferred())
+  if entry.kind in ["mirror", "emitter", "magnet"]:
+    var turns := HFlowContainer.new()
+    visual_form.add_child(turns)
+    if entry.kind == "magnet":
+      _button(turns, "Flip polarity  Q / E", _rotate_block)
+    else:
+      _button(turns, "↶  Q", _rotate_block.bind(-1)).tooltip_text = "Rotate counterclockwise"
+      _button(turns, "↷  E", _rotate_block.bind(1)).tooltip_text = "Rotate clockwise"
   if entry.kind in ["emitter", "detector"]:
-    var particles := LineEdit.new()
-    particles.text = ", ".join(entry.particles)
-    if entry.kind == "detector":
-      var original: String = blocks[selected_block].text
-      var left := original.find("[")
-      var right := original.find("]", left)
-      if left >= 0 and right > left: particles.text = original.substr(left + 1, right - left - 1)
-    particles.placeholder_text = "e.g. electron, positron"
-    _visual_row("Particles", particles)
+    var heading := _label("Emission order" if entry.kind == "emitter" else "Accepted particles")
+    UI.heading(heading, 15)
+    visual_form.add_child(heading)
+    var particles := PARTICLE_PICKER.new()
+    particles.sequence = entry.kind == "emitter"
+    if particles.sequence:
+      particles.load_text(", ".join(entry.particles))
+    else:
+      particles.load_text(entry.get("particle_expression", ""))
+    visual_form.add_child(particles)
     visual_fields.particles = particles
-    particles.text_submitted.connect(func(_text: String) -> void: _apply_visual_properties.call_deferred())
-    particles.focus_exited.connect(func() -> void: _apply_visual_properties.call_deferred())
   if entry.kind == "emitter":
     var rate := SpinBox.new()
-    rate.min_value = 0.01
-    rate.max_value = 1000
-    rate.step = 0.1
+    rate.min_value = 0.0
+    rate.max_value = 1000.0
+    rate.allow_greater = true
+    rate.step = 0.0
     rate.value = float(entry.rate)
-    _visual_row("Particles per second", rate)
+    _visual_row("Rate / sec", rate)
     visual_fields.rate = rate
-    rate.value_changed.connect(func(_value: float) -> void: _apply_visual_properties.call_deferred())
   var fixed_position := CheckBox.new()
+  fixed_position.text = "Lock position"
   fixed_position.button_pressed = "p" in str(entry.fixed)
-  _visual_row("Lock position", fixed_position)
+  visual_form.add_child(fixed_position)
   visual_fields.fixed_position = fixed_position
-  fixed_position.toggled.connect(func(_value: bool) -> void: _apply_visual_properties.call_deferred())
   if entry.kind in ["mirror", "emitter", "magnet"]:
     var fixed_rotation := CheckBox.new()
+    fixed_rotation.text = "Lock polarity" if entry.kind == "magnet" else "Lock rotation"
     fixed_rotation.button_pressed = ("c" if entry.kind == "magnet" else "r") in str(entry.fixed)
-    _visual_row("Lock rotation / polarity", fixed_rotation)
+    visual_form.add_child(fixed_rotation)
     visual_fields.fixed_rotation = fixed_rotation
-    fixed_rotation.toggled.connect(func(_value: bool) -> void: _apply_visual_properties.call_deferred())
 
 func _apply_visual_properties() -> void:
   if selected_block < 0: return
   var entry: Dictionary = blocks[selected_block].entries[0]
   var destination := Vector2i(int(visual_fields.x.value), int(visual_fields.y.value))
-  if destination != selected_cell and game._building_at(destination) != null:
-    property_error.text = "Destination cell is occupied."
-    return
+  var end := Vector2i(int(visual_fields.x_end.value), int(visual_fields.y_end.value))
   var parts: PackedStringArray = ["x=%d" % destination.x, "y=%d" % destination.y]
+  if destination.x != end.x: parts[0] += "..%d" % end.x
+  if destination.y != end.y: parts[1] += "..%d" % end.y
   if visual_fields.has("facing"): parts.append(visual_fields.facing.get_item_text(visual_fields.facing.selected))
   if visual_fields.has("polarity"): parts.append("-" if visual_fields.polarity.selected == 1 else "+")
-  if visual_fields.has("particles"): parts.append("[" + visual_fields.particles.text + "]")
-  if visual_fields.has("rate"): parts.append("rate=%s" % str(visual_fields.rate.value))
-  var fixed := "p" if visual_fields.fixed_position.button_pressed else ""
-  if visual_fields.has("fixed_rotation") and visual_fields.fixed_rotation.button_pressed: fixed += "c" if entry.kind == "magnet" else "r"
+  if visual_fields.has("particles"):
+    var expression: String = visual_fields.particles.source_text()
+    if not expression.is_empty(): parts.append("[" + expression + "]")
+  elif not entry.particles.is_empty():
+    parts.append("[" + ", ".join(entry.particles) + "]")
+  if visual_fields.has("rate"):
+    parts.append("rate=%s" % String.num_scientific(visual_fields.rate.value))
+  elif float(entry.rate) != 1.0:
+    parts.append("rate=%s" % entry.rate)
+  var fixed := str(entry.fixed).replace("p", "")
+  if visual_fields.fixed_position.button_pressed: fixed += "p"
+  if visual_fields.has("fixed_rotation"):
+    var flag := "c" if entry.kind == "magnet" else "r"
+    fixed = fixed.replace(flag, "")
+    if visual_fields.fixed_rotation.button_pressed: fixed += flag
   if not fixed.is_empty(): parts.append("fixed=" + fixed)
   for key in entry:
-    if key not in ["kind", "x", "y", "facing", "fixed", "rate", "particles", "accepted", "polarity"]:
+    if key not in ["kind", "x", "y", "facing", "fixed", "rate", "particles", "accepted", "polarity", "particle_expression"]:
       parts.append("%s=%s" % [key, entry[key]])
   var replacement := "%s: {%s}" % [entry.kind, ", ".join(parts)]
-  var candidate := PARSER.parse("%d x %d; goal: {electron: 1, 1, 1}; %s;" % [parsed.width, parsed.height, replacement])
-  if candidate.has("error"):
-    property_error.text = candidate.error
-    return
-  _replace_selected_cell(replacement)
-  _select_at(destination)
+  var keep_range := edit_range and destination != end
+  if _replace_selected_cell(replacement):
+    _select_at(destination)
+    if keep_range:
+      edit_range = true
+      _build_visual_form()
+
+func _open_properties() -> void:
+  if selected_block < 0: return
+  var declaration: String = PARSER.mask_comments(blocks[selected_block].text).replace("\n", " ")
+  if not edit_range: declaration = _single_declaration(declaration, selected_cell)
+  properties.text = declaration
+  declaration_error.text = ""
+  _build_property_form(declaration)
+  inspector_dialog.popup_centered()
 
 func _clear_property_form() -> void:
   property_fields.clear()
@@ -605,93 +671,143 @@ func _build_property_form(declaration: String) -> void:
   property_prefix = declaration.substr(0, start + 1)
   property_suffix = declaration.substr(end)
   var body := declaration.substr(start + 1, end - start - 1)
-  var parts: Array[String] = []
-  var depth := 0
-  var part_start := 0
-  for i in range(body.length()):
-    var character := body.substr(i, 1)
-    if character in ["[", "("]: depth += 1
-    elif character in ["]", ")"]: depth -= 1
-    elif character == "," and depth == 0:
-      parts.append(body.substr(part_start, i - part_start).strip_edges())
-      part_start = i + 1
-  parts.append(body.substr(part_start).strip_edges())
-  for part in parts:
+  var regex := RegEx.new()
+  regex.compile("\\[[^\\]]*\\]|[^,\\[\\]]+")
+  for match_part in regex.search_all(body):
+    var part := match_part.get_string().strip_edges()
     if part.is_empty(): continue
-    var row := HBoxContainer.new()
-    property_form.add_child(row)
-    var label := _label(part.get_slice("=", 0).strip_edges().capitalize() if "=" in part else "Option")
-    label.custom_minimum_size.x = 100
-    row.add_child(label)
-    var field := LineEdit.new()
-    field.text = part
-    field.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    field.text_changed.connect(_property_field_changed)
-    row.add_child(field)
+    var field: Control
+    if part.begins_with("["):
+      var particle_field := PARTICLE_PICKER.new()
+      particle_field.sequence = blocks[selected_block].entries[0].kind != "detector"
+      particle_field.load_text(part.substr(1, part.length() - 2))
+      field = particle_field
+    else:
+      var text_field := LineEdit.new()
+      text_field.text = part
+      field = text_field
+    property_form.add_child(field)
     property_fields.append(field)
 
-func _property_field_changed(_value: String) -> void:
-  var parts: Array[String] = []
-  for field in property_fields: parts.append(field.text.strip_edges())
-  properties.text = property_prefix + " " + ", ".join(parts) + " " + property_suffix
-
-func _replace_block(index: int, replacement: String) -> void:
+func _replace_block(index: int, replacement: String) -> bool:
   var block: Dictionary = blocks[index]
-  _set_source(source.text.substr(0, block.start) + replacement + source.text.substr(block.end))
+  var end: int = block.statement_end if replacement.is_empty() else block.end
+  var updated := source.text.left(block.start) + replacement + source.text.substr(end)
+  var result := PARSER.parse(updated)
+  if result.has("error"):
+    var error := declaration_error if inspector_dialog.visible else property_error
+    if is_instance_valid(error): error.text = result.error
+    status.text = result.error
+    return false
+  _set_source(updated)
+  return true
 
 func _apply_properties() -> void:
   if selected_block < 0: return
+  var parts := PackedStringArray()
+  for field in property_fields:
+    if field is LineEdit:
+      parts.append(field.text.strip_edges())
+    else:
+      var value: String = field.source_text()
+      if not value.is_empty(): parts.append("[" + value + "]")
   var cell := selected_cell
-  _replace_block(selected_block, properties.text)
-  _select_at(cell)
-  inspector_dialog.hide()
+  if _replace_selected_cell(property_prefix + " " + ", ".join(parts) + " " + property_suffix):
+    _select_at(cell)
+    inspector_dialog.hide()
 
 func _delete_selected() -> void:
   if selected_block < 0: return
   _replace_selected_cell("")
 
 # Goal panels express OR between alternatives and AND within each one.
-func _add_goal_group(conditions: Dictionary = {}) -> void:
+func _add_goal_group(conditions: Dictionary = {}, targets: Dictionary = {}, source_index: int = -1) -> void:
   var group := PanelContainer.new()
   goal_rows.add_child(group)
+  group.set_meta("source_index", source_index)
+  var margin := UI.margin()
+  group.add_child(margin)
   var column := VBoxContainer.new()
-  group.add_child(column)
-  var header := HBoxContainer.new()
+  margin.add_child(column)
+  var header := HFlowContainer.new()
   column.add_child(header)
-  header.add_child(_label("Solution %d  (all conditions)" % goal_rows.get_child_count()))
-  var add := Button.new()
-  add.text = "+ Condition"
-  add.pressed.connect(func() -> void: _add_goal_row(group.get_meta("rows")))
-  header.add_child(add)
-  var remove := Button.new()
-  remove.text = "Remove solution"
-  remove.pressed.connect(func() -> void: group.queue_free())
-  header.add_child(remove)
+  var title := _label("Solution")
+  UI.heading(title, 16)
+  title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  header.add_child(title)
   var rows := VBoxContainer.new()
   column.add_child(rows)
   group.set_meta("rows", rows)
+  _button(header, "+ Output", func() -> void: _add_goal_row(rows))
+  _button(header, "+ Cost limit", func() -> void: _add_goal_row(rows, "cost", [INF, INF, INF]))
+  _button(header, "Remove", func() -> void: group.queue_free()).tooltip_text = "Remove this solution"
   if conditions.is_empty():
     _add_goal_row(rows)
   else:
-    for target in conditions:
-      _add_goal_row(rows, str(target), conditions[target])
+    for key in conditions:
+      _add_goal_row(rows, targets.get(key, key), conditions[key])
 
 func _add_goal_row(parent: VBoxContainer, target: String = "electron", values: Array = [1.0, 2.0, 3.0]) -> void:
-  var row := HBoxContainer.new()
+  if parent.get_child_count() > 0: parent.add_child(HSeparator.new())
+  var row := VBoxContainer.new()
   parent.add_child(row)
-  var target_input := LineEdit.new()
-  target_input.text = target
-  target_input.placeholder_text = "Particle or cost"
-  target_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  target_input.tooltip_text = "Use a particle, cost, or [particle OR particle] expression"
-  row.add_child(target_input)
-  for value in values:
+  var header := HBoxContainer.new()
+  row.add_child(header)
+  var type := OptionButton.new()
+  type.add_item("Particle output")
+  type.add_item("Build cost limit")
+  type.select(1 if target == "cost" else 0)
+  type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  header.add_child(type)
+  _button(header, "Remove condition", func() -> void:
+    var previous := row.get_index() - 1
+    var next := row.get_index() + 1
+    if previous >= 0: parent.get_child(previous).queue_free()
+    elif next < parent.get_child_count(): parent.get_child(next).queue_free()
+    row.queue_free()
+  )
+  var expression := PARTICLE_PICKER.new()
+  var bracketed := target.begins_with("[") and target.ends_with("]")
+  if target != "cost":
+    expression.load_text(target.substr(1, target.length() - 2) if bracketed else target)
+  row.add_child(expression)
+  var thresholds := HBoxContainer.new()
+  row.add_child(thresholds)
+  var fields: Array[LineEdit] = []
+  for i in range(3):
+    var tier := VBoxContainer.new()
+    tier.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    thresholds.add_child(tier)
+    var caption := _label("★".repeat(i + 1))
+    caption.add_theme_color_override("font_color", UI.GOLD)
+    tier.add_child(caption)
     var field := LineEdit.new()
-    field.text = "inf" if is_inf(float(value)) else str(value)
-    field.custom_minimum_size.x = 56
-    field.tooltip_text = "Threshold for one, two or three stars (in that order)"
-    row.add_child(field)
-  _button(row, "×", func() -> void: row.queue_free())
+    field.text = _threshold_text(values[i])
+    tier.add_child(field)
+    fields.append(field)
+  var help := _label("")
+  UI.muted(help)
+  row.add_child(help)
+  var show_type := func(index: int) -> void:
+    expression.visible = index == 0
+    help.text = "Minimum particles per second" if index == 0 else "Maximum cost per tier. Leave blank for no limit."
+    for field in fields:
+      field.placeholder_text = "per second" if index == 0 else "No limit"
+  show_type.call(type.selected)
+  type.item_selected.connect(show_type)
+  row.set_meta("condition", {"type": type, "expression": expression, "bracketed": bracketed, "thresholds": fields})
+
+func _threshold_text(value: float) -> String:
+  return "inf" if is_inf(value) else String.num_scientific(value)
+
+func _goal_declaration(clauses: PackedStringArray) -> String:
+  return "goal: {" + "; ".join(clauses) + "};"
+
+func _goal_clause(target: String, values: PackedStringArray) -> String:
+  if target != "cost":
+    for index in range(values.size()):
+      if values[index].to_lower() != "inf": values[index] = values[index].trim_suffix("/s") + "/s"
+  return target + ": " + ", ".join(values)
 
 func _open_settings() -> void:
   if parsed.has("error") or parsed.is_empty(): return
@@ -701,77 +817,109 @@ func _open_settings() -> void:
   settings_error.text = ""
   title_input.text = str(parsed.get("title", ""))
   hint_input.text = str(parsed.get("hint", ""))
-  for goal in parsed.goals:
-    _add_goal_group(goal)
+  for i in range(parsed.goals.size()):
+    _add_goal_group(parsed.goals[i], parsed.goal_targets[i], i)
   for kind in inventory_fields:
     inventory_fields[kind].value = int(parsed.inventory.get(kind, 0))
-  settings_dialog.popup_centered()
+  var available := Vector2i(get_viewport_rect().size)
+  settings_dialog.popup_centered(Vector2i(mini(620, available.x - 40), mini(660, available.y - 60)))
 
 func _apply_settings() -> void:
-  var declarations := ""
-  var nonempty := 0
+  var old_goals := {}
+  var additional := PackedStringArray()
+  var group_count := 0
   for group in goal_rows.get_children():
     if group.is_queued_for_deletion(): continue
     var clauses := PackedStringArray()
-    var rows: VBoxContainer = group.get_meta("rows")
-    for row in rows.get_children():
-      if row.is_queued_for_deletion(): continue
-      var target: String = row.get_child(0).text.strip_edges()
-      if target.is_empty():
-        settings_error.text = "Each condition needs a target."
-        return
+    for row in group.get_meta("rows").get_children():
+      if row.is_queued_for_deletion() or not row.has_meta("condition"): continue
+      var condition: Dictionary = row.get_meta("condition")
+      var cost_goal: bool = condition.type.selected == 1
+      var target := "cost"
+      if not cost_goal:
+        var expression: String = condition.expression.source_text()
+        if expression.is_empty():
+          settings_error.text = "Choose a particle for every output condition."
+          return
+        target = expression
+        if condition.bracketed or not PARSER._valid_particle(expression):
+          target = "[" + expression + "]"
       var values := PackedStringArray()
-      for i in range(1, 4): values.append(row.get_child(i).text.strip_edges())
-      clauses.append(target + ": " + ", ".join(values))
-    if clauses.is_empty(): continue
-    nonempty += 1
-    declarations += "goal: {" + "; ".join(clauses) + "};\n"
-  if nonempty == 0:
-    settings_error.text = "Add at least one condition."
+      for field in condition.thresholds:
+        var value: String = field.text.strip_edges()
+        if value.is_empty() and cost_goal: value = "inf"
+        values.append(value)
+      clauses.append(_goal_clause(target, values))
+    if clauses.is_empty():
+      settings_error.text = "Add a condition to each solution, or remove the empty solution."
+      return
+    var index: int = group.get_meta("source_index")
+    if index >= 0:
+      old_goals[index] = _goal_declaration(clauses)
+    else:
+      additional.append(_goal_declaration(clauses))
+    group_count += 1
+  if group_count == 0:
+    settings_error.text = "Add at least one solution."
     return
+
+  var inventory := {}
   var inventory_parts := PackedStringArray()
   for kind in inventory_fields:
     var count := int(inventory_fields[kind].value)
-    if count > 0: inventory_parts.append("%s=%d" % [kind, count])
-  if not inventory_parts.is_empty():
-    declarations += "inventory: {" + ", ".join(inventory_parts) + "};\n"
-  var lines := PackedStringArray()
-  for line in source.text.split("\n"):
-    var trimmed := line.strip_edges().to_lower()
-    if trimmed.begins_with("title:") or trimmed.begins_with("hint:"):
-      continue
-    var comment := line.find("#")
-    lines.append(line if comment < 0 else line.substr(0, comment) + " ".repeat(line.length() - comment))
-  var regex := RegEx.new()
-  regex.compile("(?is)\\b(goal|inventory)\\s*:\\s*\\{[^}]*\\}\\s*;?")
-  var matches := regex.search_all("\n".join(lines))
+    if count == 0 and not parsed.inventory.has(kind): continue
+    inventory[kind] = count
+    inventory_parts.append("%s=%d" % [kind, count])
+  if inventory != parsed.inventory and not inventory_parts.is_empty():
+    additional.append("inventory: {" + ", ".join(inventory_parts) + "};")
+
+  var masked: String = PARSER.mask_comments(source.text)
+  var edits: Array[Dictionary] = []
+  var original_goal := 0
+  for item in PARSER.find_blocks(masked):
+    var kind := item.get_string(1).to_lower()
+    if kind == "inventory" and inventory != parsed.inventory:
+      edits.append({"span": item, "text": ""})
+    elif kind == "goal":
+      var replacement: String = old_goals.get(original_goal, "")
+      var original_clauses := PackedStringArray()
+      for key in parsed.goals[original_goal]:
+        var values := PackedStringArray()
+        for value in parsed.goals[original_goal][key]: values.append(_threshold_text(value))
+        original_clauses.append(_goal_clause(parsed.goal_targets[original_goal].get(key, key), values))
+      if replacement != _goal_declaration(original_clauses):
+        edits.append({"span": item, "text": replacement})
+      original_goal += 1
+  var prefix := ""
+  var metadata: Array[RegExMatch] = PARSER.find_metadata(masked)
+  for key in ["title", "hint"]:
+    var value: String = (title_input.text if key == "title" else hint_input.text).strip_edges()
+    if value == parsed[key]: continue
+    if ";" in value or "#" in value:
+      settings_error.text = "Titles and hints cannot contain a semicolon or #."
+      return
+    var matching: Array[RegExMatch] = []
+    for item in metadata:
+      if item.get_string(1).to_lower() == key: matching.append(item)
+    var declaration := "%s: %s;" % [key, value] if not value.is_empty() else ""
+    if matching.is_empty():
+      prefix += declaration + "\n"
+    elif value.is_empty():
+      for item in matching: edits.append({"span": item, "text": ""})
+    else:
+      edits.append({"span": matching.back(), "text": declaration})
+
   var updated := source.text
-  # Remove metadata lines from the original while retaining unrelated comments.
-  var metadata_lines := PackedStringArray()
-  for line in updated.split("\n"):
-    var trimmed := line.strip_edges().to_lower()
-    if not trimmed.begins_with("title:") and not trimmed.begins_with("hint:"):
-      metadata_lines.append(line)
-  updated = "\n".join(metadata_lines)
-  # Recompute source offsets after metadata removal.
-  lines.clear()
-  for line in updated.split("\n"):
-    var comment := line.find("#")
-    lines.append(line if comment < 0 else line.substr(0, comment) + " ".repeat(line.length() - comment))
-  matches = regex.search_all("\n".join(lines))
-  for i in range(matches.size() - 1, -1, -1):
-    updated = updated.substr(0, matches[i].get_start()) + updated.substr(matches[i].get_end())
-  var metadata := ""
-  if not title_input.text.strip_edges().is_empty():
-    metadata += "title: " + title_input.text.strip_edges().replace(";", ",").replace("\n", " ") + ";\n"
-  if not hint_input.text.strip_edges().is_empty():
-    metadata += "hint: " + hint_input.text.strip_edges().replace(";", ",").replace("\n", " ") + ";\n"
-  updated = metadata + updated + "\n" + declarations
+  edits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.span.get_start() > b.span.get_start())
+  for edit in edits:
+    updated = updated.left(edit.span.get_start()) + edit.text + updated.substr(edit.span.get_end())
+  if not additional.is_empty(): updated = updated.trim_suffix("\n") + "\n" + "\n".join(additional) + "\n"
+  updated = prefix + updated
   var result: Dictionary = PARSER.parse(updated)
   if result.has("error"):
     settings_error.text = str(result.error)
     return
-  _set_source(updated)
+  if updated != source.text: _set_source(updated)
   settings_dialog.hide()
 
 func _level_warnings(data: Dictionary) -> PackedStringArray:
@@ -888,6 +1036,7 @@ func _start_playtest() -> void:
   game.hide()
   game.get_node("SimulationControls").visible = false
   editor_panel.hide()
+  editor_heading.hide()
   palette.hide()
   inspector_panel.hide()
   test_game = GAME.instantiate()
@@ -902,7 +1051,9 @@ func _end_playtest() -> void:
   game.show()
   game.get_node("SimulationControls").visible = true
   game._load_initial_board()
+  if selected_block >= 0: game.selected_building = game._building_at(selected_cell)
   editor_panel.show()
+  editor_heading.show()
   inspector_panel.visible = selected_block >= 0
   palette.visible = selected_block < 0
   game._fit_camera()

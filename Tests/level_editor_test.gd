@@ -3,6 +3,7 @@ extends Node
 const EDITOR = preload("res://MainScene/level_editor.tscn")
 const PARSER = preload("res://Levels/level_parser.gd")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
+const PARTICLES = preload("res://Particles/particle_catalog.gd")
 
 func _ready() -> void:
   get_window().size = Vector2i(1280, 720)
@@ -18,7 +19,7 @@ func _ready() -> void:
   for file in DirAccess.get_files_at("res://Levels"):
     if file.ends_with(".level"):
       assert(not PARSER.parse(FileAccess.get_file_as_string("res://Levels/" + file)).has("error"), file)
-  var original := "5 x 5;\n# preserve this comment\ngoal: {[electron OR positron]: 1/s, 2/s, 3/s};\nwall: {x=0..1, y=0, fixed=p};\nmagnet: {x=2,y=2,-,fixed=rp};\ninventory: {mirror=2};\n"
+  var original := "# preserve this 99 x 99 comment\ntitle: A 15 x 15 dream;\n5 x 5;\ngoal: {[(electron OR up) AND up_r]: 1/s, 2/s, 3/s};\nwall: {x=+0..+1, y=0, fixed=p};\nmagnet: {x=2,y=2,-,fixed=rp};\ninventory: {mirror=2};\n"
   editor._set_source(original)
   editor._set_source("Not a valid level")
   assert(editor.parsed.has("error"))
@@ -30,7 +31,7 @@ func _ready() -> void:
   assert(editor.game.buildings.size() == 3)
   assert(editor.blocks.size() == 2)
   assert(editor.blocks[0].entries.size() == 2)
-  assert(editor.tool_select.item_count == CATALOG.SCENES.size() + 1)
+  assert(editor.palette.buttons.size() == CATALOG.SCENES.size())
   editor._board_click(Vector2i(0, 0), MOUSE_BUTTON_RIGHT)
   assert(editor.game._building_at(Vector2i(0, 0)) != null, "Right-click should select, not silently delete")
   editor._delete_selected()
@@ -38,8 +39,10 @@ func _ready() -> void:
   assert(editor.game._building_at(Vector2i(1, 0)) != null, "Deleting one cell must preserve the rest of a range")
   editor._set_source(original)
   editor._board_click(Vector2i(2, 2), MOUSE_BUTTON_LEFT)
+  editor._open_properties()
   assert(editor.properties.text.contains("magnet"))
   assert(editor.property_fields.size() == 4)
+  editor.inspector_dialog.hide()
   editor._move_block(Vector2i(2, 2), Vector2i(3, 2))
   assert(editor.source.text.contains("x=3"))
   assert(editor.game._building_at(Vector2i(3, 2)) != null)
@@ -48,22 +51,52 @@ func _ready() -> void:
   assert(editor.game._building_at(Vector2i(2, 2)) != null, "Editor undo must restore a moved building")
   editor._redo_editor()
   assert(editor.game._building_at(Vector2i(3, 2)) != null, "Editor redo must reapply a move")
-  assert(editor.source.text.contains("# preserve this comment"))
-  assert(editor.source.text.contains("[electron OR positron]"))
-  var kinds: Array = CATALOG.SCENES.keys()
-  kinds.sort()
-  editor.palette.click_mode = true
-  editor.tool_select.select(kinds.find("mirror") + 1)
+  assert(editor.source.text.contains("# preserve this 99 x 99 comment"))
+  assert(editor.source.text.contains("[(electron OR up) AND up_r]"))
+  editor.palette.buttons.mirror.pressed.emit()
   editor._board_click(Vector2i(4, 4), MOUSE_BUTTON_LEFT)
   assert(not PARSER.parse(editor.source.text).has("error"))
   assert(editor.source.text.contains("mirror: {x=4, y=4}"))
+  var key := InputEventKey.new()
+  key.pressed = true
+  key.keycode = KEY_Q
+  editor._unhandled_key_input(key)
+  assert(editor.game._building_at(Vector2i(4, 4)).get_meta("entry").facing == "NE")
+  key.keycode = KEY_E
+  editor._unhandled_key_input(key)
+  assert(editor.game._building_at(Vector2i(4, 4)).get_meta("entry").facing == "E")
+  editor._select_at(Vector2i(1, 0))
+  editor.visual_fields.y_end.value = 1
+  editor._apply_visual_properties()
+  assert(editor.game._building_at(Vector2i(1, 1)) != null)
+  assert(editor.game._building_at(Vector2i(0, 0)) != null)
+  editor._select_at(Vector2i(3, 2))
+  editor._rotate_block(-1)
+  assert("r" in editor.game._building_at(Vector2i(3, 2)).get_meta("entry").fixed)
   editor._open_settings()
   editor.title_input.text = "Test puzzle"
   editor.hint_input.text = "Redirect the beam"
-  editor._add_goal_group({"photon": [1.0, 2.0, 3.0]})
+  var first_solution: VBoxContainer = editor.goal_rows.get_child(0).get_meta("rows")
+  editor._add_goal_row(first_solution, "cost", [INF, 20.0, 10.0])
+  editor._add_goal_group()
+  var output_row: VBoxContainer = editor.goal_rows.get_child(1).get_meta("rows").get_child(0)
+  var particles: Control = output_row.get_meta("condition").expression
+  assert(particles.picker.item_count == PARTICLES.TYPES.size() + 1)
+  particles.clear_button.pressed.emit()
+  particles.buttons["("].pressed.emit()
+  _choose_particle(particles.picker, "electron")
+  particles.buttons["OR"].pressed.emit()
+  _choose_particle(particles.picker, "up")
+  particles.buttons[")"].pressed.emit()
+  particles.buttons["AND"].pressed.emit()
+  _choose_particle(particles.picker, "up_r")
   editor._apply_settings()
   assert(editor.parsed.goals.size() == 2, "Goal alternatives must be separate groups")
   assert(editor.parsed.title == "Test puzzle" and editor.parsed.hint == "Redirect the beam")
+  assert(editor.parsed.goals[0].cost == [INF, 20.0, 10.0])
+  assert(editor.parsed.goals[1].has("[up_r]"))
+  assert(editor.parsed.goal_targets[1]["[up_r]"] == "[(electron OR up) AND up_r]")
+  assert(editor.source.text.contains("[(electron OR up) AND up_r]"))
   assert(editor.game.level.goals.size() == 2)
   editor._start_playtest()
   assert(is_instance_valid(editor.test_game), "Playtest must create an isolated game")
@@ -83,3 +116,10 @@ func _ready() -> void:
   editor.free()
   print("Level editor checks passed")
   get_tree().quit()
+
+func _choose_particle(picker: OptionButton, name: String) -> void:
+  for i in range(1, picker.item_count):
+    if picker.get_item_metadata(i) == name:
+      picker.item_selected.emit(i)
+      return
+  assert(false, "Particle is missing from the dropdown: " + name)

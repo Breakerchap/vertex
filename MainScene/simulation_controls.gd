@@ -59,6 +59,7 @@ func _reset_speed() -> void:
 
 func _update_controls() -> void:
   play_pause.text = "Pause" if simulation.running else "Play"
+  play_pause.tooltip_text = "Pause the simulation (Space)" if simulation.running else "Run the simulation (Space)"
   speed_label.text = "%s×" % str(simulation.simulation_speed)
   slower.disabled = simulation.simulation_speed <= SPEEDS.front()
   faster.disabled = simulation.simulation_speed >= SPEEDS.back()
