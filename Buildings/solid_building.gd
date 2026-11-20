@@ -9,20 +9,6 @@ func _ready() -> void:
   if not Engine.is_editor_hint():
     add_to_group("particle_blockers")
 
-## World-space distance from the building center to just outside its body.
-func exit_distance(travel: Vector2, radius: float) -> float:
-  var shape := collision_shape.shape as RectangleShape2D
-  var basis := collision_shape.global_transform
-  var axis_x := basis.x.normalized()
-  var axis_y := basis.y.normalized()
-  var half_size := shape.size * Vector2(basis.x.length(), basis.y.length()) * 0.5
-  var direction := travel.normalized()
-  var dx := absf(direction.dot(axis_x))
-  var dy := absf(direction.dot(axis_y))
-  var x_distance := (half_size.x + radius) / dx if dx > COLLISION_EPSILON else INF
-  var y_distance := (half_size.y + radius) / dy if dy > COLLISION_EPSILON else INF
-  return minf(x_distance, y_distance) + 0.01
-
 ## Returns the first swept-circle impact with this solid rectangle.
 func sweep(from: Vector2, motion: Vector2, particle_radius: float) -> Dictionary:
   var shape := collision_shape.shape as RectangleShape2D

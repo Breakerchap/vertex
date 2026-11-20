@@ -1,7 +1,6 @@
 extends "res://Particles/particle_simulation.gd"
 
 const PARSER = preload("res://Levels/level_parser.gd")
-const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
 const ENTRY = preload("res://Buildings/Emitter/particle_emission.gd")
 const TILE = preload("res://tile.png")
@@ -14,14 +13,14 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const BUILDING = preload("res://Buildings/building.gd")
 const CELL := BUILDING.GRID_SIZE
 const SIDEBAR_WIDTH := 288.0
-const RECENT_SECONDS := 2.0
-const SPEED_RAMP_START := 3.0
-const SPEED_RAMP_END := 6.0
-const WATCH_SECONDS := 7.0
-const FORECAST_WINDOW_SECONDS := 10.0
+const RECENT_STEPS := 8.0
+const SPEED_RAMP_START := 12.0
+const SPEED_RAMP_END := 24.0
+const WATCH_STEPS := 28.0
+const FORECAST_WINDOW_STEPS := 40.0
 const FORECAST_WINDOWS := 6
 
-signal editor_cell_clicked(cell: Vector2i, button: int)
+signal editor_cell_clicked(cell: Vector2i, button: int, target: Node, facing: String)
 signal editor_cell_dragged(from_cell: Vector2i, to_cell: Vector2i)
 signal exit_playtest_requested
 var drag_cell := Vector2i(-1, -1)
@@ -51,7 +50,7 @@ var step_counts: Dictionary = {}
 var recent_samples: Array[Dictionary] = []
 var elapsed: float = 0.0
 var automatic_speed := true
-var next_forecast_at := WATCH_SECONDS
+var next_forecast_at := WATCH_STEPS
 var forecast: FORECAST
 var forecast_candidates: Array[Dictionary] = []
 var forecast_counts: Dictionary = {}
@@ -254,11 +253,11 @@ func _add_goals(rows: VBoxContainer) -> void:
     var output_count := goal.size() - int(goal.has("cost"))
     for key in goal:
       var target: String = targets[index].get(key, key) if index < targets.size() else key
-      var title: String = "Cost" if key == "cost" else (PARTICLES.label(target) if PARTICLES.TYPES.has(target) else target)
+      var title: String = "Cost" if key == "cost" else (PARTICLES.label(target) if PARTICLES.is_selector(target) else target)
       var thresholds: Array[String] = []
       for value in goal[key]:
         var amount := str(value).trim_suffix(".0")
-        thresholds.append("∞" if is_inf(value) else amount + ("" if key == "cost" else "/s"))
+        thresholds.append("∞" if is_inf(value) else amount + ("" if key == "cost" else "/step"))
       _add_goal_cells(table, title, thresholds)
       if key == "cost": continue
       var row := HBoxContainer.new()
@@ -316,6 +315,7 @@ func _load_initial_board() -> void:
   _clear_particles()
   _clear_buildings()
   inventory = level.inventory.duplicate(true)
+  inventory.erase("rail")
   cost = 0
   undo_history.clear()
   redo_history.clear()
@@ -337,6 +337,7 @@ func _clear_buildings() -> void:
   buildings.clear()
 
 func _place_building(entry: Dictionary, from_inventory: bool) -> void:
+  if not CATALOG.SCENES.has(entry.kind): return
   var scene: PackedScene = CATALOG.SCENES[entry.kind]
   var building := scene.instantiate()
   var cell := Vector2i(int(entry.x), int(entry.y))
@@ -348,11 +349,15 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
   building.set_meta("fixed_position", "p" in fixed)
   building.set_meta("fixed_rotation", CATALOG.rotation_lock_flag(entry.kind) in fixed)
   building.set_meta("from_inventory", from_inventory)
-  if entry.kind in ["mirror", "emitter"]:
-    var direction := CATALOG.DIRECTIONS.find(entry.get("facing", "E"))
-    building.orientation = (direction + 2) % 8 if entry.kind == "mirror" else direction
+  if entry.kind in CATALOG.FACING_KINDS or entry.kind == "edge_wall":
+    var direction := CATALOG.DIRECTIONS.find(entry.get("facing", CATALOG.default_facing(entry.kind)))
+    building.orientation = (direction + 2) % 8 if entry.kind in ["mirror", "pusher"] else direction
   if entry.kind == "magnet":
     building.polarity = -1 if str(entry.get("polarity", "positive")) in CATALOG.NEGATIVE_POLARITIES else 1
+  match entry.kind:
+    "gate": building.starts_open = entry.get("open", "false") == "true"
+    "filter": building.filter_colour = CATALOG.FILTER_COLOURS.find(entry.get("colour", "red"))
+  if entry.kind != "edge_wall": building.z_index = 1
   if entry.kind == "emitter":
     building.start_on_ready = false
     building.rate = float(entry.get("rate", 1.0))
@@ -394,11 +399,31 @@ func _world_to_cell(world_position: Vector2) -> Vector2i:
 func is_cell_on_board(cell: Vector2i) -> bool:
   return cell.x >= 0 and cell.y >= 0 and cell.x < level.get("width", 0) and cell.y < level.get("height", 0)
 
-func _building_at(cell: Vector2i) -> Node:
+func _building_at(cell: Vector2i, kind := "", facing := "E") -> Node:
+  var key := CATALOG.occupancy_key(kind, cell, facing)
   for building in buildings:
-    if is_instance_valid(building) and building.get_meta("cell") == cell:
+    if not is_instance_valid(building): continue
+    if _building_key(building, building.get_meta("cell")) == key:
       return building
   return null
+
+func _building_key(building: Node, cell: Vector2i) -> Vector3i:
+  var kind: String = building.get_meta("kind")
+  var facing := str(CATALOG.DIRECTIONS[building.orientation]) if kind == "edge_wall" else "E"
+  return CATALOG.occupancy_key(kind, cell, facing)
+
+func _edge_facing(cell: Vector2i, world: Vector2) -> String:
+  var offset := to_local(world) - _cell_position(cell)
+  if absf(offset.x) >= absf(offset.y):
+    return "E" if offset.x >= 0.0 else "W"
+  return "S" if offset.y >= 0.0 else "N"
+
+func _board_target(cell: Vector2i, world: Vector2) -> Node:
+  var offset := (to_local(world) - _cell_position(cell)).abs()
+  if maxf(offset.x, offset.y) >= CELL * 0.34:
+    var edge := _building_at(cell, "edge_wall", _edge_facing(cell, world))
+    if edge != null: return edge
+  return _building_at(cell)
 
 func _unhandled_input(event: InputEvent) -> void:
   if not is_visible_in_tree(): return
@@ -442,45 +467,51 @@ func _handle_board_input(event: InputEvent) -> void:
       if editor_preview:
         editor_cell_dragged.emit(drag_cell, cell)
       else:
-        _move_selected_to(cell)
+        if is_cell_on_board(cell): _move_selected_to(cell)
+        else: _remove_selected()
     drag_cell = Vector2i(-1, -1)
     return
   if not event.pressed or not is_cell_on_board(cell):
     return
+  var world := get_global_mouse_position()
+  var target := _board_target(cell, world)
+  var facing := _edge_facing(cell, world)
   if event.button_index == MOUSE_BUTTON_LEFT:
     drag_cell = Vector2i(-1, -1)
-    if _building_at(cell) != null:
-      drag_cell = cell
+    if target != null:
+      drag_cell = target.get_meta("cell")
       drag_start = event.position
   if editor_preview:
-    editor_cell_clicked.emit(cell, event.button_index)
+    editor_cell_clicked.emit(cell, event.button_index, target, facing)
   else:
-    _click_cell(cell, event.button_index)
+    _click_cell(cell, event.button_index, target, facing)
 
 func _move_selected_to(cell: Vector2i) -> void:
   if not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position"): return
-  if not is_cell_on_board(cell) or _building_at(cell) != null: return
+  if not is_cell_on_board(cell) or selected_building.get_meta("cell") == cell: return
+  var kind: String = selected_building.get_meta("kind")
+  var facing: String = CATALOG.DIRECTIONS[selected_building.orientation] if kind == "edge_wall" else "E"
+  if _building_at(cell, kind, facing) != null: return
   _record_undo()
   selected_building.position = _cell_position(cell)
   selected_building.set_meta("cell", cell)
   _refresh_ui()
   queue_redraw()
 
-func _click_cell(cell: Vector2i, button_index: int) -> void:
-  if simulating or not is_cell_on_board(cell):
-    return
-  var target := _building_at(cell)
+func _click_cell(cell: Vector2i, button_index: int, target: Node = null, facing := "E") -> void:
+  if simulating or not is_cell_on_board(cell): return
+  if target == null: target = _building_at(cell)
   if button_index == MOUSE_BUTTON_RIGHT:
     selected_building = target
     selected_kind = ""
   elif button_index == MOUSE_BUTTON_LEFT:
-    if target != null:
+    var placement_facing := facing if selected_kind == "edge_wall" else CATALOG.default_facing(selected_kind)
+    if not selected_kind.is_empty() and int(inventory.get(selected_kind, 0)) > 0 and _building_at(cell, selected_kind, placement_facing) == null:
+      _place_inventory_building(selected_kind, cell, placement_facing)
+      if inventory[selected_kind] == 0: selected_kind = ""
+    elif target != null:
       selected_building = target
       selected_kind = ""
-    elif not selected_kind.is_empty() and int(inventory.get(selected_kind, 0)) > 0:
-      _place_inventory_building(selected_kind, cell)
-      if inventory[selected_kind] == 0:
-        selected_kind = ""
     elif is_instance_valid(selected_building):
       if not selected_building.get_meta("fixed_position"):
         _move_selected_to(cell)
@@ -496,11 +527,18 @@ func _rotate_selected(turn: int = 1) -> void:
     return
   var kind: String = selected_building.get_meta("kind")
   if kind not in CATALOG.ROTATABLE_KINDS: return
+  if kind == "edge_wall":
+    var orientation := CATALOG.next_orientation(selected_building.orientation, turn, 4)
+    var occupied := _building_at(selected_building.get_meta("cell"), kind, CATALOG.DIRECTIONS[orientation])
+    if occupied != null and occupied != selected_building: return
   _record_undo()
-  if kind == "magnet":
-    selected_building.polarity *= -1
-  else:
-    selected_building.orientation = posmod(selected_building.orientation + turn, CATALOG.DIRECTIONS.size())
+  match kind:
+    "magnet": selected_building.polarity *= -1
+    "filter": selected_building.filter_colour = posmod(selected_building.filter_colour + turn, CATALOG.FILTER_COLOURS.size())
+    _:
+      var entry: Dictionary = selected_building.get_meta("entry")
+      var steps := 4 if kind == "edge_wall" else int(entry.get("rotation", level.get("rotation_steps", 8)))
+      selected_building.orientation = CATALOG.next_orientation(selected_building.orientation, turn, steps)
   _refresh_ui()
   queue_redraw()
 
@@ -532,19 +570,19 @@ func _refresh_ui() -> void:
   _refresh_output()
   var has_selection := is_instance_valid(selected_building)
   var kind: String = selected_building.get_meta("kind") if has_selection else ""
-  var magnet := kind == "magnet"
+  var action := {"magnet": "Flip polarity", "filter": "Change colour"}.get(kind, "") as String
   var can_rotate: bool = has_selection and kind in CATALOG.ROTATABLE_KINDS and not selected_building.get_meta("fixed_rotation")
-  rotate_left_button.visible = not magnet
+  rotate_left_button.visible = action.is_empty() or kind == "filter"
   rotate_left_button.disabled = simulating or not can_rotate
-  rotate_button.text = "Flip polarity  Q / E" if magnet else "↷  E"
-  rotate_button.tooltip_text = "Flip between positive and negative" if magnet else "Rotate clockwise"
+  rotate_button.text = action + "  E" if not action.is_empty() else "↷  E"
+  rotate_button.tooltip_text = action if not action.is_empty() else "Rotate clockwise"
   rotate_button.disabled = simulating or not can_rotate
   remove_button.disabled = simulating or not has_selection or selected_building.get_meta("fixed_position")
   selection_label.visible = has_selection
   if has_selection:
     var cell: Vector2i = selected_building.get_meta("cell")
     selection_label.text = "%s (%d, %d)" % [kind.capitalize(), cell.x, cell.y]
-    if magnet:
+    if kind == "magnet":
       selection_label.text += "  %s" % ("+" if selected_building.polarity > 0 else "−")
   stop_button.disabled = not simulating
   restart_button.disabled = not simulating
@@ -556,22 +594,25 @@ func _refresh_ui() -> void:
 
 func _refresh_output() -> void:
   for row in output_rows:
-    var rate := float(_goal_count(recent_counts, row.key)) / RECENT_SECONDS
-    row.label.text = "%s/s" % String.num(rate, 2)
+    var rate := float(_goal_count(recent_counts, row.key)) / RECENT_STEPS
+    row.label.text = "%s/step" % String.num(rate, 2)
     row.meter.set_rate(rate, simulating)
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
   if simulating or int(inventory.get(kind, 0)) <= 0: return
   var cell := screen_to_cell(screen_position)
-  if not is_cell_on_board(cell) or _building_at(cell) != null: return
-  _place_inventory_building(kind, cell)
-  selected_building = _building_at(cell)
+  if not is_cell_on_board(cell): return
+  var facing := _edge_facing(cell, get_canvas_transform().affine_inverse() * screen_position) if kind == "edge_wall" else CATALOG.default_facing(kind)
+  if _building_at(cell, kind, facing) != null: return
+  _place_inventory_building(kind, cell, facing)
+  selected_building = _building_at(cell, kind, facing)
   _refresh_ui()
   queue_redraw()
 
-func _place_inventory_building(kind: String, cell: Vector2i) -> void:
+func _place_inventory_building(kind: String, cell: Vector2i, facing := "") -> void:
+  if facing.is_empty(): facing = CATALOG.default_facing(kind)
   _record_undo()
-  _place_building({"kind": kind, "x": cell.x, "y": cell.y}, true)
+  _place_building({"kind": kind, "x": cell.x, "y": cell.y, "facing": facing}, true)
   inventory[kind] -= 1
   cost += CATALOG.COSTS[kind]
 
@@ -583,7 +624,7 @@ func begin_run() -> void:
   selected_kind = ""
   _clear_particles()
   _clear_stats()
-  _accumulated_time = 0.0
+  reset_step_clock()
   for building in buildings:
     if building.get_meta("kind") == "emitter":
       if building.sequence.is_empty(): building.start_emitting()
@@ -595,9 +636,11 @@ func stop_to_build() -> void:
   running = false
   cancel_pending_steps()
   simulating = false
-  _accumulated_time = 0.0
+  reset_step_clock()
   for building in buildings:
+    building.position = _cell_position(building.get_meta("cell"))
     if building.get_meta("kind") == "emitter": building.stop_sequence()
+    if building.has_method("reset_device"): building.reset_device()
   _clear_particles()
   _clear_stats()
   completed = false
@@ -633,7 +676,7 @@ func _clear_particles() -> void:
 
 func _clear_stats() -> void:
   _cancel_forecast()
-  next_forecast_at = WATCH_SECONDS
+  next_forecast_at = WATCH_STEPS
   last_hud_update = 0.0
   total_counts.clear()
   recent_counts.clear()
@@ -654,15 +697,15 @@ func _on_simulation_stepped(delta: float) -> void:
   if not step_counts.is_empty():
     recent_samples.append({"time": elapsed, "counts": step_counts})
     step_counts = {}
-  while not recent_samples.is_empty() and recent_samples.front().time <= elapsed - RECENT_SECONDS + 0.000001:
+  while not recent_samples.is_empty() and recent_samples.front().time <= elapsed - RECENT_STEPS + 0.000001:
     var expired: Dictionary = recent_samples.pop_front().counts
     for key in expired:
       recent_counts[key] -= expired[key]
-  if elapsed - last_hud_update >= 0.15:
+  if elapsed - last_hud_update >= 0.6:
     last_hud_update = elapsed
     _refresh_output()
   if forecast != null or elapsed + 0.000001 < next_forecast_at: return
-  next_forecast_at = elapsed + 0.25
+  next_forecast_at = elapsed + 1.0
   for goal in level.goals:
     for tier in range(3):
       var eligible := true
@@ -675,7 +718,7 @@ func _on_simulation_stepped(delta: float) -> void:
       if eligible:
         forecast_candidates.append({"goal": goal, "tier": tier})
   if not forecast_candidates.is_empty():
-    forecast = FORECAST.new(self, buildings, FORECAST_WINDOW_SECONDS)
+    forecast = FORECAST.new(self, buildings, FORECAST_WINDOW_STEPS)
 
 func _process(_delta: float) -> void:
   if forecast == null or not forecast.advance(): return
@@ -686,13 +729,13 @@ func _process(_delta: float) -> void:
   var stars := 0
   for i in range(forecast_candidates.size() - 1, -1, -1):
     var candidate := forecast_candidates[i]
-    if not _meets_output(candidate, forecast.counts, FORECAST_WINDOW_SECONDS, true):
+    if not _meets_output(candidate, forecast.counts, FORECAST_WINDOW_STEPS, true):
       forecast_candidates.remove_at(i)
-    elif finished and _meets_output(candidate, forecast_counts, FORECAST_WINDOWS * FORECAST_WINDOW_SECONDS, false):
+    elif finished and _meets_output(candidate, forecast_counts, FORECAST_WINDOWS * FORECAST_WINDOW_STEPS, false):
       stars = maxi(stars, candidate.tier + 1)
   if finished or forecast_candidates.is_empty():
     _cancel_forecast()
-    next_forecast_at = elapsed + 2.0
+    next_forecast_at = elapsed + 8.0
     if stars > 0: _finish_run(stars)
 
 func _cancel_forecast() -> void:
@@ -711,7 +754,7 @@ func _finish_run(stars: int) -> void:
   _refresh_ui()
   var stats := ""
   for kind in total_counts:
-    stats += "\n%s: %d total · %.2f/s recent" % [PARTICLES.label(kind), int(total_counts[kind]), float(recent_counts.get(kind, 0)) / RECENT_SECONDS]
+    stats += "\n%s: %d total · %.2f/step recent" % [PARTICLES.label(kind), int(total_counts[kind]), float(recent_counts.get(kind, 0)) / RECENT_STEPS]
   if stats.is_empty(): stats = "\nNo particles detected"
   results.dialog_text = "%d star(s) earned\nBuild cost: $%d\n\nDetected%s" % [stars, cost, stats]
   results.popup_centered()
@@ -727,10 +770,10 @@ func _goal_count(counts: Dictionary, key: String) -> int:
     total += int(counts.get(name, 0))
   return total
 
-func _meets_output(candidate: Dictionary, counts: Dictionary, seconds: float, allow_fraction: bool) -> bool:
+func _meets_output(candidate: Dictionary, counts: Dictionary, steps: float, allow_fraction: bool) -> bool:
   for key in candidate.goal:
     if key == "cost": continue
-    var required: float = candidate.goal[key][candidate.tier] * seconds
+    var required: float = candidate.goal[key][candidate.tier] * steps
     # A whole-particle count can round down in one window. The full forecast
     # still has to meet the authored average.
     if allow_fraction: required = floorf(required + 0.000001)
@@ -755,10 +798,12 @@ func _snapshot_build() -> Dictionary:
       "emitter":
         entry.facing = CATALOG.DIRECTIONS[building.orientation]
         entry.rate = building.rate
-      "mirror":
+      "mirror", "pusher":
         entry.facing = CATALOG.DIRECTIONS[posmod(building.orientation - 2, CATALOG.DIRECTIONS.size())]
       "magnet":
         entry.polarity = "+" if building.polarity > 0 else "-"
+      "edge_wall", "gate": entry.facing = CATALOG.DIRECTIONS[building.orientation]
+      "filter": entry.colour = CATALOG.FILTER_COLOURS[building.filter_colour]
     entries.append({"entry": entry, "inventory_piece": building.get_meta("from_inventory")})
   return {"entries": entries, "inventory": inventory.duplicate(true), "cost": cost}
 

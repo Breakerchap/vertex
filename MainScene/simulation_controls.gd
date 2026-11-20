@@ -1,6 +1,5 @@
 extends CanvasLayer
 
-const STEP_COUNT: int = 15
 const SPEEDS: Array[float] = [0.25, 0.5, 1.0, 2.0, 4.0]
 
 @onready var simulation: ParticleSimulation = get_parent() as ParticleSimulation
@@ -33,8 +32,11 @@ func _toggle_running() -> void:
     return
   if simulation.has_method("begin_run") and not simulation.simulating:
     simulation.begin_run()
-  simulation.cancel_pending_steps()
-  simulation.running = not simulation.running
+  if simulation.running:
+    simulation.pause_requested = not simulation.pause_requested
+  else:
+    simulation.cancel_pending_steps()
+    simulation.running = true
   _update_controls()
 
 func _step_once() -> void:
@@ -42,7 +44,7 @@ func _step_once() -> void:
     return
   if simulation.has_method("begin_run") and not simulation.simulating:
     simulation.begin_run()
-  simulation.request_steps(STEP_COUNT)
+  simulation.request_steps(1)
   _update_controls()
 
 func _change_speed(direction: int) -> void:
@@ -64,7 +66,7 @@ func _reset_speed() -> void:
   _update_controls()
 
 func _update_controls() -> void:
-  play_pause.text = "Pause" if simulation.running else "Play"
+  play_pause.text = ("Cancel pause" if simulation.pause_requested else "Pause") if simulation.running else "Play"
   play_pause.tooltip_text = "Pause the simulation (Space)" if simulation.running else "Run the simulation (Space)"
   var speed := simulation.get_playback_speed()
   speed_label.text = "%s×" % String.num(speed, 2)

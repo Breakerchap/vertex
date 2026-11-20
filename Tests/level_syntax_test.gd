@@ -24,6 +24,10 @@ func _ready() -> void:
   assert(overlap.has("error"), "Overlapping buildings must be rejected")
   var metadata := PARSER.parse("3 x 3;\ntitle: A small test;\nhint: Try the mirror;\ngoal: {photon: 1, 1, 1};")
   assert(metadata.title == "A small test" and metadata.hint == "Try the mirror")
+  var migrated := PARSER.parse("4 x 4; goal: {[photon_b]: 1, 2, 3}; emitter: {x=0,y=0,[photon_r,up]}; rail: {x=1,y=0}; inventory: {rail=2,gate=1};")
+  assert(migrated.goals[0].has("[photon]") and migrated.goal_targets[0]["[photon]"] == "[photon]")
+  assert(migrated.buildings.size() == 1 and migrated.buildings[0].particles == ["photon", "up_r"])
+  assert(migrated.inventory == {"gate": 1}, "Saved rails should stay unavailable.")
   var game = GAME.instantiate()
   game.level = level
   game._place_building(level.buildings[3], false)
@@ -74,10 +78,10 @@ func _ready() -> void:
   game._rotate_selected()
   game.begin_run()
   assert(game.get_playback_speed() == 1.0)
-  for tick in range(roundi(60 * game.WATCH_SECONDS)):
+  for tick in range(roundi(SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP * game.WATCH_STEPS)):
     assert(game.forecast == null, "The player should see the machine run before a forecast starts")
-    game.step_simulation(1.0 / 60.0)
-    if tick == 60 * 4:
+    game.step_simulation(SimulationGrid.TICK)
+    if tick == SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP * 16:
       assert(game.get_playback_speed() > 1.0 and game.get_playback_speed() < 2.0)
     for child in game.get_children():
       if child is Particle and child.is_queued_for_deletion(): child.free()
@@ -85,8 +89,8 @@ func _ready() -> void:
   assert(game.get_playback_speed() == 2.0)
   assert(game.recent_counts.positron > 0)
   var live_counts: Dictionary = game.total_counts.duplicate()
-  for frame in range(240):
-    if game.completed: break
+  var forecast_deadline := Time.get_ticks_msec() + 20000
+  while game.forecast != null and not game.completed and Time.get_ticks_msec() < forecast_deadline:
     await get_tree().process_frame
   assert(game.completed, "A positron beam meeting the grouped goal should complete the level")
   assert(game.results.dialog_text.begins_with("1 star(s) earned"))
@@ -95,7 +99,7 @@ func _ready() -> void:
   game.begin_run()
   assert(game.get_playback_speed() == 1.0)
   game.set_playback_speed(0.5)
-  game.elapsed = game.WATCH_SECONDS
+  game.elapsed = game.WATCH_STEPS
   assert(game.get_playback_speed() == 0.5, "A manual speed should override the automatic ramp")
   game.free()
   print("Level syntax checks passed")

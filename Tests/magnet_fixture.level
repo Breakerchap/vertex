@@ -1,6 +1,6 @@
 9 x 9;
 goal: {[electron OR positron]: 1/s, 2/s, 2/s};
-emitter: {x=1, y=4, E, [electron], rate=1, fixed=rp};
+emitter: {x=0, y=4, E, [electron], rate=1, fixed=rp};
 emitter: {x=4, y=1, N, [positron], rate=1, fixed=rp};
 magnet: {x=4, y=4, -, fixed=rp};
 detector: {x=8, y=4, [electron OR positron], fixed=rp};

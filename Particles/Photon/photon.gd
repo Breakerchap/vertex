@@ -1,11 +1,10 @@
 extends Particle
 
+const TEXTURE := preload("res://Particles/Photon/photon.png")
+
 func _ready() -> void:
   flavour = Flavour.PHOTON
-  size = 0.75
-  speed = 750
-  charge = 0
-
-  textures = [preload("res://Particles/Photon/photon.png")]
-
+  colour = ColourCharge.NONE
+  size = 0.55
+  textures = [TEXTURE]
   super._ready()

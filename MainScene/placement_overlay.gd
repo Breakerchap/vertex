@@ -7,6 +7,7 @@ const EVENT_COLOURS := {
   "field": Color("ceaeff"),
   "detection": Color("75dcb0"),
   "annihilation": Color("ffe08a"),
+  "fusion": Color("ffc681"),
   "absorption": Color("ee8585"),
   "exit": Color("ee8585"),
 }
@@ -39,10 +40,12 @@ func _draw() -> void:
       var colour := Color("66d8b2")
       if fixed_position:
         colour = Color("f4c55d") if can_rotate else Color("f17f81")
-      var rectangle := Rect2(building.position - Vector2.ONE * game.CELL * 0.48, Vector2.ONE * game.CELL * 0.96)
+      var kind: String = building.get_meta("kind")
+      var facing := str(CATALOG.DIRECTIONS[building.orientation]) if kind == "edge_wall" else "E"
+      var rectangle := _outline(kind, building.position, facing)
       draw_rect(rectangle, colour, false, 3.0)
       if building == game.selected_building:
-        draw_rect(rectangle.grow(-5.0), Color.WHITE, false, 2.0)
+        draw_rect(rectangle.grow(2.0), Color.WHITE, false, 2.0)
 
     var hover: Vector2i = game._mouse_cell()
     if game.is_cell_on_board(hover):
@@ -58,12 +61,17 @@ func _draw() -> void:
         dragging_building = true
       var can_place: bool = not kind.is_empty() or dragging_building
       if can_place:
-        var occupied = game._building_at(hover)
-        var valid: bool = occupied == null
+        var facing := "E"
+        if kind.is_empty():
+          kind = game.selected_building.get_meta("kind")
+          if kind == "edge_wall":
+            facing = CATALOG.DIRECTIONS[game.selected_building.orientation]
+        elif kind == "edge_wall":
+          facing = game._edge_facing(hover, game.get_global_mouse_position())
+        var valid: bool = game._building_at(hover, kind, facing) == null
         if dragging_building:
-          valid = valid and not game.selected_building.get_meta("fixed_position")
-        var pos : Vector2 = game._cell_position(hover)
-        var rect := Rect2(pos - Vector2.ONE * game.CELL * 0.47, Vector2.ONE * game.CELL * 0.94)
+          valid = valid and (game.editor_preview or not game.selected_building.get_meta("fixed_position"))
+        var rect := _outline(kind, game._cell_position(hover), facing)
         var colour := Color("69d8ad", 0.22) if valid else Color("ec7377", 0.24)
         draw_rect(rect, colour, true)
         draw_rect(rect, Color("69d8ad") if valid else Color("ec7377"), false, 3.0)
@@ -74,3 +82,13 @@ func _draw() -> void:
     var at: Vector2 = event.position
     draw_arc(at, 11.0 + (2.0 - float(event.life)) * 7.0, 0, TAU, 24, shade, 2.5)
     draw_circle(at, 3.0, shade)
+
+
+func _outline(kind: String, at: Vector2, facing: String) -> Rect2:
+  var cell := SimulationGrid.CELL
+  var size := Vector2.ONE * cell * 0.94
+  if kind == "edge_wall":
+    var normal: Vector2 = SimulationGrid.VECTORS[CATALOG.DIRECTIONS.find(facing)]
+    at += normal * cell * 0.5
+    size = normal.abs() * cell * 0.1 + normal.orthogonal().abs() * cell * 0.98
+  return Rect2(at - size * 0.5, size)

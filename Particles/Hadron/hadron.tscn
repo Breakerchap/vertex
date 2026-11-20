@@ -1,0 +1,10 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://Particles/base_particle.tscn" id="1"]
+[ext_resource type="Script" path="res://Particles/Hadron/hadron.gd" id="2"]
+
+[node name="Hadron" instance=ExtResource("1")]
+script = ExtResource("2")
+
+[node name="Sprite2D" parent="." index="0"]
+scale = Vector2(0.5, 0.5)

@@ -1,5 +1,7 @@
 extends VBoxContainer
 
+signal changed
+
 const CATALOG = preload("res://Particles/particle_catalog.gd")
 const PARSER = preload("res://Levels/level_parser.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
@@ -43,18 +45,19 @@ func _ready() -> void:
   _refresh()
 
 func load_text(value: String) -> void:
-  original = value
+  original = CATALOG.current_expression(value)
   edited = false
   tokens.clear()
   if sequence:
     for name in value.split(",", false):
-      if not name.strip_edges().is_empty(): tokens.append(name.strip_edges().to_lower())
+      if not name.strip_edges().is_empty(): tokens.append(CATALOG.emission_name(name.strip_edges().to_lower()))
   else:
     var regex := RegEx.new()
     regex.compile(PARSER.PARTICLE_TOKEN)
     for item in regex.search_all(value):
-      var token := item.get_string().to_lower()
+      var token := CATALOG.current_name(item.get_string().to_lower())
       tokens.append("OR" if token == "," else token.to_upper() if token in ["and", "or"] else token)
+  if sequence: original = ", ".join(tokens)
   if is_node_ready(): _refresh()
 
 func source_text() -> String:
@@ -63,11 +66,13 @@ func source_text() -> String:
   return " ".join(tokens).replace("( ", "(").replace(" )", ")")
 
 func _fill_particles() -> void:
-  if picker.item_count == CATALOG.TYPES.size() + 1: return
+  var names := CATALOG.TYPES.keys()
+  if not sequence: names.append_array(CATALOG.QUARK_FAMILIES)
+  if picker.item_count == names.size() + 1: return
   picker.clear()
   picker.add_item("Choose a particle…")
   picker.set_item_disabled(0, true)
-  for name in CATALOG.TYPES:
+  for name in names:
     picker.add_item(CATALOG.label(name))
     picker.set_item_metadata(picker.item_count - 1, name)
   picker.select(0)
@@ -84,11 +89,12 @@ func _changed() -> void:
   edited = true
   picker.select(0)
   _refresh()
+  changed.emit()
 
 func _refresh() -> void:
   var names := PackedStringArray()
   for token in tokens:
-    names.append(CATALOG.label(token) if CATALOG.TYPES.has(token) else token)
+    names.append(CATALOG.label(token) if CATALOG.is_selector(token) else token)
   var text := "  →  ".join(names) if sequence else " ".join(names).replace("( ", "(").replace(" )", ")")
   preview.text = text if not text.is_empty() else ("Default: Electron" if sequence else "No particles selected")
   preview.add_theme_color_override("font_color", UI.MUTED if tokens.is_empty() else UI.ACCENT)

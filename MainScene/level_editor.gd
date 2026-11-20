@@ -6,7 +6,7 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const GAME = preload("res://MainScene/level_game.tscn")
 const PARTICLE_PICKER = preload("res://MainScene/particle_picker.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
-const NEW_LEVEL := "9 x 9;\n\ngoal: {electron: 1/s, 2/s, 3/s};\n\n"
+const NEW_LEVEL := "9 x 9;\n\ngoal: {electron: 1/step, 2/step, 3/step};\n\n"
 
 var source: CodeEdit
 var game
@@ -34,6 +34,10 @@ var pending_action := ""
 var blocks: Array[Dictionary] = []
 var selected_block := -1
 var selected_cell := Vector2i(-1, -1)
+var selected_building: Node
+var copied_declaration := ""
+var copied_origin := Vector2i.ZERO
+var pasting := false
 var visual_fields := {}
 var visual_form: VBoxContainer
 var settings_error: Label
@@ -43,6 +47,7 @@ var edit_range := false
 var settings_dialog: AcceptDialog
 var title_input: LineEdit
 var hint_input: LineEdit
+var rotation_input: OptionButton
 var goal_rows: VBoxContainer
 var inventory_fields := {}
 var updating := false
@@ -64,6 +69,15 @@ func _exit_tree() -> void:
   get_tree().auto_accept_quit = true
 
 func _unhandled_key_input(event: InputEvent) -> void:
+  if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+    if is_instance_valid(test_game):
+      if not test_game.simulating: return
+      test_game.reset_level()
+    else:
+      if game.simulating: _reset_preview()
+      _select_move_tool()
+    get_viewport().set_input_as_handled()
+    return
   if is_instance_valid(test_game): return
   if event is InputEventKey and event.pressed and not event.echo and not game.simulating:
     if event.ctrl_pressed:
@@ -74,11 +88,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
         if event.shift_pressed: _redo_editor()
         else: _undo_editor()
       elif event.keycode == KEY_Y: _redo_editor()
+      elif event.keycode == KEY_C: _copy_selected()
+      elif event.keycode == KEY_V: _paste_at_cursor()
+      else: return
+      get_viewport().set_input_as_handled()
       return
     if event.keycode == KEY_Q: _rotate_block(-1)
     elif event.keycode in [KEY_E, KEY_R]: _rotate_block(1)
     elif event.keycode == KEY_DELETE: _delete_selected()
-    elif event.keycode == KEY_ESCAPE: _select_move_tool()
 
 func _notification(what: int) -> void:
   if what == NOTIFICATION_WM_CLOSE_REQUEST:
@@ -126,6 +143,8 @@ func _build_workspace() -> void:
   UI.button(bar, "Save as...", _save_as)
   UI.button(bar, "Undo", _undo_editor)
   UI.button(bar, "Redo", _redo_editor)
+  UI.button(bar, "Copy", _copy_selected).tooltip_text = "Copy the selected building (Ctrl+C)"
+  UI.button(bar, "Paste", _start_paste).tooltip_text = "Click a cell to paste the copied building"
   UI.button(bar, "Source…", func() -> void: source_dialog.popup_centered_ratio(0.7))
   UI.button(bar, "Levels", func() -> void: _request_action("back"))
   status = Label.new()
@@ -174,7 +193,7 @@ func _build_inspector(hud: CanvasLayer) -> void:
   inspector_column.add_child(inspector_heading)
   var inspector_actions := HFlowContainer.new()
   inspector_column.add_child(inspector_actions)
-  UI.button(inspector_actions, "Tools  Esc", _select_move_tool)
+  UI.button(inspector_actions, "Tools", _select_move_tool)
   UI.button(inspector_actions, "Delete  Del", _delete_selected)
   var inspector_scroll := ScrollContainer.new()
   inspector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -187,7 +206,6 @@ func _build_inspector(hud: CanvasLayer) -> void:
   property_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
   property_error.add_theme_color_override("font_color", UI.ERROR)
   inspector_column.add_child(property_error)
-  UI.button(inspector_column, "Apply building", _apply_visual_properties).theme_type_variation = "PrimaryButton"
   UI.button(inspector_column, "Advanced properties…", _open_properties)
   inspector_panel.hide()
 
@@ -207,7 +225,6 @@ func _build_dialogs() -> void:
   declaration_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
   declaration_error.add_theme_color_override("font_color", UI.ERROR)
   inspector.add_child(declaration_error)
-  UI.button(inspector, "Apply properties", _apply_properties).theme_type_variation = "PrimaryButton"
 
   _build_source_dialog()
   _build_settings_dialog()
@@ -225,7 +242,7 @@ func _build_source_dialog() -> void:
   highlighter.number_color = Color("e6b66c")
   highlighter.symbol_color = Color("a6c8e8")
   highlighter.add_color_region("#", "", Color("8192a4"), true)
-  for word in ["goal", "inventory", "emitter", "detector", "mirror", "wall", "magnet", "magnetic_field"]:
+  for word in CATALOG.SCENES.keys() + ["goal", "inventory", "magnetic_field", "rotation"]:
     highlighter.add_keyword_color(word, Color("7bd9bd"))
   for word in ["x", "y", "fixed", "rate", "AND", "OR"]:
     highlighter.add_keyword_color(word, Color("b5a6f1"))
@@ -262,6 +279,11 @@ func _build_settings_dialog() -> void:
   hint_input = LineEdit.new()
   hint_input.placeholder_text = "e.g. Guide a photon into the detector"
   settings_column.add_child(hint_input)
+  settings_column.add_child(UI.label("Player rotation"))
+  rotation_input = OptionButton.new()
+  rotation_input.add_item("8 directions (45 degrees)", 8)
+  rotation_input.add_item("4 directions (90 degrees)", 4)
+  settings_column.add_child(rotation_input)
   var goal_title := UI.label("Goals")
   UI.heading(goal_title)
   settings_column.add_child(goal_title)
@@ -305,6 +327,7 @@ func _select_move_tool() -> void:
   _select_palette_kind("")
 
 func _select_palette_kind(kind: String) -> void:
+  pasting = false
   palette.selected = kind
   palette.refresh()
   _select_block(-1)
@@ -313,7 +336,8 @@ func _drop_palette_kind(kind: String, screen_position: Vector2) -> void:
   if game.simulating or parsed.has("error") or parsed.is_empty(): return
   var cell: Vector2i = game.screen_to_cell(screen_position)
   if not game.is_cell_on_board(cell): return
-  _place_editor_kind(kind, cell)
+  var facing: String = game._edge_facing(cell, game.get_canvas_transform().affine_inverse() * screen_position) if kind == "edge_wall" else "E"
+  _place_editor_kind(kind, cell, facing)
 
 func _update_camera_inset() -> void:
   if not is_instance_valid(game) or not is_instance_valid(editor_panel): return
@@ -323,7 +347,9 @@ func _update_camera_inset() -> void:
 func _reset_preview() -> void:
   game._load_initial_board()
   if selected_block >= 0:
-    game.selected_building = game._building_at(selected_cell)
+    var entry: Dictionary = blocks[selected_block].entries[0]
+    selected_building = game._building_at(selected_cell, entry.kind, entry.facing)
+    game.selected_building = selected_building
 
 func _spin(parent: Node) -> SpinBox:
   var spin := SpinBox.new()
@@ -378,7 +404,7 @@ func _index_blocks() -> void:
     var kind := PARSER.building_kind(span.get_string(1))
     if not CATALOG.SCENES.has(kind):
       continue
-    var building := PARSER.parse_building(kind, span.get_string(2), parsed.width, parsed.height)
+    var building := PARSER.parse_building(kind, span.get_string(2), parsed.width, parsed.height, parsed.legacy_rates)
     if building.has("error") or building.entries.is_empty():
       continue
     var start := span.get_start()
@@ -400,62 +426,119 @@ func _resize_board(_value: float) -> void:
     return
   _set_source(updated)
 
-func _board_click(cell: Vector2i, button: int) -> void:
+func _board_click(cell: Vector2i, button: int, target: Node = null, facing := "E") -> void:
   if parsed.has("error"): return
-  var hit := _block_index_at(cell)
+  if target == null: target = game._building_at(cell)
   if button == MOUSE_BUTTON_RIGHT:
-    if hit >= 0: _select_block(hit, cell)
+    pasting = false
+    if target != null: _select_building(target)
     else: _select_move_tool()
     return
   if button != MOUSE_BUTTON_LEFT: return
-  if hit >= 0:
+  if pasting:
+    _paste_building(cell)
+    return
+  if not palette.selected.is_empty() and game._building_at(cell, palette.selected, facing) == null:
+    _place_editor_kind(palette.selected, cell, facing)
+    return
+  if target != null:
     palette.selected = ""
     palette.refresh()
-    _select_block(hit, cell)
-    return
-  if not palette.selected.is_empty():
-    _place_editor_kind(palette.selected, cell)
+    _select_building(target)
     return
   if selected_block >= 0 and selected_cell != cell:
     _move_block(selected_cell, cell)
     return
   _select_block(-1)
 
+func _select_building(building: Node) -> void:
+  var entry: Dictionary = building.get_meta("entry")
+  var cell: Vector2i = building.get_meta("cell")
+  _select_at(cell, entry.kind, entry.facing)
+
 func _select_block(index: int, cell: Vector2i = Vector2i(-1, -1)) -> void:
   edit_range = false
   selected_block = index
   selected_cell = cell
-  game.selected_building = game._building_at(cell) if index >= 0 else null
+  selected_building = null
+  if index >= 0:
+    var entry: Dictionary = blocks[index].entries[0]
+    selected_building = game._building_at(cell, entry.kind, entry.facing)
+    inspector_heading.text = "%s  (%d, %d)" % [str(entry.kind).capitalize(), cell.x, cell.y]
+  game.selected_building = selected_building
   if is_instance_valid(inspector_panel): inspector_panel.visible = index >= 0
   if is_instance_valid(palette): palette.visible = index < 0
-  if index < 0:
-    _build_visual_form()
-    _clear_property_form()
-  else:
-    inspector_heading.text = "%s  (%d, %d)" % [str(blocks[index].entries[0].kind).capitalize(), cell.x, cell.y]
-    _build_visual_form()
+  _build_visual_form()
+  if index < 0: _clear_property_form()
 
-func _place_editor_kind(kind: String, cell: Vector2i) -> void:
-  if game._building_at(cell) != null:
-    status.text = "That cell is occupied."
+func _place_editor_kind(kind: String, cell: Vector2i, facing := "E") -> void:
+  if game._building_at(cell, kind, facing) != null:
+    status.text = "That position is occupied."
     return
   var extra := ""
-  if kind == "emitter": extra = ", E, [electron], rate=1"
+  if kind == "emitter": extra = ", E, [electron], rate=1/step"
   elif kind == "detector": extra = ", [photon]"
+  elif kind == "edge_wall": extra = ", " + facing
   _set_source(source.text.trim_suffix("\n") + "\n%s: {x=%d, y=%d%s};\n" % [kind, cell.x, cell.y, extra])
-  _select_at(cell)
+  _select_at(cell, kind, facing)
 
-func _select_at(cell: Vector2i) -> void:
-  var index := _block_index_at(cell)
-  if index >= 0:
-    _select_block(index, cell)
-
-func _block_index_at(cell: Vector2i) -> int:
+func _select_at(cell: Vector2i, kind := "", facing := "E") -> void:
+  var key := CATALOG.occupancy_key(kind, cell, facing)
   for index in range(blocks.size()):
     for entry in blocks[index].entries:
-      if Vector2i(entry.x, entry.y) == cell:
-        return index
-  return -1
+      var anchor := Vector2i(entry.x, entry.y)
+      if CATALOG.occupancy_key(entry.kind, anchor, entry.facing) == key:
+        _select_block(index, anchor)
+        return
+
+func _copy_selected() -> void:
+  if selected_block < 0 or game.simulating: return
+  var block: Dictionary = blocks[selected_block]
+  var first: Dictionary = block.entries[0]
+  copied_origin = Vector2i(first.x, first.y) if edit_range else selected_cell
+  copied_declaration = block.text if edit_range else _single_declaration(block.text, selected_cell)
+  if parsed.legacy_rates and first.kind == "emitter":
+    copied_declaration = _explicit_emitter_rate(copied_declaration, first.rate)
+  status.text = "Copied %s." % str(first.kind).replace("_", " ")
+
+func _start_paste() -> void:
+  if game.simulating or copied_declaration.is_empty(): return
+  _select_move_tool()
+  pasting = true
+  status.text = "Click a cell to paste the copied building."
+
+func _paste_at_cursor() -> void:
+  if game.simulating or copied_declaration.is_empty(): return
+  var cell: Vector2i = game._mouse_cell()
+  if not game.is_cell_on_board(cell):
+    _start_paste()
+  elif not _paste_building(cell):
+    pasting = true
+
+func _paste_building(cell: Vector2i) -> bool:
+  if copied_declaration.is_empty() or parsed.has("error"): return false
+  var declaration := copied_declaration
+  var offset := cell - copied_origin
+  for axis in ["x", "y"]:
+    var regex := RegEx.new()
+    regex.compile("(?i)\\b" + axis + "\\s*=\\s*([+-]?\\d+)(?:\\.\\.([+-]?\\d+))?")
+    var found := regex.search(PARSER.mask_comments(declaration))
+    if found == null: return false
+    var shift := offset.x if axis == "x" else offset.y
+    var coordinates := "%s=%d" % [axis, int(found.get_string(1)) + shift]
+    if not found.get_string(2).is_empty():
+      coordinates += "..%d" % (int(found.get_string(2)) + shift)
+    declaration = declaration.left(found.get_start()) + coordinates + declaration.substr(found.get_end())
+  var updated := source.text.trim_suffix("\n") + "\n" + declaration.trim_suffix(";") + ";\n"
+  var result := PARSER.parse(updated)
+  if result.has("error"):
+    status.text = result.error
+    return false
+  pasting = false
+  var entry: Dictionary = result.buildings.back()
+  _set_source(updated)
+  _select_at(cell, entry.kind, entry.facing)
+  return true
 
 func _single_declaration(text_value: String, cell: Vector2i) -> String:
   var result := text_value
@@ -484,20 +567,33 @@ func _replace_selected_cell(replacement: String) -> bool:
   return _replace_block(selected_block, ";\n".join(declarations))
 
 func _move_block(from_cell: Vector2i, to_cell: Vector2i) -> void:
-  if parsed.has("error"): return
-  if not game.is_cell_on_board(to_cell): return
-  if from_cell == to_cell or game._building_at(to_cell) != null: return
-  _select_at(from_cell)
-  if selected_block < 0: return
-  var replacement := _single_declaration(blocks[selected_block].text, to_cell)
-  if _replace_selected_cell(replacement): _select_at(to_cell)
+  if parsed.has("error") or from_cell == to_cell: return
+  if selected_cell != from_cell: _select_at(from_cell)
+  if selected_block < 0 or selected_cell != from_cell: return
+  if not game.is_cell_on_board(to_cell):
+    _delete_selected()
+    return
+  var block: Dictionary = blocks[selected_block]
+  var entry: Dictionary = block.entries[0]
+  if game._building_at(to_cell, entry.kind, entry.facing) != null: return
+  var replacement := _single_declaration(block.text, to_cell)
+  if _replace_selected_cell(replacement): _select_at(to_cell, entry.kind, entry.facing)
 
 func _rotate_block(turn: int = 1) -> void:
   if selected_block < 0 or game.simulating: return
   if visual_fields.has("polarity"):
     visual_fields.polarity.select(1 - visual_fields.polarity.selected)
-  elif visual_fields.has("facing") and blocks[selected_block].entries[0].kind in ["mirror", "emitter"]:
-    visual_fields.facing.select(posmod(visual_fields.facing.selected + turn, CATALOG.DIRECTIONS.size()))
+  elif visual_fields.has("colour"):
+    visual_fields.colour.select(posmod(visual_fields.colour.selected + turn, CATALOG.FILTER_COLOURS.size()))
+  elif visual_fields.has("facing"):
+    var field: OptionButton = visual_fields.facing
+    var entry: Dictionary = blocks[selected_block].entries[0]
+    var rotation := int(entry.get("rotation", parsed.rotation_steps))
+    if visual_fields.has("rotation") and visual_fields.rotation.get_selected_id() != 0:
+      rotation = visual_fields.rotation.get_selected_id()
+    var orientation := CATALOG.DIRECTIONS.find(field.get_item_text(field.selected))
+    var next := CATALOG.next_orientation(orientation, turn, 4 if entry.kind == "edge_wall" else rotation)
+    field.select(CATALOG.CARDINALS.find(CATALOG.DIRECTIONS[next]) if entry.kind == "edge_wall" else next)
   else:
     return
   _apply_visual_properties()
@@ -545,12 +641,21 @@ func _build_visual_form() -> void:
   var last := Vector2i(last_entry.x, last_entry.y) if edit_range else selected_cell
   _coordinate_row("x", parsed.width - 1, first.x, last.x)
   _coordinate_row("y", parsed.height - 1, first.y, last.y)
-  if entry.kind in ["mirror", "emitter"] or entry.facing != "E":
+  if (entry.kind in CATALOG.FACING_KINDS or entry.kind == "edge_wall") or entry.facing != "E":
     var direction := OptionButton.new()
-    for name in CATALOG.DIRECTIONS: direction.add_item(name)
-    direction.select(CATALOG.DIRECTIONS.find(entry.facing))
+    var directions: Array = CATALOG.CARDINALS if entry.kind == "edge_wall" else CATALOG.DIRECTIONS
+    for name in directions: direction.add_item(name)
+    direction.select(directions.find(entry.facing))
     _visual_row("Direction", direction)
     visual_fields.facing = direction
+  if entry.kind in CATALOG.FACING_KINDS:
+    var rotation := OptionButton.new()
+    rotation.add_item("Level default", 0)
+    rotation.add_item("8 directions", 8)
+    rotation.add_item("4 directions", 4)
+    rotation.select(rotation.get_item_index(entry.get("rotation", 0)))
+    _visual_row("Rotation", rotation)
+    visual_fields.rotation = rotation
   if entry.kind == "magnet":
     var polarity := OptionButton.new()
     polarity.add_item("Positive")
@@ -558,11 +663,22 @@ func _build_visual_form() -> void:
     polarity.select(1 if str(entry.get("polarity", "+")) in CATALOG.NEGATIVE_POLARITIES else 0)
     _visual_row("Polarity", polarity)
     visual_fields.polarity = polarity
+  match entry.kind:
+    "filter":
+      _option_row("colour", "Colour", CATALOG.FILTER_COLOURS, entry.get("colour", "red"))
+    "gate":
+      var open := CheckBox.new()
+      open.text = "Start open"
+      open.button_pressed = entry.get("open", "false") == "true"
+      visual_form.add_child(open)
+      visual_fields.open = open
   if entry.kind in CATALOG.ROTATABLE_KINDS:
     var turns := HFlowContainer.new()
     visual_form.add_child(turns)
     if entry.kind == "magnet":
       UI.button(turns, "Flip polarity  Q / E", _rotate_block)
+    elif entry.kind == "filter":
+      UI.button(turns, "Change colour  E", _rotate_block)
     else:
       UI.button(turns, "↶  Q", _rotate_block.bind(-1)).tooltip_text = "Rotate counterclockwise"
       UI.button(turns, "↷  E", _rotate_block.bind(1)).tooltip_text = "Rotate clockwise"
@@ -585,7 +701,7 @@ func _build_visual_form() -> void:
     rate.allow_greater = true
     rate.step = 0.0
     rate.value = float(entry.rate)
-    _visual_row("Rate / sec", rate)
+    _visual_row("Rate / step", rate)
     visual_fields.rate = rate
   var fixed_position := CheckBox.new()
   fixed_position.text = "Lock position"
@@ -594,10 +710,36 @@ func _build_visual_form() -> void:
   visual_fields.fixed_position = fixed_position
   if entry.kind in CATALOG.ROTATABLE_KINDS:
     var fixed_rotation := CheckBox.new()
-    fixed_rotation.text = "Lock polarity" if entry.kind == "magnet" else "Lock rotation"
+    fixed_rotation.text = {"magnet": "Lock polarity", "filter": "Lock colour"}.get(entry.kind, "Lock rotation")
     fixed_rotation.button_pressed = CATALOG.rotation_lock_flag(entry.kind) in str(entry.fixed)
     visual_form.add_child(fixed_rotation)
     visual_fields.fixed_rotation = fixed_rotation
+  for field in visual_fields.values():
+    if field is OptionButton:
+      field.item_selected.connect(func(_index: int) -> void: _apply_from_field.call_deferred(field))
+    elif field is CheckBox:
+      field.toggled.connect(func(_value: bool) -> void: _apply_from_field.call_deferred(field))
+    elif field is SpinBox:
+      field.value_changed.connect(func(_value: float) -> void: _apply_from_field.call_deferred(field))
+    else:
+      field.changed.connect(func() -> void: _apply_from_field.call_deferred(field))
+
+func _apply_from_field(field: Control) -> void:
+  if not is_instance_valid(field) or field not in visual_fields.values(): return
+  if not edit_range:
+    for axis in ["x", "y"]:
+      if field != visual_fields[axis]: continue
+      var original := selected_cell.x if axis == "x" else selected_cell.y
+      var end: SpinBox = visual_fields[axis + "_end"]
+      if end.value == original: end.set_value_no_signal(field.value)
+  _apply_visual_properties()
+
+func _option_row(key: String, title: String, values: Array, selected: String) -> void:
+  var field := OptionButton.new()
+  for value in values: field.add_item(value.capitalize())
+  field.select(values.find(selected))
+  _visual_row(title, field)
+  visual_fields[key] = field
 
 func _apply_visual_properties() -> void:
   if selected_block < 0: return
@@ -607,7 +749,12 @@ func _apply_visual_properties() -> void:
   var parts: PackedStringArray = ["x=%d" % destination.x, "y=%d" % destination.y]
   if destination.x != end.x: parts[0] += "..%d" % end.x
   if destination.y != end.y: parts[1] += "..%d" % end.y
-  if visual_fields.has("facing"): parts.append(visual_fields.facing.get_item_text(visual_fields.facing.selected))
+  var facing: String = visual_fields.facing.get_item_text(visual_fields.facing.selected) if visual_fields.has("facing") else "E"
+  if visual_fields.has("facing"): parts.append(facing)
+  if visual_fields.has("rotation") and visual_fields.rotation.get_selected_id() != 0:
+    parts.append("rotation=%d" % visual_fields.rotation.get_selected_id())
+  if visual_fields.has("colour"): parts.append("colour=" + CATALOG.FILTER_COLOURS[visual_fields.colour.selected])
+  if visual_fields.has("open"): parts.append("open=" + str(visual_fields.open.button_pressed))
   if visual_fields.has("polarity"): parts.append("-" if visual_fields.polarity.selected == 1 else "+")
   if visual_fields.has("particles"):
     var expression: String = visual_fields.particles.source_text()
@@ -615,9 +762,7 @@ func _apply_visual_properties() -> void:
   elif not entry.particles.is_empty():
     parts.append("[" + ", ".join(entry.particles) + "]")
   if visual_fields.has("rate"):
-    parts.append("rate=%s" % String.num_scientific(visual_fields.rate.value))
-  elif float(entry.rate) != 1.0:
-    parts.append("rate=%s" % entry.rate)
+    parts.append("rate=%s/step" % String.num_scientific(visual_fields.rate.value))
   var fixed := str(entry.fixed).replace("p", "")
   if visual_fields.fixed_position.button_pressed: fixed += "p"
   if visual_fields.has("fixed_rotation"):
@@ -626,12 +771,12 @@ func _apply_visual_properties() -> void:
     if visual_fields.fixed_rotation.button_pressed: fixed += flag
   if not fixed.is_empty(): parts.append("fixed=" + fixed)
   for key in entry:
-    if key not in ["kind", "x", "y", "facing", "fixed", "rate", "particles", "accepted", "polarity", "particle_expression"]:
+    if key not in ["kind", "x", "y", "facing", "fixed", "rate", "particles", "accepted", "polarity", "particle_expression", "colour", "travel", "track", "open", "rotation"]:
       parts.append("%s=%s" % [key, entry[key]])
   var replacement := "%s: {%s}" % [entry.kind, ", ".join(parts)]
   var keep_range := edit_range and destination != end
   if _replace_selected_cell(replacement):
-    _select_at(destination)
+    _select_at(destination, entry.kind, facing)
     if keep_range:
       edit_range = true
       _build_visual_form()
@@ -680,6 +825,15 @@ func _build_property_form(declaration: String) -> void:
       field = text_field
     property_form.add_child(field)
     property_fields.append(field)
+    if field is LineEdit:
+      field.text_submitted.connect(func(_value: String) -> void: _apply_advanced_field.call_deferred(field))
+      field.focus_exited.connect(func() -> void: _apply_advanced_field.call_deferred(field))
+    else:
+      field.changed.connect(func() -> void: _apply_advanced_field.call_deferred(field))
+
+func _apply_advanced_field(field: Control) -> void:
+  if is_instance_valid(field) and field in property_fields:
+    _apply_properties()
 
 func _replace_block(index: int, replacement: String) -> bool:
   var block: Dictionary = blocks[index]
@@ -690,7 +844,7 @@ func _replace_block(index: int, replacement: String) -> bool:
     if is_instance_valid(error): error.text = result.error
     status.text = result.error
     return false
-  _set_source(updated)
+  if updated != source.text: _set_source(updated)
   return true
 
 func _apply_properties() -> void:
@@ -702,10 +856,23 @@ func _apply_properties() -> void:
     else:
       var value: String = field.source_text()
       if not value.is_empty(): parts.append("[" + value + "]")
-  var cell := selected_cell
-  if _replace_selected_cell(property_prefix + " " + ", ".join(parts) + " " + property_suffix):
-    _select_at(cell)
-    inspector_dialog.hide()
+  var declaration := property_prefix + " " + ", ".join(parts) + " " + property_suffix
+  var left := declaration.find("{")
+  var right := declaration.rfind("}")
+  var kind: String = blocks[selected_block].entries[0].kind
+  var keep_range := edit_range
+  var result := PARSER.parse_building(kind, PARSER.mask_comments(declaration).substr(left + 1, right - left - 1), parsed.width, parsed.height, parsed.legacy_rates)
+  if _replace_selected_cell(declaration):
+    if not result.has("error"):
+      var entry: Dictionary = result.entries[0]
+      _select_at(Vector2i(entry.x, entry.y), kind, entry.facing)
+      if keep_range:
+        edit_range = true
+        _build_visual_form()
+    if selected_block >= 0:
+      var updated: String = PARSER.mask_comments(blocks[selected_block].text).replace("\n", " ")
+      _build_property_form(updated if edit_range else _single_declaration(updated, selected_cell))
+    declaration_error.text = ""
 
 func _delete_selected() -> void:
   if selected_block < 0: return
@@ -781,9 +948,9 @@ func _add_goal_row(parent: VBoxContainer, target: String = "electron", values: A
   row.add_child(help)
   var show_type := func(index: int) -> void:
     expression.visible = index == 0
-    help.text = "Minimum particles per second" if index == 0 else "Maximum cost per tier. Leave blank for no limit."
+    help.text = "Minimum particles per step" if index == 0 else "Maximum cost per tier. Leave blank for no limit."
     for field in fields:
-      field.placeholder_text = "per second" if index == 0 else "No limit"
+      field.placeholder_text = "per step" if index == 0 else "No limit"
   show_type.call(type.selected)
   type.item_selected.connect(show_type)
   row.set_meta("condition", {"type": type, "expression": expression, "bracketed": bracketed, "thresholds": fields})
@@ -797,7 +964,7 @@ func _goal_declaration(clauses: PackedStringArray) -> String:
 func _goal_clause(target: String, values: PackedStringArray) -> String:
   if target != "cost":
     for index in range(values.size()):
-      if values[index].to_lower() != "inf": values[index] = values[index].trim_suffix("/s") + "/s"
+      if values[index].to_lower() != "inf": values[index] = values[index].trim_suffix("/step") + "/step"
   return target + ": " + ", ".join(values)
 
 func _open_settings() -> void:
@@ -806,6 +973,7 @@ func _open_settings() -> void:
   settings_error.text = ""
   title_input.text = str(parsed.get("title", ""))
   hint_input.text = str(parsed.get("hint", ""))
+  rotation_input.select(rotation_input.get_item_index(parsed.rotation_steps))
   for i in range(parsed.goals.size()):
     _add_goal_group(parsed.goals[i], parsed.goal_targets[i], i)
   for kind in inventory_fields:
@@ -881,9 +1049,12 @@ func _apply_settings() -> void:
       original_goal += 1
   var prefix := ""
   var metadata: Array[RegExMatch] = PARSER.find_metadata(masked)
-  for key in ["title", "hint"]:
-    var value: String = (title_input.text if key == "title" else hint_input.text).strip_edges()
-    if value == parsed[key]: continue
+  var settings := {"title": title_input.text.strip_edges(), "hint": hint_input.text.strip_edges(),
+    "rotation": str(rotation_input.get_selected_id())}
+  for key in settings:
+    var value: String = settings[key]
+    var previous: String = str(parsed.rotation_steps) if key == "rotation" else parsed[key]
+    if value == previous: continue
     if ";" in value or "#" in value:
       settings_error.text = "Titles and hints cannot contain a semicolon or #."
       return
@@ -905,11 +1076,33 @@ func _apply_settings() -> void:
   if not additional.is_empty(): updated = updated.trim_suffix("\n") + "\n" + "\n".join(additional) + "\n"
   updated = prefix + updated
   var result: Dictionary = PARSER.parse(updated)
+  if not result.has("error") and parsed.legacy_rates and not result.legacy_rates:
+    var declarations := PARSER.find_blocks(PARSER.mask_comments(updated))
+    declarations.reverse()
+    for declaration in declarations:
+      if declaration.get_string(1).to_lower() != "emitter": continue
+      var emitter := PARSER.parse_building("emitter", declaration.get_string(2), result.width, result.height, true)
+      var start := declaration.get_start()
+      var stop := declaration.get_end()
+      var authored := updated.substr(start, stop - start)
+      updated = updated.left(start) + _explicit_emitter_rate(authored, emitter.entries[0].rate) + updated.substr(stop)
+    result = PARSER.parse(updated)
   if result.has("error"):
     settings_error.text = str(result.error)
     return
   if updated != source.text: _set_source(updated)
   settings_dialog.hide()
+
+func _explicit_emitter_rate(declaration: String, rate: float) -> String:
+  var regex := RegEx.new()
+  regex.compile("(?i)\\brate\\s*=\\s*[^,}\\s]+")
+  var masked := PARSER.mask_comments(declaration)
+  var found := regex.search(masked)
+  var text := "rate=%s/step" % String.num_scientific(rate)
+  if found != null:
+    return declaration.left(found.get_start()) + text + declaration.substr(found.get_end())
+  var end := masked.rfind("}")
+  return declaration.left(end) + ", " + text + declaration.substr(end)
 
 func _level_warnings(data: Dictionary) -> PackedStringArray:
   var warnings := PackedStringArray()

@@ -2,10 +2,10 @@ title: 05 - IDK;
 hint: idk man;
 11 x 11;
 
-goal: {photon: 1/s, 2/s, 4/s};
+goal: {photon: 1/step, 2/step, 1/step};
 
-emitter: {x=9, y=7, W, [positron, electron], rate=2, fixed=pr}
-emitter: {x=1, y=3, E, [electron, positron], rate=2, fixed=p}
+emitter: {x=9, y=7, W, [positron, electron], rate=2/step, fixed=pr}
+emitter: {x=1, y=3, E, [electron, positron], rate=2/step, fixed=p}
 
 
 

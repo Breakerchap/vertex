@@ -1,12 +1,12 @@
 title: 02 - Re-route;
-hint: ;
+hint: Green outline: move, Yellow: change state, Red: fixed;
 
 15 x 8;
 
-goal: {photon: 1/s, 2/s, 2/s; cost: inf, inf, 10};
+goal: {photon: 1/step, 2/step, 2/step; cost: inf, inf, 10};
 
-emitter: {x=1, y=4, E, [electron], rate=1, fixed=rp};
-emitter: {x=13, y=4, W, [positron], rate=1, fixed=rp};
+emitter: {x=1, y=4, E, [electron], rate=1/step, fixed=rp};
+emitter: {x=13, y=4, W, [positron], rate=1/step, fixed=rp};
 mirror: {x=7, y=6, SW, fixed=p};
 wall: {x=2, y=6, fixed=pr} 
 detector: {x=4, y=1, [photon], fixed=rp};

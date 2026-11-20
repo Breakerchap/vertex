@@ -86,6 +86,6 @@ func _get_tooltip(at_position: Vector2) -> String:
   for marker in markers:
     var y: float = track_y - 4.0 - (marker.lane + 1) * MARKER_HEIGHT
     if Rect2(marker.x - marker.width * 0.5, y, marker.width, MARKER_HEIGHT).has_point(at_position):
-      var target := "∞" if is_inf(marker.rate) else "%s/s" % str(marker.rate).trim_suffix(".0")
+      var target := "∞" if is_inf(marker.rate) else "%s/step" % str(marker.rate).trim_suffix(".0")
       return "%s for star tier %s" % [target, ", ".join(marker.tiers)]
-  return "%.2f/s recent output" % rate
+  return "%.2f/step recent output" % rate

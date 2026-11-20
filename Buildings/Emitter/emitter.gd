@@ -4,9 +4,7 @@ extends "res://Buildings/solid_building.gd"
 
 const EmissionEntry = preload("res://Buildings/Emitter/particle_emission.gd")
 
-const ELECTRON_SCENE: PackedScene = preload("res://Particles/Electron/electron.tscn")
-const QUARK_SCENE: PackedScene = preload("res://Particles/Quark/quark.tscn")
-const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
+const PARTICLES = preload("res://Particles/particle_catalog.gd")
 
 @export_enum("0 degrees", "45 degrees", "90 degrees", "135 degrees", "180 degrees", "225 degrees", "270 degrees", "315 degrees") var orientation: int = 0:
   set(value):
@@ -16,7 +14,7 @@ const PHOTON_SCENE: PackedScene = preload("res://Particles/Photon/photon.tscn")
 @export var particleFlavour: Particle.Flavour = Particle.Flavour.ELECTRON
 @export var isAnti: bool = false
 @export var direction: Vector2 = Vector2.RIGHT
-## Number of particles emitted per second.
+## Number of particles emitted per simulation step.
 @export_range(0.01, 1000.0, 0.01, "or_greater") var rate: float = 1.0
 @export var sequence: Array[EmissionEntry] = []
 @export var repeat_sequence: bool = false
@@ -44,25 +42,14 @@ func emit_particle(flavour: Particle.Flavour, anti: bool, travel: Vector2, colou
   if simulation == null:
     push_warning("Emitter must be a child of a ParticleSimulation")
     return null
-  var scene: PackedScene
-  match flavour:
-    Particle.Flavour.UP, Particle.Flavour.DOWN: scene = QUARK_SCENE
-    Particle.Flavour.ELECTRON: scene = ELECTRON_SCENE
-    Particle.Flavour.PHOTON: scene = PHOTON_SCENE
-    _:
-      push_warning("No particle scene exists for flavour %s" % flavour)
-      return null
   if travel.is_zero_approx():
     push_warning("Cannot emit a particle with a zero direction")
     return null
-  var particle := scene.instantiate() as Particle
-  particle.flavour = flavour
-  particle.colour = colour
-  particle.isAnti = anti
-  particle.direction = global_transform.basis_xform(travel).normalized()
+  var particle := PARTICLES.instantiate(flavour, anti, colour)
+  particle.direction = global_transform.basis_xform(travel)
+  particle.position = simulation.to_local(global_position)
+  particle.source_building = self
   simulation.add_child(particle)
-  var radius := particle.world_collision_radius()
-  particle.global_position = collision_shape.global_position + particle.direction * exit_distance(particle.direction, radius)
   return particle
 
 ## Emit one particle using the emitter's inspector settings.
@@ -91,15 +78,14 @@ func stop_sequence() -> void:
   _pending.clear()
 
 ## Called by ParticleSimulation; sequences pause when the simulation pauses.
-func step_emission(delta: float) -> void:
+func step_emission(steps: float) -> void:
   if not _continuous and _pending.is_empty():
     return
   if rate <= 0.0:
     push_warning("Emitter rate must be greater than zero")
     stop_sequence()
     return
-  _time_until_next -= delta
-  while (_continuous or not _pending.is_empty()) and _time_until_next <= 0.0:
+  while (_continuous or not _pending.is_empty()) and _time_until_next <= 0.000001:
     if _continuous:
       spawnParticle()
     else:
@@ -109,6 +95,7 @@ func step_emission(delta: float) -> void:
       if _pending.is_empty() and repeat_sequence and not _sequence_template.is_empty():
         _pending = _sequence_template.duplicate()
     _time_until_next += 1.0 / rate
+  _time_until_next -= steps
 
 func _simulation() -> ParticleSimulation:
   var node := get_parent()

@@ -111,7 +111,7 @@ func refresh() -> void:
     if button == null:
       button = Button.new()
       button.custom_minimum_size.y = 56 if infinite else 76
-      button.icon = ICONS.get(kind)
+      button.icon = _icon(kind)
       button.expand_icon = true
       button.alignment = HORIZONTAL_ALIGNMENT_LEFT if infinite else HORIZONTAL_ALIGNMENT_CENTER
       if not infinite:
@@ -140,7 +140,7 @@ func _process(_delta: float) -> void:
   if drag_kind.is_empty() or not is_instance_valid(ghost): return
   var pos := get_global_mouse_position()
   if pos.distance_to(drag_start) > 8.0:
-    ghost.texture = ICONS.get(drag_kind)
+    ghost.texture = _icon(drag_kind)
     ghost.position = pos - ghost.size * 0.5
     ghost.show()
 
@@ -153,3 +153,7 @@ func _input(event: InputEvent) -> void:
     if event.position.distance_to(drag_start) > 8.0 and not locked:
       kind_dropped.emit(kind, event.position)
       get_viewport().set_input_as_handled()
+
+func _icon(kind: String) -> Texture2D:
+  if ICONS.has(kind): return ICONS[kind]
+  return CATALOG.DEVICE.SPRITES[kind][0]

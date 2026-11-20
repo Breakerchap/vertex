@@ -1,11 +1,12 @@
 @tool
 extends Node2D
 
-## A cell is the 128-pixel emitter sprite at its current 0.8 scale.
-const GRID_SIZE: float = 102.4
+const GRID_SIZE := SimulationGrid.CELL
 var _snapping_to_grid := false
 
 func _ready() -> void:
+  if not Engine.is_editor_hint():
+    add_to_group("grid_buildings")
   set_notify_local_transform(true)
   set_notify_transform(true)
   _snap_to_grid()

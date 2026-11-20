@@ -6,6 +6,7 @@
 
 [node name="Photon" unique_id=975686501 instance=ExtResource("1_gf5l3")]
 script = ExtResource("2_w3tgm")
+speed = 2.0
 
 [node name="Sprite2D" parent="." index="0" unique_id=873866100]
 texture = ExtResource("3_w3tgm")

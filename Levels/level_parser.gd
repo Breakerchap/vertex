@@ -14,7 +14,7 @@ static func mask_comments(source: String) -> String:
 
 static func find_metadata(text: String) -> Array[RegExMatch]:
   var metadata := RegEx.new()
-  metadata.compile("(?im)^\\h*(title|hint)\\h*:\\h*([^;\\n]+)\\h*;")
+  metadata.compile("(?im)^\\h*(title|hint|rotation)\\h*:\\h*([^;\\n]+)\\h*;")
   return metadata.search_all(text)
 
 static func _without_metadata(text: String) -> String:
@@ -39,12 +39,24 @@ static func parse(source: String) -> Dictionary:
   var size_match := find_dimensions(text)
   if size_match == null:
     return {"error": "Missing grid size (for example 15 x 7)."}
-  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "goals": [], "goal_targets": [], "buildings": [], "inventory": {}, "title": "", "hint": ""}
+  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "goals": [], "goal_targets": [], "buildings": [], "inventory": {}, "title": "", "hint": "", "rotation_steps": 8, "legacy_rates": false}
   if data.width <= 0 or data.height <= 0:
     return {"error": "Grid dimensions must be positive."}
   for item in find_metadata(text):
-    data[item.get_string(1).to_lower()] = item.get_string(2).strip_edges().trim_prefix('"').trim_suffix('"')
-  for block in find_blocks(text):
+    var key := item.get_string(1).to_lower()
+    var value := item.get_string(2).strip_edges().trim_prefix('"').trim_suffix('"')
+    if key == "rotation":
+      if value not in ["4", "8"]: return {"error": "Rotation must be 4 or 8 directions."}
+      data.rotation_steps = int(value)
+    else:
+      data[key] = value
+  var blocks := find_blocks(text)
+  var legacy_suffix := RegEx.new()
+  legacy_suffix.compile("(?i)/s\\b")
+  for block in blocks:
+    if block.get_string(1).to_lower() == "goal" and legacy_suffix.search(block.get_string(2)) != null:
+      data.legacy_rates = true
+  for block in blocks:
     var kind := building_kind(block.get_string(1))
     var body := block.get_string(2)
     match kind:
@@ -59,7 +71,7 @@ static func parse(source: String) -> Dictionary:
         if result.has("error"):
           return result
       _:
-        var result := parse_building(kind, body, data.width, data.height)
+        var result := parse_building(kind, body, data.width, data.height, data.legacy_rates)
         if result.has("error"):
           return result
         data.buildings.append_array(result.entries)
@@ -68,9 +80,10 @@ static func parse(source: String) -> Dictionary:
   var occupied := {}
   for building in data.buildings:
     var cell := Vector2i(building.x, building.y)
-    if occupied.has(cell):
+    var key := CATALOG.occupancy_key(building.kind, cell, building.facing)
+    if occupied.has(key):
       return {"error": "Overlapping buildings at (%d, %d)." % [cell.x, cell.y]}
-    occupied[cell] = true
+    occupied[key] = true
   return data
 
 static func building_kind(name: String) -> String:
@@ -86,11 +99,11 @@ static func _parse_goal(body: String) -> Dictionary:
       return {"error": "Invalid goal: " + clause}
     var values := []
     for value in parts[1].split(",", false):
-      var token := value.strip_edges().to_lower().replace("/s", "")
+      var token := value.strip_edges().to_lower()
       if token == "inf":
         values.append(INF)
-      elif token.is_valid_float() and float(token) >= 0.0:
-        values.append(float(token))
+      elif _parse_rate(token) >= 0.0 and (parts[0].strip_edges().to_lower() != "cost" or token.is_valid_float()):
+        values.append(_parse_rate(token))
       else:
         return {"error": "Invalid goal value: " + token}
     if values.size() != 3:
@@ -104,9 +117,9 @@ static func _parse_goal(body: String) -> Dictionary:
         return {"error": "Goal expression matches no particle: " + target}
       var key := "[" + ",".join(expression.accepted) + "]"
       goal[key] = values
-      targets[key] = target
+      targets[key] = PARTICLES.current_expression(target)
     else:
-      target = target.to_lower()
+      target = PARTICLES.current_name(target.to_lower())
       if target != "cost" and not _valid_particle(target):
         return {"error": "Unknown goal target: " + target}
       goal[target] = values
@@ -120,13 +133,29 @@ static func _parse_inventory(body: String, inventory: Dictionary) -> Dictionary:
     if pair.size() != 2 or not pair[1].strip_edges().is_valid_int() or int(pair[1]) < 0:
       return {"error": "Invalid inventory entry: " + item}
     var name := building_kind(pair[0].strip_edges())
+    if name == "rail": continue
     if not CATALOG.SCENES.has(name):
       return {"error": "Unknown inventory item: " + name}
     inventory[name] = int(pair[1])
   return {}
 
-static func parse_building(kind: String, body: String, width: int, height: int) -> Dictionary:
-  var entry := {"kind": kind, "facing": "E", "fixed": "", "rate": 1.0, "particles": []}
+## Bare values and /step are per step. /s is supported for existing levels.
+static func _parse_rate(value: String, legacy_bare := false) -> float:
+  var token := value.strip_edges().to_lower()
+  var legacy := token.ends_with("/s") or (legacy_bare and not token.ends_with("/step"))
+  token = token.trim_suffix("/step").trim_suffix("/s")
+  var parts := token.split("/")
+  if parts.is_empty() or parts.size() > 2 or not parts[0].is_valid_float(): return -1.0
+  var rate := float(parts[0])
+  if parts.size() == 2:
+    if not parts[1].is_valid_float() or float(parts[1]) <= 0.0: return -1.0
+    rate /= float(parts[1])
+  if not is_finite(rate): return -1.0
+  # Legacy authored rates used a 60 Hz simulation.
+  return rate * SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP / 60.0 if legacy else rate
+
+static func parse_building(kind: String, body: String, width: int, height: int, legacy_rates := false) -> Dictionary:
+  var entry := {"kind": kind, "facing": CATALOG.default_facing(kind), "fixed": "", "rate": 1.0, "particles": []}
   var list_regex := RegEx.new()
   list_regex.compile("\\[([^]]*)\\]")
   var list_match := list_regex.search(body)
@@ -137,10 +166,10 @@ static func parse_building(kind: String, body: String, width: int, height: int) 
         return expression
       entry.particles = expression.particles
       entry.accepted = expression.accepted
-      entry.particle_expression = list_match.get_string(1).strip_edges()
+      entry.particle_expression = PARTICLES.current_expression(list_match.get_string(1).strip_edges())
     else:
       for value in list_match.get_string(1).split(",", false):
-        entry.particles.append(value.strip_edges().to_lower())
+        entry.particles.append(PARTICLES.emission_name(value.strip_edges().to_lower()))
     body = body.substr(0, list_match.get_start()) + body.substr(list_match.get_end())
   for part in body.split(",", false):
     var token := part.strip_edges()
@@ -148,7 +177,9 @@ static func parse_building(kind: String, body: String, width: int, height: int) 
       continue
     var pair := token.split("=", true, 1)
     if pair.size() == 2:
-      entry[pair[0].strip_edges().to_lower()] = pair[1].strip_edges().to_lower()
+      var key := pair[0].strip_edges().to_lower()
+      var value := pair[1].strip_edges().to_lower()
+      entry[key] = value.to_upper() if key == "facing" else value
     elif kind == "magnet" and token in ["+", "-", "+1", "-1"]:
       entry.polarity = token
     else:
@@ -159,7 +190,18 @@ static func parse_building(kind: String, body: String, width: int, height: int) 
     return {"error": kind + " needs x and y coordinates."}
   if entry.facing not in CATALOG.DIRECTIONS:
     return {"error": "Invalid direction: " + entry.facing}
-  if not str(entry.rate).is_valid_float() or float(entry.rate) <= 0.0:
+  if entry.has("rotation"):
+    if entry.rotation not in ["4", "8"]:
+      return {"error": "Building rotation must be 4 or 8 directions."}
+    entry.rotation = int(entry.rotation)
+  if kind == "edge_wall" and entry.facing not in CATALOG.CARDINALS:
+    return {"error": "An edge wall must face E, S, W or N."}
+  if kind == "filter" and entry.get("colour", "red") not in CATALOG.FILTER_COLOURS:
+    return {"error": "A filter colour must be red, green or blue."}
+  if kind == "gate" and entry.get("open", "false") not in ["true", "false"]:
+    return {"error": "Gate open must be true or false."}
+  entry.rate = _parse_rate(str(entry.rate), legacy_rates and kind == "emitter")
+  if entry.rate <= 0.0:
     return {"error": "Emitter rate must be positive."}
   for name in entry.particles:
     if not _valid_particle(name):
@@ -192,7 +234,7 @@ static func _range_values(value: String) -> Array[int]:
   return result
 
 static func _valid_particle(name: String) -> bool:
-  return PARTICLES.TYPES.has(name)
+  return PARTICLES.is_selector(name)
 
 # Compile a particle expression into its matching particle names. AND binds
 # more tightly than OR; commas retain the original list's OR behavior.
@@ -210,7 +252,7 @@ static func particle_expression(source: String) -> Dictionary:
     if match_token == null or match_token.get_start() != pos:
       return {"error": "Invalid particle expression: " + source}
     pos = match_token.get_end()
-    var token := match_token.get_string(1).to_lower()
+    var token := PARTICLES.current_name(match_token.get_string(1).to_lower())
     if token == "(":
       if not expect_value: return {"error": "Add AND or OR before the opening bracket."}
       operators.append(token)
