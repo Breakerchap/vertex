@@ -9,7 +9,7 @@ const SCENES := {
   "detector": preload("res://Buildings/Detector/detector.tscn"),
   "magnet": preload("res://Buildings/MagneticField/magnetic_field.tscn"),
 }
-const COSTS := {"mirror": 10, "wall": 5, "emitter": 40, "detector": 30, "magnet": 20}
+const COSTS := {"mirror": 15, "wall": 5, "emitter": 40, "detector": 30, "magnet": 20}
 
 const DIRECTIONS := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
 const ROTATABLE_KINDS := ["emitter", "mirror", "magnet"]

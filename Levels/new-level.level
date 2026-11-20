@@ -1,0 +1,14 @@
+6 x 7;
+
+goal: {electron: 1/s, 2/s, 2/s};
+
+emitter: {x=0, y=2, SE, [electron], rate=2, fixed=pr}
+emitter: {x=0, y=4, NE, [positron], rate=2, fixed=pr}
+
+detector: {x=5, y=0, [photon], fixed=p}
+
+wall: {x=4, y=6, fixed=p}
+
+detector: {x=5, y=6, [photon], fixed=p}
+wall: {x=4, y=0, fixed=p}
+inventory: {magnet=50};

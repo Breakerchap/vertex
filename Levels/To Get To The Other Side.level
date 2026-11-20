@@ -1,0 +1,28 @@
+title: 04 - To Get to the Other Side;
+hint: Loopdy-loop;
+9 x 9;
+
+goal: {electron: 1/s, 2/s, 2/s};
+
+
+
+
+
+
+
+
+
+
+
+emitter: {x=1, y=5, NE, [electron, positron], rate=1, fixed=pr}
+emitter: {x=1, y=3, SE, [electron, positron], rate=1, fixed=pr}
+
+wall: {x=5, y=6, fixed=p}
+wall: {x=5, y=5, fixed=p}
+wall: {x=5, y=4, fixed=p}
+wall: {x=5, y=3, fixed=p}
+wall: {x=5, y=2, fixed=p}
+detector: {x=8, y=4, [electron]}
+
+
+inventory: {mirror=4, magnet=6};
