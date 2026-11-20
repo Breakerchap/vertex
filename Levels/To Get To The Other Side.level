@@ -5,15 +5,6 @@ hint: Loopdy-loop;
 goal: {electron: 1/step, 2/step, 2/step};
 
 
-
-
-
-
-
-
-
-
-
 emitter: {x=1, y=5, NE, [electron, positron], rate=1/step, fixed=pr}
 emitter: {x=1, y=3, SE, [electron, positron], rate=1/step, fixed=pr}
 

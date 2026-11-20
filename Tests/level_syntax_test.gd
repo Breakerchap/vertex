@@ -78,6 +78,13 @@ func _ready() -> void:
   game._rotate_selected()
   game.begin_run()
   assert(game.get_playback_speed() == 1.0)
+  game.editor_playtest = false
+  key.keycode = KEY_ESCAPE
+  var placed_mirror: Node = game._building_at(Vector2i(0, 0))
+  game._unhandled_input(key)
+  assert(not game.simulating and game._building_at(Vector2i(0, 0)) == placed_mirror, "Escape should retain the player's build.")
+  game.editor_playtest = true
+  game.begin_run()
   for tick in range(roundi(SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP * game.WATCH_STEPS)):
     assert(game.forecast == null, "The player should see the machine run before a forecast starts")
     game.step_simulation(SimulationGrid.TICK)

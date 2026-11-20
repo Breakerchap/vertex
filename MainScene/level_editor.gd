@@ -69,16 +69,12 @@ func _exit_tree() -> void:
   get_tree().auto_accept_quit = true
 
 func _unhandled_key_input(event: InputEvent) -> void:
+  if is_instance_valid(test_game): return
   if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-    if is_instance_valid(test_game):
-      if not test_game.simulating: return
-      test_game.reset_level()
-    else:
-      if game.simulating: _reset_preview()
-      _select_move_tool()
+    if game.simulating: _reset_preview()
+    _select_move_tool()
     get_viewport().set_input_as_handled()
     return
-  if is_instance_valid(test_game): return
   if event is InputEventKey and event.pressed and not event.echo and not game.simulating:
     if event.ctrl_pressed:
       if event.keycode == KEY_S:

@@ -451,10 +451,13 @@ func _unhandled_input(event: InputEvent) -> void:
       KEY_E, KEY_R: _rotate_selected(1)
       KEY_DELETE, KEY_BACKSPACE: _remove_selected()
       KEY_ESCAPE:
-        selected_building = null
-        selected_kind = ""
-        _refresh_ui()
-        queue_redraw()
+        if simulating:
+          stop_to_build()
+        else:
+          selected_building = null
+          selected_kind = ""
+          _refresh_ui()
+          queue_redraw()
     return
   _handle_board_input(event)
 

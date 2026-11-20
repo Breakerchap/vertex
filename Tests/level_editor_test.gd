@@ -144,6 +144,16 @@ func _ready() -> void:
   editor.test_game.selected_building = mirror
   editor.test_game._rotate_selected()
   assert(mirror.orientation == 3, "A building can override the level rotation mode.")
+  editor.test_game._place_building({"kind": "wall", "x": 0, "y": 4}, true)
+  var placed: Node = editor.test_game._building_at(Vector2i(0, 4))
+  editor.test_game.begin_run()
+  var playtest_escape := InputEventKey.new()
+  playtest_escape.pressed = true
+  playtest_escape.keycode = KEY_ESCAPE
+  editor._unhandled_key_input(playtest_escape)
+  editor.test_game._unhandled_input(playtest_escape)
+  assert(not editor.test_game.simulating and editor.test_game._building_at(Vector2i(0, 4)) == placed)
+  assert(mirror.orientation == 3, "Escape should retain the playtest build and rotation.")
   editor._end_playtest()
   editor._select_at(Vector2i(3, 2))
   editor._move_block(Vector2i(3, 2), Vector2i(-1, 2))
