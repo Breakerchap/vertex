@@ -225,7 +225,69 @@ func _mass_and_split() -> void:
   _particle("up_b", Vector2.RIGHT, Vector2.LEFT)
   sim.step_simulation()
   var proton := sim._particles()[0]
-  _check(proton.level_particle_name() == "proton" and proton.held_by == null and proton.direction == Vector2.LEFT and is_equal_approx(proton.mass * proton.speed, 3.0), "A proton made in a holder should leave with the incoming momentum.")
+  _check(proton.level_particle_name() == "proton" and proton.held_by == null and proton.direction == Vector2.LEFT and is_equal_approx(proton.speed, 0.5), "A proton made in a holder should leave in the incoming direction at its mass-based speed.")
+
+func _muons_and_mass_speeds() -> void:
+  var expected := {"photon": [0.0, 2.0], "neutrino": [0.0, 2.0], "electron": [1.0, 1.0],
+    "positron": [1.0, 1.0], "muon": [2.0, 1.0], "anti_muon": [2.0, 1.0],
+    "up_r": [2.0, 1.0], "pion_zero": [3.0, 1.0], "proton": [4.0, 0.5]}
+  _new_board()
+  for name in expected:
+    var particle := _particle(name, Vector2(20, 20))
+    _check(particle.mass == expected[name][0] and particle.speed == expected[name][1], name + " should use its mass-based speed.")
+    particle.queue_free()
+  var reactions := [
+    ["muon", "anti_muon", ["photon", "photon", "photon", "photon"]],
+    ["muon", "positron", ["electron", "photon", "photon"]],
+    ["anti_muon", "electron", ["photon", "photon", "positron"]],
+    ["muon", "electron", ["electron", "electron", "neutrino", "neutrino"]],
+    ["anti_muon", "positron", ["neutrino", "neutrino", "positron", "positron"]],
+  ]
+  for reaction in reactions:
+    _new_board()
+    _particle(reaction[0], Vector2.LEFT)
+    _particle(reaction[1], Vector2.RIGHT, Vector2.LEFT)
+    sim.step_simulation()
+    var names: Array[String] = []
+    for particle in sim._particles():
+      names.append(particle.level_particle_name())
+      _check(particle.speed == particle.mass_speed(), "Reaction products should use their mass-based speed.")
+    names.sort()
+    _check(names == reaction[2], "Incorrect products for %s + %s: %s" % [reaction[0], reaction[1], names])
+    sim.step_simulation(0.1)
+    _check(sim._particles().size() == reaction[2].size(), "Reaction products should separate without immediately colliding.")
+
+func _neutrinos_and_reaction_directions() -> void:
+  _new_board()
+  var neutrino := _particle("neutrino", Vector2.LEFT * 2.0)
+  var other := _particle("electron", Vector2.LEFT, Vector2.LEFT)
+  _device("gate", Vector2.ZERO)
+  var holder = _device("holder", Vector2.RIGHT)
+  sim.step_simulation(2.0)
+  _check(_at(neutrino, Vector2.RIGHT * 2.0) and not neutrino.is_queued_for_deletion(), "Neutrinos should pass through particles, gates, and holders at full speed.")
+  _check(not other.is_queued_for_deletion() and holder.held_particle == null, "Neutrinos should not affect particles or devices.")
+  _new_board()
+  _device("pusher", Vector2.ZERO)
+  neutrino = _particle("neutrino", Vector2.LEFT)
+  sim.step_simulation()
+  _check(_at(neutrino, Vector2.RIGHT), "Neutrinos should not be pushed by devices.")
+  _new_board()
+  var a := _particle("muon", Vector2.LEFT)
+  var b := _particle("positron", Vector2.RIGHT, Vector2.LEFT)
+  var contact := {"at": Vector2.ZERO, "at_a": Vector2.LEFT, "at_b": Vector2.RIGHT,
+    "velocity_a": Vector2.RIGHT, "velocity_b": Vector2.LEFT}
+  sim._muon_reaction(a, b, contact)
+  var first: Array[Vector2] = []
+  for product in sim._particles(): first.append(product.direction)
+  _new_board()
+  a = _particle("muon", Vector2.LEFT)
+  b = _particle("positron", Vector2.RIGHT, Vector2.LEFT)
+  contact.velocity_a = Vector2.RIGHT + Vector2.DOWN
+  contact.velocity_b = Vector2.LEFT + Vector2.DOWN
+  sim._muon_reaction(a, b, contact)
+  var second: Array[Vector2] = []
+  for product in sim._particles(): second.append(product.direction)
+  _check(first != second, "Product headings should change when incoming momentum changes even with the same relative velocity.")
 
 func _run() -> void:
   _new_board()
@@ -247,6 +309,8 @@ func _run() -> void:
   _rails_and_forecast()
   _reactions()
   _mass_and_split()
+  _muons_and_mass_speeds()
+  _neutrinos_and_reaction_directions()
   if is_instance_valid(sim): sim.free()
   if failures == 0: print("Grid mechanics checks passed")
   quit(int(failures > 0))

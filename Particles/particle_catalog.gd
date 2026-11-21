@@ -3,6 +3,7 @@ extends RefCounted
 const ELECTRON = preload("res://Particles/Electron/electron.tscn")
 const QUARK = preload("res://Particles/Quark/quark.tscn")
 const PHOTON = preload("res://Particles/Photon/photon.tscn")
+const LEPTON = preload("res://Particles/Lepton/lepton.tscn")
 const HADRON = preload("res://Particles/Hadron/hadron.tscn")
 const PHOTON_ART = preload("res://Particles/Photon/photon.gd")
 const QUARK_ART = preload("res://Particles/Quark/quark.gd")
@@ -11,6 +12,9 @@ const HADRON_ART = preload("res://Particles/Hadron/hadron.gd")
 const TYPES := {
   "electron": [Particle.Flavour.ELECTRON, false, Particle.ColourCharge.NONE, ""],
   "positron": [Particle.Flavour.ELECTRON, true, Particle.ColourCharge.NONE, ""],
+  "muon": [Particle.Flavour.MUON, false, Particle.ColourCharge.NONE, ""],
+  "anti_muon": [Particle.Flavour.MUON, true, Particle.ColourCharge.NONE, ""],
+  "neutrino": [Particle.Flavour.NEUTRINO, false, Particle.ColourCharge.NONE, ""],
   "photon": [Particle.Flavour.PHOTON, false, Particle.ColourCharge.NONE, ""],
   "up_r": [Particle.Flavour.UP, false, Particle.ColourCharge.RED, "up"],
   "up_g": [Particle.Flavour.UP, false, Particle.ColourCharge.GREEN, "up"],
@@ -74,12 +78,14 @@ static func instantiate(flavour: Particle.Flavour, anti := false, colour := Part
     Particle.Flavour.UP, Particle.Flavour.DOWN: scene = QUARK
     Particle.Flavour.ELECTRON: scene = ELECTRON
     Particle.Flavour.PHOTON: scene = PHOTON
+    Particle.Flavour.MUON, Particle.Flavour.NEUTRINO: scene = LEPTON
     _: scene = HADRON
   var particle := scene.instantiate() as Particle
   particle.flavour = flavour
   if particle.is_quark():
     particle.colour = colour if colour != Particle.ColourCharge.NONE else Particle.ColourCharge.RED
   particle.isAnti = anti
+  particle.speed = particle.mass_speed()
   return particle
 
 static func texture_for(particle: String) -> Texture2D:
@@ -88,5 +94,7 @@ static func texture_for(particle: String) -> Texture2D:
     Particle.Flavour.ELECTRON:
       return preload("res://Particles/Electron/positron.png") if type[1] else preload("res://Particles/Electron/electron.png")
     Particle.Flavour.PHOTON: return PHOTON_ART.TEXTURE
+    Particle.Flavour.NEUTRINO: return preload("res://neutrino.png")
+    Particle.Flavour.MUON: return preload("res://anti_muon.png") if type[1] else preload("res://muon.png")
     Particle.Flavour.UP, Particle.Flavour.DOWN: return QUARK_ART.SPRITES[type[0]][type[2]]
     _: return HADRON_ART.SPRITES[type[0]]

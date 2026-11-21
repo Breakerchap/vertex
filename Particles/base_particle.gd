@@ -2,7 +2,7 @@ class_name Particle
 extends Node2D
 
 enum ColourCharge { NONE, RED, GREEN, BLUE, ANTIRED, ANTIGREEN, ANTIBLUE }
-enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS }
+enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO }
 
 const COLOUR_TINTS := {
   ColourCharge.RED: Color(1.0, 0.35, 0.35),
@@ -27,10 +27,11 @@ var separating_from: Array[Particle] = []
 
 var mass: float:
   get:
-    if flavour == Flavour.PHOTON: return 1.0
-    if flavour == Flavour.ELECTRON: return 2.0
-    if is_quark(): return 3.0
-    if is_pion(): return 4.0
+    if flavour in [Flavour.PHOTON, Flavour.NEUTRINO]: return 0.0
+    if flavour == Flavour.ELECTRON: return 1.0
+    if is_quark() or flavour == Flavour.MUON: return 2.0
+    if is_pion(): return 3.0
+    if flavour in [Flavour.PROTON, Flavour.NEUTRON, Flavour.DELTA_MINUS, Flavour.DELTA_PLUS]: return 4.0
     return 5.0
 
 # The node stays at a cell centre. The sprite and hitbox travel together.
@@ -109,6 +110,11 @@ func world_collision_radius() -> float:
   var shape := $Area2D/CollisionShape2D.shape as CircleShape2D
   return shape.radius * absf(global_scale.x)
 
+func mass_speed() -> float:
+  if mass == 0.0: return 2.0
+  if mass >= 4.0: return 0.5
+  return 1.0
+
 func is_quark() -> bool:
   return flavour == Flavour.UP or flavour == Flavour.DOWN
 
@@ -122,6 +128,8 @@ func is_small() -> bool:
 func level_particle_name() -> String:
   match flavour:
     Flavour.ELECTRON: return "positron" if isAnti else "electron"
+    Flavour.MUON: return "anti_muon" if isAnti else "muon"
+    Flavour.NEUTRINO: return "neutrino"
     Flavour.PHOTON: return "photon"
     Flavour.UP, Flavour.DOWN:
       var name := "up" if flavour == Flavour.UP else "down"
