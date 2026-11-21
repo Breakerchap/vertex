@@ -30,7 +30,7 @@ static func find_dimensions(text: String) -> RegExMatch:
 static func find_blocks(text: String) -> Array[RegExMatch]:
   var blocks := RegEx.new()
   var names: Array = CATALOG.SCENES.keys()
-  names.append_array(["goal", "inventory", "magnetic_field"])
+  names.append_array(["goal", "inventory", "magnetic_field", "mirror"])
   blocks.compile("(?is)\\b(" + "|".join(names) + ")\\s*:\\s*\\{([^}]*)\\}[ \\t]*;?")
   return blocks.search_all(_without_metadata(text))
 
@@ -88,7 +88,10 @@ static func parse(source: String) -> Dictionary:
 
 static func building_kind(name: String) -> String:
   var kind := name.to_lower()
-  return "magnet" if kind == "magnetic_field" else kind
+  match kind:
+    "magnetic_field": return "magnet"
+    "mirror": return "reflector"
+  return kind
 
 static func _parse_goal(body: String) -> Dictionary:
   var goal := {}

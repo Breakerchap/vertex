@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://gott8cc41pdo"
-path="res://.godot/imported/mirror.png-573ecf4f85c4c53104459fb669810600.ctex"
+uid="uid://dig8kmecm7uyl"
+path="res://.godot/imported/anti_neutrino.png-3f07202c04ece9cdff1bcfb6eeb93c9c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Buildings/Mirror/mirror.png"
-dest_files=["res://.godot/imported/mirror.png-573ecf4f85c4c53104459fb669810600.ctex"]
+source_file="res://anti_neutrino.png"
+dest_files=["res://.godot/imported/anti_neutrino.png-3f07202c04ece9cdff1bcfb6eeb93c9c.ctex"]
 
 [params]
 

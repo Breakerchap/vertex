@@ -2,7 +2,7 @@ class_name Particle
 extends Node2D
 
 enum ColourCharge { NONE, RED, GREEN, BLUE, ANTIRED, ANTIGREEN, ANTIBLUE }
-enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO }
+enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO, NUCLEUS }
 
 const COLOUR_TINTS := {
   ColourCharge.RED: Color(1.0, 0.35, 0.35),
@@ -17,9 +17,12 @@ var colour: ColourCharge
 ## Grid cells travelled per grid tick.
 @export var speed: float = 1.0
 @export var textures: Array[Texture2D]
+## Bounces and perpendicular reaction products can travel between grid headings.
+var free_flight := false
+var flight_cell := Vector2.ZERO
 @export var direction := Vector2.RIGHT:
   set(value):
-    direction = SimulationGrid.heading(value)
+    direction = value.normalized() if free_flight else SimulationGrid.heading(value)
 var size := 1.0
 ## Original quarks, stored as (flavour, colour).
 var constituents: Array[Vector2i] = []
@@ -69,7 +72,10 @@ func _ready() -> void:
         Flavour.NEUTRON: "n", Flavour.DELTA_MINUS: "Δ⁻", Flavour.DELTA_PLUS: "Δ⁺",
       }.get(flavour, "")
   $Area2D/CollisionShape2D.shape = shape
-  global_position = SimulationGrid.center(global_position)
+  if free_flight:
+    flight_cell = SimulationGrid.center(global_position)
+  else:
+    global_position = SimulationGrid.center(global_position)
   update_motion_offset()
 
 static func texture_is_blank(texture: Texture2D) -> bool:
@@ -111,7 +117,7 @@ func world_collision_radius() -> float:
   return shape.radius * absf(global_scale.x)
 
 func mass_speed() -> float:
-  if mass == 0.0: return 2.0
+  if mass == 0.0: return 1.5
   if mass >= 4.0: return 0.5
   return 1.0
 
@@ -121,15 +127,15 @@ func is_quark() -> bool:
 func is_pion() -> bool:
   return flavour in [Flavour.PION_PLUS, Flavour.PION_MINUS, Flavour.PION_ZERO]
 
-func is_small() -> bool:
-  return flavour in [Flavour.ELECTRON, Flavour.PHOTON]
+func passes_glass() -> bool:
+  return flavour in [Flavour.ELECTRON, Flavour.MUON, Flavour.NEUTRINO, Flavour.PHOTON]
 
 ## Name used by level goals and detectors.
 func level_particle_name() -> String:
   match flavour:
     Flavour.ELECTRON: return "positron" if isAnti else "electron"
     Flavour.MUON: return "anti_muon" if isAnti else "muon"
-    Flavour.NEUTRINO: return "neutrino"
+    Flavour.NEUTRINO: return "anti_neutrino" if isAnti else "neutrino"
     Flavour.PHOTON: return "photon"
     Flavour.UP, Flavour.DOWN:
       var name := "up" if flavour == Flavour.UP else "down"
@@ -145,4 +151,5 @@ func level_particle_name() -> String:
     Flavour.NEUTRON: return "neutron"
     Flavour.DELTA_MINUS: return "delta_minus"
     Flavour.DELTA_PLUS: return "delta_plus"
+    Flavour.NUCLEUS: return "nucleus"
   return "unknown"

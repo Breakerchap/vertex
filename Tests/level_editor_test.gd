@@ -53,10 +53,10 @@ func _ready() -> void:
   assert(editor.game._building_at(Vector2i(3, 2)) != null, "Editor redo must reapply a move")
   assert(editor.source.text.contains("# preserve this 99 x 99 comment"))
   assert(editor.source.text.contains("[(electron OR up) AND up_r]"))
-  editor.palette.buttons.mirror.pressed.emit()
+  editor.palette.buttons.reflector.pressed.emit()
   editor._board_click(Vector2i(4, 4), MOUSE_BUTTON_LEFT)
   assert(not PARSER.parse(editor.source.text).has("error"))
-  assert(editor.source.text.contains("mirror: {x=4, y=4}"))
+  assert(editor.source.text.contains("reflector: {x=4, y=4}"))
   var key := InputEventKey.new()
   key.pressed = true
   key.keycode = KEY_Q
@@ -130,7 +130,9 @@ func _ready() -> void:
   editor._apply_settings()
   assert(editor.parsed.rotation_steps == 4, "Player rotation mode must persist in level source.")
   editor._place_editor_kind("emitter", Vector2i(3, 2))
-  editor._place_editor_kind("mirror", Vector2i(4, 2))
+  assert(editor.visual_fields.particles.tokens.is_empty(), "A new emitter should have no particles in its configured sequence.")
+  assert(editor.selected_building.get_child(-1).particle_names.is_empty(), "A new emitter should have an empty preview.")
+  editor._place_editor_kind("reflector", Vector2i(4, 2))
   editor.visual_fields.rotation.select(editor.visual_fields.rotation.get_item_index(8))
   editor.visual_fields.rotation.item_selected.emit(editor.visual_fields.rotation.selected)
   await get_tree().process_frame
@@ -147,6 +149,9 @@ func _ready() -> void:
   editor.test_game._place_building({"kind": "wall", "x": 0, "y": 4}, true)
   var placed: Node = editor.test_game._building_at(Vector2i(0, 4))
   editor.test_game.begin_run()
+  editor.test_game.step_simulation(SimulationGrid.TICK)
+  var emitted: Array[Particle] = editor.test_game._particles()
+  assert(emitted.size() == 1 and emitted[0].level_particle_name() == "electron", "An empty emitter should emit electrons by default.")
   var playtest_escape := InputEventKey.new()
   playtest_escape.pressed = true
   playtest_escape.keycode = KEY_ESCAPE

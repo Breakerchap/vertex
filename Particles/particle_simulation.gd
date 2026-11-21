@@ -8,6 +8,7 @@ signal particle_event(kind: String, at: Vector2)
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const RAILS = preload("res://Buildings/GridDevices/rail_network.gd")
 const EPSILON := 0.000001
+const QUARK_COLOURS := [Particle.ColourCharge.RED, Particle.ColourCharge.GREEN, Particle.ColourCharge.BLUE]
 
 @export var running := true
 @export_range(0.25, 4.0, 0.25) var simulation_speed := 1.0
@@ -70,8 +71,7 @@ func step_simulation(steps: float = 1.0) -> void:
 
 func _simulate_tick(time: float) -> void:
   var buildings := _active_descendants("grid_buildings")
-  var obstacles := _active_descendants("particle_mirrors")
-  obstacles.append_array(_active_descendants("particle_blockers"))
+  var obstacles := _active_descendants("particle_blockers")
   var tiles := {}
   var rails: Array[Node] = []
   var riders: Array[Node] = []
@@ -95,7 +95,9 @@ func _simulate_tick(time: float) -> void:
         particle.separating_from.remove_at(i)
   for particle in particles:
     paths[particle] = _advance_particle(particle, time, obstacles, tiles, terminal_hits)
-  _resolve_particle_contacts(particles, paths, terminal_hits)
+  var rebounds := _resolve_particle_contacts(particles, paths, terminal_hits)
+  for particle in rebounds:
+    _advance_particle(particle, time - float(rebounds[particle]), obstacles, tiles, terminal_hits)
   for particle in particles:
     if particle.is_queued_for_deletion(): continue
     if terminal_hits.has(particle):
@@ -118,7 +120,8 @@ func _simulate_tick(time: float) -> void:
 
 func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], tiles: Dictionary, terminal_hits: Dictionary) -> Array[Dictionary]:
   var path: Array[Dictionary] = []
-  particle.global_position = SimulationGrid.center(particle.global_position)
+  if not particle.free_flight:
+    particle.global_position = SimulationGrid.center(particle.global_position)
   var used := 0.0
   while time - used > EPSILON:
     var from := particle.motion_position()
@@ -138,7 +141,7 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
     var in_field := not particle.magnetic_exit.is_zero_approx()
     var destination := SimulationGrid.center(particle.global_position + particle.direction * SimulationGrid.CELL)
     var segment_end := 1.0
-    if not in_field and particle.charge != 0 and particle.progress <= 0.5 + EPSILON:
+    if not particle.free_flight and not in_field and particle.charge != 0 and particle.progress <= 0.5 + EPSILON:
       var field = tiles.get(destination)
       if field != null and field.is_in_group("magnetic_fields"):
         if particle.progress >= 0.5 - EPSILON:
@@ -152,6 +155,12 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
     var travel := particle.travel_vector()
     var progress_per_tick := pace * SimulationGrid.CELL / travel.length()
     var duration := minf(time - used, (segment_end - particle.progress) / progress_per_tick)
+    var flight_edges := Vector2.INF
+    var flight_boundary := INF
+    if particle.free_flight:
+      flight_edges = _flight_edges(particle, particle.direction * (pace * SimulationGrid.CELL))
+      flight_boundary = minf(flight_edges.x, flight_edges.y)
+      duration = minf(time - used, flight_boundary)
     var motion := travel * (progress_per_tick * duration)
     var hit := _building_impact(particle, from, motion, obstacles)
     if not hit.is_empty():
@@ -161,16 +170,28 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
       if not hit.reflective:
         terminal_hits[particle] = hit
         return path
-      particle.global_position = SimulationGrid.center(point)
-      particle.direction = particle.direction.bounce(hit.normal)
-      particle.progress = 0.0
-      particle.source_building = null
-      particle.passed_gates.clear()
+      _reflect_particle(particle, point, hit, particle.direction)
       used += hit_time
       continue
 
     path.append({"from": from, "to": from + motion, "start": used, "end": used + duration})
     used += duration
+    if particle.free_flight:
+      particle.global_position = from + motion
+      if duration >= flight_boundary:
+        var crossed := Vector2(float(duration >= flight_edges.x), float(duration >= flight_edges.y))
+        particle.flight_cell = SimulationGrid.center(particle.flight_cell + crossed * particle.direction.sign() * SimulationGrid.CELL)
+        particle.source_building = null
+        # Leaving a cell can happen while an off-grid particle still overlaps its gate.
+        for i in range(particle.passed_gates.size() - 1, -1, -1):
+          var gate := particle.passed_gates[i] as Node2D
+          if not is_instance_valid(gate) or particle.global_position.distance_to(gate.global_position) > SimulationGrid.CELL + particle.world_collision_radius():
+            particle.passed_gates.remove_at(i)
+        var terminal_hit := _enter_tile(particle, tiles, obstacles)
+        if not terminal_hit.is_empty():
+          terminal_hits[particle] = terminal_hit
+          return path
+      continue
     particle.progress += progress_per_tick * duration
     if in_field and particle.progress >= 1.0 - EPSILON:
       particle.direction = particle.magnetic_exit
@@ -191,7 +212,17 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
   particle.update_motion_offset()
   return path
 
-func _building_impact(particle: Particle, from: Vector2, motion: Vector2, obstacles: Array[Node], allow_reflection := true) -> Dictionary:
+func _flight_edges(particle: Particle, velocity: Vector2) -> Vector2:
+  var edge := particle.flight_cell + velocity.sign() * (SimulationGrid.CELL * 0.5)
+  var distance := edge - particle.global_position
+  var across_x := INF if absf(velocity.x) <= EPSILON else maxf(0.0, distance.x / velocity.x)
+  var across_y := INF if absf(velocity.y) <= EPSILON else maxf(0.0, distance.y / velocity.y)
+  return Vector2(across_x, across_y)
+
+func _is_grid_heading(travel: Vector2) -> bool:
+  return travel.normalized().is_equal_approx(SimulationGrid.heading(travel).normalized())
+
+func _building_impact(particle: Particle, from: Vector2, motion: Vector2, obstacles: Array[Node]) -> Dictionary:
   if particle.flavour == Particle.Flavour.NEUTRINO: return {}
   while true:
     var hit := {}
@@ -201,8 +232,6 @@ func _building_impact(particle: Particle, from: Vector2, motion: Vector2, obstac
       var candidate: Dictionary
       if obstacle.has_method("sweep_for"):
         candidate = obstacle.sweep_for(particle, from, motion)
-      elif particle.flavour == Particle.Flavour.PHOTON and obstacle.has_method("sweep_photon"):
-        candidate = obstacle.sweep_photon(from, motion, particle.world_collision_radius())
       else:
         candidate = obstacle.sweep(from, motion, particle.world_collision_radius())
       if not candidate.is_empty() and (hit.is_empty() or candidate.fraction < hit.fraction):
@@ -212,14 +241,17 @@ func _building_impact(particle: Particle, from: Vector2, motion: Vector2, obstac
     var at := from + motion * float(hit.fraction)
     if target.get_meta("device", "") == "gate":
       if target.hit_gate(particle, from, motion): continue
-    if allow_reflection and particle.flavour == Particle.Flavour.PHOTON and hit.reflective:
-      particle_event.emit("reflection", at)
-      return hit
-    hit.reflective = false
-    hit.at = at
     hit.target = target
+    hit.at = at
+    if hit.reflective:
+      particle_event.emit("reflection", at)
     return hit
   return {}
+
+func _reflect_particle(particle: Particle, at: Vector2, hit: Dictionary, incoming: Vector2) -> void:
+  _redirect_particle(particle, at, incoming.bounce(hit.normal))
+  particle.source_building = hit.target
+  particle.passed_gates.clear()
 
 func _absorb_at_building(particle: Particle, hit: Dictionary) -> void:
   if hit.target.has_method("accepts") and hit.target.accepts(particle):
@@ -230,40 +262,45 @@ func _absorb_at_building(particle: Particle, hit: Dictionary) -> void:
   particle.queue_free()
 
 func _enter_tile(particle: Particle, tiles: Dictionary, obstacles: Array[Node], pushed := false) -> Dictionary:
-  if particle.flavour == Particle.Flavour.NEUTRINO: return {}
-  var tile = tiles.get(particle.global_position)
+  var at := particle.flight_cell if particle.free_flight else particle.global_position
+  var tile = tiles.get(at)
   if tile == null: return {}
+  var device: String = tile.get_meta("device", "")
+  if particle.flavour == Particle.Flavour.NEUTRINO and device not in ["glass", "holder"]: return {}
   if tile.is_in_group("magnetic_fields") and particle.charge != 0:
-    particle.direction = tile.exit_heading(particle.direction, particle.charge)
+    particle.direction = tile.exit_heading(particle.direction, particle.charge, particle.free_flight)
     particle_event.emit("field", particle.global_position)
-  match tile.get_meta("device", ""):
+  match device:
     "glass":
-      if particle.is_small() and particle.speed > EPSILON:
+      if particle.passes_glass() and particle.speed > EPSILON:
         particle.glass_wait = 1.0 / particle.speed
     "holder":
       if not is_instance_valid(tile.held_particle) or tile.held_particle.is_queued_for_deletion():
         tile.held_particle = particle
         particle.held_by = tile
+        particle.global_position = tile.global_position
     "pusher":
       if pushed: return {}
       var shift: Vector2 = tile.next_push()
-      var hit := _building_impact(particle, particle.global_position, shift, obstacles, false)
-      if not hit.is_empty(): return hit
-      particle.global_position = SimulationGrid.center(particle.global_position + shift)
+      var hit := _building_impact(particle, particle.global_position, shift, obstacles)
+      if not hit.is_empty():
+        if not hit.reflective: return hit
+        _reflect_particle(particle, hit.at, hit, shift)
+        return {}
+      particle.global_position += shift
+      if particle.free_flight:
+        particle.flight_cell = SimulationGrid.center(particle.flight_cell + shift)
       return _enter_tile(particle, tiles, obstacles, true)
   return {}
 
-func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, terminal_hits: Dictionary) -> void:
+func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, terminal_hits: Dictionary) -> Dictionary:
   var contacts: Array[Dictionary] = []
   for i in range(particles.size()):
     var a := particles[i]
     if a.is_queued_for_deletion(): continue
     for j in range(i + 1, particles.size()):
       var b := particles[j]
-      if a.flavour == Particle.Flavour.NEUTRINO or b.flavour == Particle.Flavour.NEUTRINO: continue
-      if b in a.separating_from: continue
-      if a.flavour == Particle.Flavour.ELECTRON and b.flavour == Particle.Flavour.ELECTRON and a.isAnti == b.isAnti:
-        continue
+      if b in a.separating_from or _passes_through(a, b): continue
       var contact := _first_contact(a, b, paths[a], paths[b])
       if not contact.is_empty():
         contact.a = a
@@ -276,10 +313,10 @@ func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, t
     var b: Particle = contact.b
     if a.is_queued_for_deletion() or b.is_queued_for_deletion() or redirected.has(a) or redirected.has(b):
       continue
-    if _muon_reaction(a, b, contact):
+    if _neutrino_reaction(a, b, contact, redirected, terminal_hits) or _muon_reaction(a, b, contact):
       continue
-    if a.flavour == b.flavour and a.isAnti != b.isAnti:
-      _annihilate(a, b, contact.at, contact.velocity_a - contact.velocity_b)
+    if a.flavour == Particle.Flavour.ELECTRON and b.flavour == Particle.Flavour.ELECTRON:
+      _perpendicular_reaction(a, b, contact, Particle.Flavour.PHOTON)
       continue
     var photon := a if a.flavour == Particle.Flavour.PHOTON else b
     var other := b if photon == a else a
@@ -303,22 +340,27 @@ func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, t
       continue
     if a.mass == b.mass:
       _bounce(a, b, contact)
-      redirected[a] = true
-      redirected[b] = true
+      redirected[a] = contact.time
+      redirected[b] = contact.time
       terminal_hits.erase(a)
       terminal_hits.erase(b)
       continue
 
     var lighter := a if a.mass < b.mass else b
     var heavier := b if lighter == a else a
-    if is_instance_valid(heavier.held_by):
-      var velocity: Vector2 = contact.velocity_a if lighter == a else contact.velocity_b
-      _redirect_particle(heavier, heavier.global_position, velocity * lighter.mass / heavier.mass)
-      redirected[heavier] = true
-      terminal_hits.erase(heavier)
+    _release_holder(heavier)
     _release_holder(lighter)
     lighter.queue_free()
     particle_event.emit("absorption", contact.at)
+  return redirected
+
+func _passes_through(a: Particle, b: Particle) -> bool:
+  if a.is_quark() and b.is_quark(): return a.colour == b.colour
+  if a.flavour == Particle.Flavour.PHOTON:
+    return b.flavour in [Particle.Flavour.PHOTON, Particle.Flavour.NEUTRINO]
+  if b.flavour == Particle.Flavour.PHOTON:
+    return a.flavour == Particle.Flavour.NEUTRINO
+  return a.flavour == Particle.Flavour.ELECTRON and b.flavour == Particle.Flavour.ELECTRON and a.isAnti == b.isAnti
 
 func _can_bind(a: Particle, b: Particle) -> bool:
   if b.is_quark() and a.is_pion(): return _can_bind(b, a)
@@ -392,9 +434,11 @@ func _release_holder(particle: Particle) -> void:
 
 func _redirect_particle(particle: Particle, at: Vector2, velocity: Vector2) -> void:
   _release_holder(particle)
-  particle.global_position = SimulationGrid.center(at)
+  var cell := SimulationGrid.center(at)
+  particle.free_flight = not at.is_equal_approx(cell) or not _is_grid_heading(velocity)
+  particle.global_position = at if particle.free_flight else cell
+  if particle.free_flight: particle.flight_cell = cell
   particle.direction = velocity
-  particle.speed = particle.mass_speed()
   particle.progress = 0.0
   particle.magnetic_exit = Vector2.ZERO
   particle.glass_wait = 0.0
@@ -409,18 +453,18 @@ func _bounce(a: Particle, b: Particle, contact: Dictionary) -> void:
   var velocity_b: Vector2 = contact.velocity_b
   var relative := velocity_a - velocity_b
   var separation: Vector2 = contact.at_a - contact.at_b
-  if a.is_quark() and b.is_quark() and a.colour == b.colour:
-    var combined := velocity_a + velocity_b
-    var perpendicular := (relative if combined.is_zero_approx() else combined).orthogonal().normalized()
-    if perpendicular.dot(separation) < 0.0: perpendicular = -perpendicular
-    var rebound_speed := (velocity_a.length() + velocity_b.length()) * 0.5
-    velocity_a = perpendicular * rebound_speed
-    velocity_b = -velocity_a
+  var normal := (relative if separation.is_zero_approx() else separation).normalized()
+  # In an elastic equal-mass collision, only the normal components are exchanged.
+  var exchange := relative.dot(normal) * normal
+  velocity_a -= exchange
+  velocity_b += exchange
+  if a.mass == 0.0:
+    # Massless particles keep their fixed travel speed.
+    if velocity_a.is_zero_approx(): velocity_a = normal
+    if velocity_b.is_zero_approx(): velocity_b = -normal
   else:
-    var normal := (relative if separation.is_zero_approx() else separation).normalized()
-    var exchange := relative.dot(normal) * normal
-    velocity_a -= exchange
-    velocity_b += exchange
+    a.speed = velocity_a.length()
+    b.speed = velocity_b.length()
   _redirect_particle(a, contact.at_a, velocity_a)
   _redirect_particle(b, contact.at_b, velocity_b)
   _keep_separating(a, b)
@@ -450,22 +494,84 @@ func _bind_quarks(participants: Array[Particle], at: Vector2, momentum: Vector2)
   particle_event.emit("fusion", result.global_position)
 
 func _split_pion(pion: Particle, photon: Particle, at: Vector2, incoming: Vector2) -> void:
-  if is_instance_valid(pion.held_by): at = pion.global_position
-  _release_holder(pion)
-  _release_holder(photon)
+  at = _reaction_site(pion, photon, at)
+  _consume(pion)
+  _consume(photon)
   var axis := (photon.direction if incoming.is_zero_approx() else incoming).orthogonal()
   var quarks: Array[Particle] = []
   for constituent in pion.constituents:
-    var quark := PARTICLES.instantiate(constituent.x, false, constituent.y)
-    quark.direction = axis
+    quarks.append(_spawn_product(constituent.x, false, at, axis, constituent.y))
     axis = -axis
-    quark.position = to_local(SimulationGrid.center(at))
-    add_child(quark)
-    quarks.append(quark)
   _keep_separating(quarks[0], quarks[1])
   particle_event.emit("fusion", at)
-  pion.queue_free()
-  photon.queue_free()
+
+func _neutrino_reaction(a: Particle, b: Particle, contact: Dictionary, redirected: Dictionary, terminal_hits: Dictionary) -> bool:
+  var neutrino := a if a.flavour == Particle.Flavour.NEUTRINO else b
+  if neutrino.flavour != Particle.Flavour.NEUTRINO: return false
+  var other := b if neutrino == a else a
+  if other.flavour == Particle.Flavour.NEUTRINO:
+    if a.isAnti and b.isAnti: return false
+    var product := Particle.Flavour.PHOTON if a.isAnti != b.isAnti else Particle.Flavour.NEUTRINO
+    _perpendicular_reaction(a, b, contact, product, product == Particle.Flavour.NEUTRINO)
+    return true
+
+  var incoming: Vector2 = contact.velocity_a if neutrino == a else contact.velocity_b
+  var outgoing: Vector2 = contact.velocity_b if neutrino == a else contact.velocity_a
+  if other.is_pion() and (not neutrino.isAnti or other.flavour == Particle.Flavour.PION_ZERO):
+    var normal: Vector2 = contact.at_a - contact.at_b if neutrino == a else contact.at_b - contact.at_a
+    if normal.is_zero_approx(): normal = outgoing - incoming
+    normal = normal.normalized()
+    var rebound := incoming - 2.0 * (incoming - outgoing).dot(normal) * normal
+    var at: Vector2 = contact.at_a if neutrino == a else contact.at_b
+    _redirect_particle(neutrino, at, normal if rebound.is_zero_approx() else rebound)
+    _release_holder(other)
+    _keep_separating(neutrino, other)
+    redirected[neutrino] = contact.time
+    terminal_hits.erase(neutrino)
+    particle_event.emit("reflection", contact.at)
+    return true
+
+  var flavour := other.flavour
+  var anti := other.isAnti
+  var colour := other.colour
+  var constituents: Array[Vector2i] = []
+  var extra_lepton := false
+  if neutrino.isAnti:
+    match flavour:
+      Particle.Flavour.ELECTRON: flavour = Particle.Flavour.MUON
+      Particle.Flavour.MUON: flavour = Particle.Flavour.ELECTRON
+      Particle.Flavour.UP, Particle.Flavour.DOWN:
+        colour = QUARK_COLOURS[(QUARK_COLOURS.find(colour) + 1) % QUARK_COLOURS.size()]
+      Particle.Flavour.PION_PLUS, Particle.Flavour.PION_MINUS:
+        var was_positive := flavour == Particle.Flavour.PION_PLUS
+        flavour = Particle.Flavour.PION_MINUS if was_positive else Particle.Flavour.PION_PLUS
+        var quark_flavour := Particle.Flavour.DOWN if was_positive else Particle.Flavour.UP
+        for original in other.constituents:
+          constituents.append(Vector2i(quark_flavour, original.y))
+      _: return false
+  else:
+    match flavour:
+      Particle.Flavour.ELECTRON, Particle.Flavour.MUON: anti = not anti
+      Particle.Flavour.UP: flavour = Particle.Flavour.DOWN
+      Particle.Flavour.DOWN: flavour = Particle.Flavour.UP
+      Particle.Flavour.PROTON: flavour = Particle.Flavour.NEUTRON
+      Particle.Flavour.NEUTRON: flavour = Particle.Flavour.PROTON
+      Particle.Flavour.DELTA_PLUS, Particle.Flavour.DELTA_MINUS:
+        flavour = Particle.Flavour.PROTON if other.flavour == Particle.Flavour.DELTA_PLUS else Particle.Flavour.NEUTRON
+        extra_lepton = true
+      _: return false
+
+  var origin := _reaction_site(neutrino, other, contact.at)
+  _consume(neutrino)
+  _consume(other)
+  if incoming.is_zero_approx(): incoming = neutrino.direction
+  if outgoing.is_zero_approx(): outgoing = incoming
+  var result := _spawn_product(flavour, anti, origin, outgoing, colour, constituents)
+  if extra_lepton:
+    var lepton := _spawn_product(Particle.Flavour.ELECTRON, other.flavour == Particle.Flavour.DELTA_PLUS, origin, incoming.orthogonal())
+    _keep_separating(result, lepton)
+  particle_event.emit("fusion", origin)
+  return true
 
 func _muon_reaction(a: Particle, b: Particle, contact: Dictionary) -> bool:
   var muon := a if a.flavour == Particle.Flavour.MUON else b
@@ -483,9 +589,7 @@ func _muon_reaction(a: Particle, b: Particle, contact: Dictionary) -> bool:
         [Particle.Flavour.NEUTRINO, false], [Particle.Flavour.NEUTRINO, false]]
   else:
     return false
-  _release_holder(a)
-  _release_holder(b)
-  var at: Vector2 = contact.at
+  var at := _reaction_site(a, b, contact.at)
   var velocity_a: Vector2 = contact.velocity_a
   var velocity_b: Vector2 = contact.velocity_b
   var momentum := (a.mass * velocity_a + b.mass * velocity_b) / (a.mass + b.mass)
@@ -498,33 +602,47 @@ func _muon_reaction(a: Particle, b: Particle, contact: Dictionary) -> bool:
   var directions := [momentum + relative, momentum - relative, momentum + sideways, momentum - sideways]
   var spawned: Array[Particle] = []
   for i in range(products.size()):
-    var product := PARTICLES.instantiate(products[i][0], products[i][1])
-    product.direction = directions[i] if not directions[i].is_zero_approx() else relative
-    product.position = to_local(SimulationGrid.center(at))
-    add_child(product)
+    var heading: Vector2 = directions[i] if not directions[i].is_zero_approx() else relative
+    var product := _spawn_product(products[i][0], products[i][1], at, heading)
     for previous in spawned: _keep_separating(product, previous)
     spawned.append(product)
   particle_event.emit("annihilation", at)
-  a.queue_free()
-  b.queue_free()
+  _consume(a)
+  _consume(b)
   return true
 
-func _annihilate(a: Particle, b: Particle, at: Vector2, relative: Vector2) -> void:
-  _release_holder(a)
-  _release_holder(b)
+func _perpendicular_reaction(a: Particle, b: Particle, contact: Dictionary, flavour: Particle.Flavour, anti := false) -> void:
+  var at := _reaction_site(a, b, contact.at)
+  var axis: Vector2 = contact.velocity_a + contact.velocity_b
+  if axis.is_zero_approx(): axis = contact.velocity_a - contact.velocity_b
+  if axis.is_zero_approx(): axis = a.direction
+  if axis.is_zero_approx(): axis = Vector2.RIGHT
+  var sideways := axis.orthogonal()
+  _consume(a)
+  _consume(b)
+  var first := _spawn_product(flavour, anti, at, sideways, Particle.ColourCharge.NONE, [], true)
+  var second := _spawn_product(flavour, anti, at, -sideways, Particle.ColourCharge.NONE, [], true)
+  _keep_separating(first, second)
   particle_event.emit("annihilation", at)
-  if relative.is_zero_approx(): relative = a.direction
-  if relative.is_zero_approx(): relative = Vector2.RIGHT
-  var photons: Array[Particle] = []
-  for travel in [relative.orthogonal(), -relative.orthogonal()]:
-    var photon := PARTICLES.instantiate(Particle.Flavour.PHOTON)
-    photon.direction = travel
-    photon.position = to_local(SimulationGrid.center(at))
-    add_child(photon)
-    photons.append(photon)
-  _keep_separating(photons[0], photons[1])
-  a.queue_free()
-  b.queue_free()
+
+func _reaction_site(a: Particle, b: Particle, at: Vector2) -> Vector2:
+  if is_instance_valid(a.held_by): return a.global_position
+  if is_instance_valid(b.held_by): return b.global_position
+  return at
+
+func _consume(particle: Particle) -> void:
+  _release_holder(particle)
+  particle.queue_free()
+
+func _spawn_product(flavour: Particle.Flavour, anti: bool, at: Vector2, heading: Vector2,
+    colour := Particle.ColourCharge.NONE, constituents: Array[Vector2i] = [], exact_heading := false) -> Particle:
+  var product := PARTICLES.instantiate(flavour, anti, colour)
+  product.free_flight = exact_heading and not _is_grid_heading(heading)
+  product.direction = heading
+  product.constituents = constituents
+  product.position = to_local(SimulationGrid.center(at))
+  add_child(product)
+  return product
 
 func _active_descendants(group: StringName) -> Array[Node]:
   var result: Array[Node] = []

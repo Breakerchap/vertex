@@ -69,7 +69,7 @@ func sweep_for(particle: Particle, from: Vector2, motion: Vector2) -> Dictionary
       if particle.global_position.is_equal_approx(global_position) or self in particle.passed_gates:
         return {}
     "glass":
-      if particle.is_small():
+      if particle.passes_glass():
         return {}
     "filter":
       if particle.flavour == Particle.Flavour.PHOTON or (particle.is_quark() and particle.colour == FILTER_COLOURS[filter_colour]):
@@ -116,18 +116,15 @@ func _draw() -> void:
       variant = int(not push_up)
       label = "Push ↑" if push_up else "Push ↓"
   var texture: Texture2D = variants[variant]
+  var rect := Rect2(-Vector2.ONE * GRID_SIZE * 0.5, Vector2.ONE * GRID_SIZE)
+  if kind == "edge_wall":
+    draw_set_transform(collision_shape.position, collision_shape.rotation)
+    # The square texture already contains the narrow wall and its transparent padding.
+    draw_texture_rect(texture, rect, false)
+    return
   var path := texture.resource_path
   if not _blank_textures.has(path):
     _blank_textures[path] = texture.get_image().is_invisible()
-  if kind == "edge_wall":
-    var edge_orientation := orientation - orientation % 2
-    var side: Vector2 = SimulationGrid.VECTORS[edge_orientation]
-    draw_set_transform(side * GRID_SIZE * 0.5, edge_orientation * PI / 4.0)
-    var edge := Rect2(Vector2(-GRID_SIZE * 0.04, -GRID_SIZE * 0.5), Vector2(GRID_SIZE * 0.08, GRID_SIZE))
-    draw_texture_rect(texture, edge, false)
-    if _blank_textures[path]: draw_rect(edge, tint)
-    return
-  var rect := Rect2(-Vector2.ONE * GRID_SIZE * 0.5, Vector2.ONE * GRID_SIZE)
   if kind in ["gate", "pusher"]:
     draw_set_transform(Vector2.ZERO, orientation * PI / 4.0)
   draw_texture_rect(texture, rect, false)

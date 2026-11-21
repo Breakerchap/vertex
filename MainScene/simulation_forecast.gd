@@ -40,6 +40,7 @@ func _init(source: ParticleSimulation, buildings: Array[Node], steps: float) -> 
   var particle_copies := {}
   for original in source._particles():
     var copy := PARTICLES.instantiate(original.flavour, original.isAnti, original.colour)
+    copy.free_flight = original.free_flight
     copy.direction = original.direction
     copy.speed = original.speed
     copy.position = shadow.to_local(original.global_position)
@@ -55,6 +56,7 @@ func _init(source: ParticleSimulation, buildings: Array[Node], steps: float) -> 
       if building_copies.has(gate):
         copy.passed_gates.append(building_copies[gate])
     shadow.add_child(copy)
+    copy.flight_cell = original.flight_cell
     particle_copies[original] = copy
   for original in particle_copies:
     for partner in original.separating_from:

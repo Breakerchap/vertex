@@ -1,0 +1,21 @@
+11 x 9;
+
+goal: {electron: 1/step, 2/step, 3/step};
+
+
+wall: {x=5, y=1, fixed=p}
+wall: {x=5, y=2, fixed=p}
+
+wall: {x=5, y=7, fixed=p}
+wall: {x=5, y=5, fixed=p}
+wall: {x=5, y=0, fixed=p}
+
+wall: {x=5, y=6, fixed=p}
+
+wall: {x=5, y=8, fixed=p}
+wall: {x=5, y=3, fixed=p}
+emitter: {x=0, y=1, E, [electron], rate=1/step, fixed=pr}
+emitter: {x=0, y=7, E, [positron], rate=1/step, fixed=pr}
+detector: {x=8, y=8, [photon], fixed=p}
+detector: {x=8, y=0, [photon], fixed=p}
+inventory: {magnet=20};

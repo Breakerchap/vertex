@@ -351,7 +351,7 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
   building.set_meta("from_inventory", from_inventory)
   if entry.kind in CATALOG.FACING_KINDS or entry.kind == "edge_wall":
     var direction := CATALOG.DIRECTIONS.find(entry.get("facing", CATALOG.default_facing(entry.kind)))
-    building.orientation = (direction + 2) % 8 if entry.kind in ["mirror", "pusher"] else direction
+    building.orientation = (direction + 2) % 8 if entry.kind in ["reflector", "pusher"] else direction
   if entry.kind == "magnet":
     building.polarity = -1 if str(entry.get("polarity", "positive")) in CATALOG.NEGATIVE_POLARITIES else 1
   match entry.kind:
@@ -378,8 +378,7 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
     preview.emitter_preview = entry.kind == "emitter"
     building.add_child(preview)
     var names: Array[String] = []
-    names.assign(entry.get("particles", ["photon"] if entry.kind == "detector" else ["electron"]))
-    if names.is_empty() and entry.kind == "emitter": names.append("electron")
+    names.assign(entry.get("particles", ["photon"] if entry.kind == "detector" else []))
     preview.show_particles(names)
   buildings.append(building)
 
@@ -801,7 +800,7 @@ func _snapshot_build() -> Dictionary:
       "emitter":
         entry.facing = CATALOG.DIRECTIONS[building.orientation]
         entry.rate = building.rate
-      "mirror", "pusher":
+      "reflector", "pusher":
         entry.facing = CATALOG.DIRECTIONS[posmod(building.orientation - 2, CATALOG.DIRECTIONS.size())]
       "magnet":
         entry.polarity = "+" if building.polarity > 0 else "-"

@@ -50,13 +50,15 @@ func _movement_and_hitboxes() -> void:
   var anti := _particle("positron", Vector2(0, 5))
   sim.step_simulation()
   _check(slow.direction == Vector2.ONE and slow.global_position == Vector2.ZERO, "The logical position should stay on a tile centre in transit.")
-  _check(_at(slow, Vector2.ONE.normalized() * 0.5) and _at(fast, Vector2(2, 3)) and _at(anti, Vector2(1, 5)), "Fractional, light and normal speed should use cells per step.")
+  _check(_at(slow, Vector2.ONE.normalized() * 0.5) and _at(fast, Vector2(1.5, 3)) and _at(anti, Vector2(1, 5)), "Fractional, light and normal speed should use cells per tick.")
   sim.step_simulation(2.0 * sqrt(2.0) - 1.0)
   _check(_at(slow, Vector2.ONE), "A diagonal should reach the next tile centre after travelling its full length.")
   for name in PARTICLES.TYPES:
     var particle := _particle(name, Vector2(20, 20))
     var art_width := particle.sprite.texture.get_width() * particle.sprite.global_scale.x
     _check(is_equal_approx(particle.world_collision_radius() * 2.0, art_width), name + " collision diameter must match its sprite.")
+    if particle.flavour == Particle.Flavour.NEUTRINO:
+      _check(is_equal_approx(particle.scale.x, 0.16), name + " should be 60% larger.")
     particle.queue_free()
 
 func _devices() -> void:
@@ -85,11 +87,14 @@ func _devices() -> void:
   _check(quark.is_queued_for_deletion() and _at(electron, Vector2.ZERO), "Glass should block quarks and delay small particles at its centre.")
   sim.step_simulation(2)
   _check(_at(electron, Vector2(2, 0)), "Particles should regain speed after leaving glass.")
-  _new_board()
-  _device("glass", Vector2.ZERO)
-  var light := _particle("photon", Vector2.LEFT)
-  sim.step_simulation(1.5)
-  _check(_at(light, Vector2.RIGHT), "Glass should halve light speed too.")
+  for name in ["photon", "electron", "positron", "muon", "anti_muon", "neutrino", "anti_neutrino"]:
+    _new_board()
+    _device("glass", Vector2.ZERO)
+    var particle := _particle(name, Vector2.LEFT)
+    sim.step_simulation(2.0 / particle.speed)
+    _check(not particle.is_queued_for_deletion() and _at(particle, Vector2.ZERO), name + " should pass the glass and wait at its centre.")
+    sim.step_simulation(1.0 / particle.speed)
+    _check(_at(particle, Vector2.RIGHT), name + " should carry on at full speed after passing glass.")
 
   _new_board()
   _device("filter", Vector2.ZERO, {"filter_colour": 2})
@@ -99,14 +104,14 @@ func _devices() -> void:
   _check(_at(good, Vector2.RIGHT) and bad.is_queued_for_deletion(), "Filters should allow only matching quark colours.")
   var blue := _particle("photon", Vector2.LEFT)
   sim.step_simulation()
-  _check(_at(blue, Vector2.RIGHT), "Uncoloured photons should pass through a filter.")
+  _check(_at(blue, Vector2.RIGHT * 0.5), "Uncoloured photons should pass through a filter.")
 
   _new_board()
   _device("edge_wall", Vector2.ZERO)
   var stopped := _particle("photon", Vector2.ZERO)
   var clear := _particle("photon", Vector2.LEFT, Vector2.LEFT)
   sim.step_simulation(0.5)
-  _check(stopped.is_queued_for_deletion() and _at(clear, Vector2.LEFT * 2), "An inter-tile wall should block one edge and leave the cell usable.")
+  _check(stopped.is_queued_for_deletion() and _at(clear, Vector2.LEFT * 1.75), "An inter-tile wall should block one edge and leave the cell usable.")
 
   _new_board()
   var holder = _device("holder", Vector2.ZERO)
@@ -190,15 +195,30 @@ func _reactions() -> void:
 func _mass_and_split() -> void:
   _new_board()
   var a := _particle("up_r", Vector2.LEFT)
-  var b := _particle("down_r", Vector2.UP, Vector2.DOWN)
-  sim.step_simulation()
-  _check(not a.is_queued_for_deletion() and not b.is_queued_for_deletion() and a.direction == -b.direction and a.direction.dot(Vector2.ONE) == 0.0, "Same-colour quarks should leave perpendicular to their combined momentum.")
+  var b := _particle("down_r", Vector2.RIGHT, Vector2.LEFT)
+  sim.step_simulation(2.0)
+  _check(sim._particles().size() == 2 and _at(a, Vector2.RIGHT) and _at(b, Vector2.LEFT), "Same-colour quarks should pass through one another.")
 
   _new_board()
   a = _particle("photon", Vector2.LEFT)
   b = _particle("photon", Vector2.RIGHT, Vector2.LEFT)
   sim.step_simulation()
-  _check(a.direction == Vector2.LEFT and b.direction == Vector2.RIGHT, "Equal-mass particles should bounce.")
+  _check(sim._particles().size() == 2 and _at(a, Vector2.RIGHT * 0.5) and _at(b, Vector2.LEFT * 0.5), "Photons should pass through one another.")
+  _new_board()
+  a = _particle("muon", Vector2.LEFT)
+  b = _particle("muon", Vector2.RIGHT, Vector2.LEFT)
+  sim.step_simulation(2.0)
+  _check(sim._particles().size() == 2 and a.direction == Vector2.LEFT and b.direction == Vector2.RIGHT, "Equal masses with no written interaction should bounce.")
+  _new_board()
+  a = _particle("anti_neutrino", Vector2.LEFT)
+  b = _particle("anti_neutrino", Vector2.RIGHT, Vector2.LEFT)
+  sim.step_simulation()
+  _check(sim._particles().size() == 2 and a.direction == Vector2.LEFT and b.direction == Vector2.RIGHT, "Two antineutrinos should use the equal-mass fallback.")
+  _new_board()
+  a = _particle("nucleus", Vector2.RIGHT, Vector2.LEFT)
+  b = _particle("electron", Vector2.LEFT)
+  sim.step_simulation(2.0)
+  _check(b.is_queued_for_deletion() and _at(a, Vector2.ZERO) and a.direction == Vector2.LEFT, "The lighter particle should be absorbed while the nucleus continues on course.")
   for name in ["electron", "positron"]:
     _new_board()
     a = _particle(name, Vector2.LEFT)
@@ -227,10 +247,28 @@ func _mass_and_split() -> void:
   var proton := sim._particles()[0]
   _check(proton.level_particle_name() == "proton" and proton.held_by == null and proton.direction == Vector2.LEFT and is_equal_approx(proton.speed, 0.5), "A proton made in a holder should leave in the incoming direction at its mass-based speed.")
 
+func _elastic_bounce() -> void:
+  _new_board()
+  var a := _particle("muon", Vector2.LEFT)
+  var b := _particle("muon", Vector2.ZERO, Vector2.ZERO, 0.0)
+  var radius := (a.world_collision_radius() + b.world_collision_radius()) / CELL
+  var offset := radius * 0.5
+  a.free_flight = true
+  a.flight_cell = a.global_position
+  a.global_position.y = offset * CELL
+  var impact := Vector2(-sqrt(radius * radius - offset * offset), offset)
+  var normal := impact.normalized()
+  var velocity_b := normal * Vector2.RIGHT.dot(normal)
+  var velocity_a := Vector2.RIGHT - velocity_b
+  var remaining := -impact.x
+  sim.step_simulation()
+  _check((a.direction * a.speed - velocity_a).length() < 0.001 and (b.direction * b.speed - velocity_b).length() < 0.001, "A glancing bounce should exchange the normal velocities while retaining the tangential velocities.")
+  _check(a.motion_position().distance_to((impact + velocity_a * remaining) * CELL) < 0.01 and b.motion_position().distance_to(velocity_b * remaining * CELL) < 0.01, "Bouncing particles should continue from their contact positions during the rest of the tick.")
+
 func _muons_and_mass_speeds() -> void:
-  var expected := {"photon": [0.0, 2.0], "neutrino": [0.0, 2.0], "electron": [1.0, 1.0],
+  var expected := {"photon": [0.0, 1.5], "neutrino": [0.0, 1.5], "anti_neutrino": [0.0, 1.5], "electron": [1.0, 1.0],
     "positron": [1.0, 1.0], "muon": [2.0, 1.0], "anti_muon": [2.0, 1.0],
-    "up_r": [2.0, 1.0], "pion_zero": [3.0, 1.0], "proton": [4.0, 0.5]}
+    "up_r": [2.0, 1.0], "pion_zero": [3.0, 1.0], "proton": [4.0, 0.5], "nucleus": [5.0, 0.5]}
   _new_board()
   for name in expected:
     var particle := _particle(name, Vector2(20, 20))
@@ -257,20 +295,109 @@ func _muons_and_mass_speeds() -> void:
     sim.step_simulation(0.1)
     _check(sim._particles().size() == reaction[2].size(), "Reaction products should separate without immediately colliding.")
 
-func _neutrinos_and_reaction_directions() -> void:
+func _neutrino_reactions() -> void:
+  var conversions := {
+    "neutrino": {"electron": ["positron"], "positron": ["electron"], "up_g": ["down_g"], "down_b": ["up_b"],
+      "muon": ["anti_muon"], "anti_muon": ["muon"], "proton": ["neutron"], "neutron": ["proton"],
+      "delta_plus": ["positron", "proton"], "delta_minus": ["electron", "neutron"]},
+    "anti_neutrino": {"electron": ["muon"], "positron": ["anti_muon"], "muon": ["electron"], "anti_muon": ["positron"],
+      "up_r": ["up_g"], "up_g": ["up_b"], "down_b": ["down_r"], "pion_plus": ["pion_minus"], "pion_minus": ["pion_plus"]},
+  }
+  for name in conversions:
+    for target in conversions[name]:
+      _new_board()
+      var other := _particle(target, Vector2.RIGHT, Vector2.LEFT)
+      _particle(name, Vector2.LEFT)
+      if other.is_pion():
+        other.constituents = [Vector2i(other.constituents[0].x, Particle.ColourCharge.GREEN), Vector2i(other.constituents[1].x, Particle.ColourCharge.BLUE)]
+      sim.step_simulation()
+      var names: Array[String] = []
+      for result in sim._particles():
+        names.append(result.level_particle_name())
+        if result.is_pion():
+          var flipped := Particle.Flavour.DOWN if target == "pion_plus" else Particle.Flavour.UP
+          _check(result.constituents == [Vector2i(flipped, Particle.ColourCharge.GREEN), Vector2i(flipped, Particle.ColourCharge.BLUE)], "Pion flips should preserve both original colours.")
+      names.sort()
+      _check(names == conversions[name][target], "Incorrect products for %s + %s: %s" % [name, target, names])
+    _new_board()
+    var neutrino := _particle(name, Vector2.LEFT)
+    var photon := _particle("photon", Vector2.RIGHT, Vector2.LEFT)
+    sim.step_simulation()
+    _check(sim._particles().size() == 2 and _at(neutrino, Vector2.RIGHT * 0.5) and _at(photon, Vector2.LEFT * 0.5), "%s and photons should pass through one another." % name)
+    var bounce_targets := ["pion_plus", "pion_minus", "pion_zero"] if name == "neutrino" else ["pion_zero"]
+    for target in bounce_targets:
+      _new_board()
+      neutrino = _particle(name, Vector2.LEFT)
+      var pion := _particle(target, Vector2.RIGHT, Vector2.LEFT)
+      sim.step_simulation()
+      _check(sim._particles().size() == 2 and neutrino.direction == Vector2.LEFT and _at(pion, Vector2.ZERO) and pion.direction == Vector2.LEFT, "%s should bounce without redirecting %s." % [name, target])
+
+func _perpendicular_products() -> void:
+  for reaction in [["electron", "positron", "photon"], ["neutrino", "neutrino", "anti_neutrino"], ["neutrino", "anti_neutrino", "photon"]]:
+    _new_board()
+    _particle(reaction[0], Vector2.LEFT)
+    _particle(reaction[1], Vector2.UP, Vector2.DOWN)
+    sim.step_simulation()
+    var products := sim._particles()
+    _check(products.size() == 2 and products.all(func(p: Particle) -> bool: return p.level_particle_name() == reaction[2]), "The perpendicular reaction should make two %s particles." % reaction[2])
+    if products.size() == 2:
+      _check(products[0].direction == -products[1].direction and is_zero_approx(products[0].direction.dot(Vector2.ONE)), "Products should travel perpendicular to the combined momentum.")
+
   _new_board()
-  var neutrino := _particle("neutrino", Vector2.LEFT * 2.0)
-  var other := _particle("electron", Vector2.LEFT, Vector2.LEFT)
-  _device("gate", Vector2.ZERO)
-  var holder = _device("holder", Vector2.RIGHT)
-  sim.step_simulation(2.0)
-  _check(_at(neutrino, Vector2.RIGHT * 2.0) and not neutrino.is_queued_for_deletion(), "Neutrinos should pass through particles, gates, and holders at full speed.")
-  _check(not other.is_queued_for_deletion() and holder.held_particle == null, "Neutrinos should not affect particles or devices.")
+  var a := _particle("neutrino", Vector2.ZERO)
+  var b := _particle("neutrino", Vector2.ZERO, Vector2.ONE)
+  var diagonal := Vector2.ONE.normalized()
+  var contact := {"at": Vector2.ZERO, "velocity_a": Vector2.RIGHT * 1.5, "velocity_b": diagonal * 1.5}
+  sim._perpendicular_reaction(a, b, contact, Particle.Flavour.NEUTRINO, true)
+  var products := sim._particles()
+  var heading := (Vector2.RIGHT + diagonal).orthogonal().normalized()
+  var holder_cell := Vector2(0.0, signf(heading.y))
+  var holder = _device("holder", holder_cell)
+  var forecast := FORECAST.new(sim, [holder], 1.0)
+  sim.step_simulation(0.2)
+  forecast.shadow.step_simulation(0.2)
+  _check(_at(products[0], heading * 0.3) and _at(products[1], -heading * 0.3), "Perpendicular trajectories between grid headings should retain their angle and speed.")
+  _check(_at(forecast.shadow._particles()[0], heading * 0.3), "Forecasts should preserve off-grid trajectories.")
+  sim.step_simulation(0.3)
+  _check(products[0].held_by == holder and _at(products[0], holder_cell), "Holders should catch a particle crossing on an off-grid trajectory.")
+  forecast.dispose()
+
+func _reflectors_and_neutrino_holders() -> void:
+  for name in ["neutrino", "anti_neutrino"]:
+    _new_board()
+    var particle := _particle(name, Vector2.LEFT * 2.0)
+    var gate = _device("gate", Vector2.LEFT)
+    _device("reflector", Vector2.ZERO)
+    var pusher = _device("pusher", Vector2.RIGHT)
+    var holder = _device("holder", Vector2.RIGHT * 2.0)
+    sim.step_simulation(3.0)
+    _check(particle.held_by == holder and _at(particle, Vector2.RIGHT * 2.0) and not gate.gate_open and pusher.push_up, "%s should bypass other buildings and stop in the holder." % name)
+    _particle("photon", Vector2.RIGHT * 3.0, Vector2.LEFT)
+    sim.step_simulation(0.6)
+    _check(holder.held_particle == particle, "Passing photons should leave the holder occupied.")
+    _particle("electron", Vector2.RIGHT * 3.0, Vector2.LEFT)
+    sim.step_simulation()
+    var products := sim._particles().filter(func(p: Particle) -> bool: return p.flavour != Particle.Flavour.PHOTON)
+    var result := "muon" if name == "anti_neutrino" else "positron"
+    _check(holder.held_particle == null and products.size() == 1 and products[0].level_particle_name() == result and products[0].direction == Vector2.LEFT, "A reaction should release the holder and its product.")
+  for name in ["photon", "pion_zero", "neutron", "electron", "pion_plus", "proton", "nucleus"]:
+    for side in [Vector2.UP, Vector2.DOWN, Vector2.RIGHT]:
+      _new_board()
+      _device("reflector", Vector2.ZERO)
+      var particle := _particle(name, side * 2.0, -side)
+      sim.step_simulation(4.5)
+      if particle.charge == 0:
+        _check(not particle.is_queued_for_deletion() and particle.direction == side, "Reflectors should bounce neutral %s from %s." % [name, side])
+      else:
+        _check(particle.is_queued_for_deletion(), "Reflectors should destroy charged %s from %s." % [name, side])
   _new_board()
   _device("pusher", Vector2.ZERO)
-  neutrino = _particle("neutrino", Vector2.LEFT)
+  _device("reflector", Vector2.UP)
+  var photon := _particle("photon", Vector2.LEFT)
   sim.step_simulation()
-  _check(_at(neutrino, Vector2.RIGHT), "Neutrinos should not be pushed by devices.")
+  _check(sim._particles().size() == 1 and photon.direction == Vector2.DOWN, "A photon pushed into a reflector should reflect on impact.")
+
+func _muon_reaction_directions() -> void:
   _new_board()
   var a := _particle("muon", Vector2.LEFT)
   var b := _particle("positron", Vector2.RIGHT, Vector2.LEFT)
@@ -309,8 +436,12 @@ func _run() -> void:
   _rails_and_forecast()
   _reactions()
   _mass_and_split()
+  _elastic_bounce()
   _muons_and_mass_speeds()
-  _neutrinos_and_reaction_directions()
+  _neutrino_reactions()
+  _perpendicular_products()
+  _reflectors_and_neutrino_holders()
+  _muon_reaction_directions()
   if is_instance_valid(sim): sim.free()
   if failures == 0: print("Grid mechanics checks passed")
   quit(int(failures > 0))

@@ -238,7 +238,7 @@ func _build_source_dialog() -> void:
   highlighter.number_color = Color("e6b66c")
   highlighter.symbol_color = Color("a6c8e8")
   highlighter.add_color_region("#", "", Color("8192a4"), true)
-  for word in CATALOG.SCENES.keys() + ["goal", "inventory", "magnetic_field", "rotation"]:
+  for word in CATALOG.SCENES.keys() + ["goal", "inventory", "magnetic_field", "mirror", "rotation"]:
     highlighter.add_keyword_color(word, Color("7bd9bd"))
   for word in ["x", "y", "fixed", "rate", "AND", "OR"]:
     highlighter.add_keyword_color(word, Color("b5a6f1"))
@@ -472,7 +472,7 @@ func _place_editor_kind(kind: String, cell: Vector2i, facing := "E") -> void:
     status.text = "That position is occupied."
     return
   var extra := ""
-  if kind == "emitter": extra = ", E, [electron], rate=1/step"
+  if kind == "emitter": extra = ", E, rate=1/step"
   elif kind == "detector": extra = ", [photon]"
   elif kind == "edge_wall": extra = ", " + facing
   _set_source(source.text.trim_suffix("\n") + "\n%s: {x=%d, y=%d%s};\n" % [kind, cell.x, cell.y, extra])

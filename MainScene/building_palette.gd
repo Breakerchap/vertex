@@ -7,7 +7,7 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
 const ICONS := {
   "emitter": preload("res://Buildings/Emitter/emitter.png"),
-  "mirror": preload("res://Buildings/Mirror/mirror.png"),
+  "reflector": preload("res://Buildings/Reflector/reflector.png"),
   "wall": preload("res://Buildings/Wall/wall.png"),
   "detector": preload("res://Buildings/Detector/detector.png"),
   "magnet": preload("res://Buildings/MagneticField/plus_magnet.png"),

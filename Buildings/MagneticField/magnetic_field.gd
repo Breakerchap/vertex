@@ -15,9 +15,10 @@ func _ready() -> void:
   if not Engine.is_editor_hint():
     add_to_group("magnetic_fields")
 
-func exit_heading(direction: Vector2, charge: int) -> Vector2:
+func exit_heading(direction: Vector2, charge: int, exact := false) -> Vector2:
   var turn := PI * 0.5 if charge * polarity > 0 else -PI * 0.5
-  return SimulationGrid.heading(direction.rotated(turn))
+  var rotated := direction.rotated(turn)
+  return rotated if exact else SimulationGrid.heading(rotated)
 
 func _draw() -> void:
   var texture: Texture2D = PLUS_TEXTURE if polarity > 0 else MINUS_TEXTURE

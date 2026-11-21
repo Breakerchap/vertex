@@ -3,7 +3,7 @@ extends RefCounted
 const DEVICE = preload("res://Buildings/GridDevices/grid_device.gd")
 const SCENES := {
   "emitter": preload("res://Buildings/Emitter/emitter.tscn"),
-  "mirror": preload("res://Buildings/Mirror/mirror.tscn"),
+  "reflector": preload("res://Buildings/Reflector/reflector.tscn"),
   "wall": preload("res://Buildings/Wall/wall.tscn"),
   "detector": preload("res://Buildings/Detector/detector.tscn"),
   "magnet": preload("res://Buildings/MagneticField/magnetic_field.tscn"),
@@ -14,12 +14,12 @@ const SCENES := {
   "holder": preload("res://Buildings/GridDevices/holder.tscn"),
   "pusher": preload("res://Buildings/GridDevices/pusher.tscn"),
 }
-const COSTS := {"mirror": 15, "wall": 5, "emitter": 40, "detector": 30, "magnet": 20,
+const COSTS := {"reflector": 15, "wall": 5, "emitter": 40, "detector": 30, "magnet": 20,
   "gate": 15, "glass": 10, "filter": 10, "edge_wall": 5, "holder": 15, "pusher": 15}
 
 const DIRECTIONS := SimulationGrid.DIRECTIONS
 const CARDINALS := ["E", "S", "W", "N"]
-const FACING_KINDS := ["emitter", "mirror", "gate", "pusher"]
+const FACING_KINDS := ["emitter", "reflector", "gate", "pusher"]
 const ROTATABLE_KINDS := FACING_KINDS + ["magnet", "edge_wall", "filter"]
 const NEGATIVE_POLARITIES := ["negative", "-", "-1", "n"]
 const VALID_POLARITIES := ["positive", "+", "+1", "1", "p"] + NEGATIVE_POLARITIES

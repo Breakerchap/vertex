@@ -21,6 +21,9 @@ func _ready() -> void:
   var impossible := PARSER.parse("3 x 3; goal: {[electron AND photon]: 1, 1, 1};")
   assert(impossible.has("error"), "Mutually exclusive goal expression must be rejected")
   var overlap := PARSER.parse("3 x 3; goal: {photon: 1, 1, 1}; wall: {x=1,y=1}; mirror: {x=1,y=1};")
+  var reflectors := PARSER.parse("3 x 3; goal: {anti_neutrino: 1, 1, 1}; mirror: {x=0,y=0}; reflector: {x=1,y=1}; inventory: {mirror=2}; emitter: {x=2,y=2,[anti_neutrino,nucleus]};")
+  assert(not reflectors.has("error") and reflectors.buildings[0].kind == "reflector" and reflectors.buildings[1].kind == "reflector" and reflectors.inventory.reflector == 2)
+  assert(reflectors.buildings[2].particles == ["anti_neutrino", "nucleus"])
   assert(overlap.has("error"), "Overlapping buildings must be rejected")
   var metadata := PARSER.parse("3 x 3;\ntitle: A small test;\nhint: Try the mirror;\ngoal: {photon: 1, 1, 1};")
   assert(metadata.title == "A small test" and metadata.hint == "Try the mirror")
@@ -58,7 +61,7 @@ func _ready() -> void:
   game.editor_playtest = true
   get_tree().root.add_child.call_deferred(game)
   await get_tree().process_frame
-  game._place_building({"kind": "mirror", "x": 0, "y": 0}, true)
+  game._place_building({"kind": "reflector", "x": 0, "y": 0}, true)
   game.selected_building = game._building_at(Vector2i(0, 0))
   var mirror_orientation: int = game.selected_building.orientation
   var key := InputEventKey.new()
