@@ -44,6 +44,9 @@ func _init(source: ParticleSimulation, buildings: Array[Node], steps: float) -> 
     copy.free_flight = original.free_flight
     copy.direction = original.direction
     copy.speed = original.speed
+    copy.mass = original.mass
+    copy.size = original.size
+    copy.charge = original.charge
     copy.position = shadow.to_local(original.global_position)
     copy.progress = original.progress
     copy.magnetic_exit = original.magnetic_exit

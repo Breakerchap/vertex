@@ -2,7 +2,7 @@ class_name Particle
 extends Node2D
 
 enum ColourCharge { NONE, RED, GREEN, BLUE, ANTIRED, ANTIGREEN, ANTIBLUE }
-enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO, NUCLEUS, GLUON, Z_BOSON }
+enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO, GLUON = 14, Z_BOSON = 15 }
 
 const COLOUR_TINTS := {
   ColourCharge.RED: Color(1.0, 0.35, 0.35),
@@ -10,9 +10,9 @@ const COLOUR_TINTS := {
   ColourCharge.BLUE: Color(0.4, 0.55, 1.0),
 }
 
-var flavour: Flavour
-var charge: int
-var colour: ColourCharge
+@export var flavour: Flavour
+@export var charge: int
+@export var colour: ColourCharge
 @export var isAnti := false
 ## Grid cells travelled per grid tick.
 @export var speed: float = 1.0
@@ -23,19 +23,13 @@ var flight_cell := Vector2.ZERO
 @export var direction := Vector2.RIGHT:
   set(value):
     direction = value.normalized() if free_flight else SimulationGrid.heading(value)
-var size := 1.0
+## Scale multiplier applied to the particle artwork and hitbox.
+@export var size := 1.0
+## Mass used when resolving collisions.
+@export var mass: float = 1.0
 ## Original quarks, stored as (flavour, colour).
 var constituents: Array[Vector2i] = []
 var separating_from: Array[Particle] = []
-
-var mass: float:
-  get:
-    if flavour in [Flavour.PHOTON, Flavour.NEUTRINO, Flavour.GLUON]: return 0.0
-    if flavour == Flavour.ELECTRON: return 1.0
-    if is_quark() or flavour == Flavour.MUON: return 2.0
-    if is_pion(): return 3.0
-    if flavour in [Flavour.PROTON, Flavour.NEUTRON, Flavour.DELTA_MINUS, Flavour.DELTA_PLUS]: return 4.0
-    return 5.0
 
 # The node stays at a cell centre. The sprite and hitbox travel together.
 var progress := 0.0
@@ -59,7 +53,6 @@ func _ready() -> void:
       ColourCharge.RED: colour = ColourCharge.ANTIRED
       ColourCharge.GREEN: colour = ColourCharge.ANTIGREEN
       ColourCharge.BLUE: colour = ColourCharge.ANTIBLUE
-    charge = -charge
   if not textures.is_empty():
     sprite.texture = textures[1] if isAnti and textures.size() > 1 else textures[0]
   var shape := CircleShape2D.new()
@@ -117,13 +110,6 @@ func world_collision_radius() -> float:
   var shape := $Area2D/CollisionShape2D.shape as CircleShape2D
   return shape.radius * absf(global_scale.x)
 
-func mass_speed() -> float:
-  if flavour == Flavour.GLUON: return 2.0
-  if flavour == Flavour.Z_BOSON: return 1.0
-  if mass == 0.0: return 1.5
-  if mass >= 4.0: return 0.5
-  return 1.0
-
 func is_quark() -> bool:
   return flavour == Flavour.UP or flavour == Flavour.DOWN
 
@@ -154,7 +140,6 @@ func level_particle_name() -> String:
     Flavour.NEUTRON: return "neutron"
     Flavour.DELTA_MINUS: return "delta_minus"
     Flavour.DELTA_PLUS: return "delta_plus"
-    Flavour.NUCLEUS: return "nucleus"
     Flavour.GLUON: return "gluon"
     Flavour.Z_BOSON: return "z_boson"
   return "unknown"

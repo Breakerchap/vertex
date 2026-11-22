@@ -14,12 +14,8 @@ var blocked_by: Particle
 var caught: Array[Particle] = []
 
 func _ready() -> void:
-  size = 0.55
   if flavour == Flavour.GLUON:
-    textures = [TIP]
     z_index = 2
-  else:
-    textures = [Z_TEXTURE]
   super._ready()
   if flavour == Flavour.GLUON:
     trail_points.append(motion_position())

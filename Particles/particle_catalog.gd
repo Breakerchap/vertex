@@ -1,15 +1,37 @@
 extends RefCounted
 
-const ELECTRON = preload("res://Particles/Electron/electron.tscn")
-const QUARK = preload("res://Particles/Quark/quark.tscn")
-const PHOTON = preload("res://Particles/Photon/photon.tscn")
-const LEPTON = preload("res://Particles/Lepton/lepton.tscn")
-const HADRON = preload("res://Particles/Hadron/hadron.tscn")
-const BOSON = preload("res://Particles/Boson/boson.tscn")
-const BOSON_ART = preload("res://Particles/Boson/boson.gd")
-const PHOTON_ART = preload("res://Particles/Photon/photon.gd")
-const QUARK_ART = preload("res://Particles/Quark/quark.gd")
-const HADRON_ART = preload("res://Particles/Hadron/hadron.gd")
+const SCENES := {
+  "electron": preload("res://Particles/Types/electron.tscn"),
+  "positron": preload("res://Particles/Types/positron.tscn"),
+  "muon": preload("res://Particles/Types/muon.tscn"),
+  "anti_muon": preload("res://Particles/Types/anti_muon.tscn"),
+  "neutrino": preload("res://Particles/Types/neutrino.tscn"),
+  "anti_neutrino": preload("res://Particles/Types/anti_neutrino.tscn"),
+  "photon": preload("res://Particles/Types/photon.tscn"),
+  "gluon": preload("res://Particles/Types/gluon.tscn"),
+  "z_boson": preload("res://Particles/Types/z_boson.tscn"),
+  "up_r": preload("res://Particles/Types/up_r.tscn"),
+  "up_g": preload("res://Particles/Types/up_g.tscn"),
+  "up_b": preload("res://Particles/Types/up_b.tscn"),
+  "down_r": preload("res://Particles/Types/down_r.tscn"),
+  "down_g": preload("res://Particles/Types/down_g.tscn"),
+  "down_b": preload("res://Particles/Types/down_b.tscn"),
+  "pion_plus": preload("res://Particles/Types/pion_plus.tscn"),
+  "pion_minus": preload("res://Particles/Types/pion_minus.tscn"),
+  "pion_zero": preload("res://Particles/Types/pion_zero.tscn"),
+  "proton": preload("res://Particles/Types/proton.tscn"),
+  "neutron": preload("res://Particles/Types/neutron.tscn"),
+  "delta_minus": preload("res://Particles/Types/delta_minus.tscn"),
+  "delta_plus": preload("res://Particles/Types/delta_plus.tscn"),
+}
+const ANTI_QUARK_SCENES := {
+  "up_r": preload("res://Particles/Types/anti_up_r.tscn"),
+  "up_g": preload("res://Particles/Types/anti_up_g.tscn"),
+  "up_b": preload("res://Particles/Types/anti_up_b.tscn"),
+  "down_r": preload("res://Particles/Types/anti_down_r.tscn"),
+  "down_g": preload("res://Particles/Types/anti_down_g.tscn"),
+  "down_b": preload("res://Particles/Types/anti_down_b.tscn"),
+}
 
 const TYPES := {
   "electron": [Particle.Flavour.ELECTRON, false, Particle.ColourCharge.NONE, ""],
@@ -34,7 +56,6 @@ const TYPES := {
   "neutron": [Particle.Flavour.NEUTRON, false, Particle.ColourCharge.NONE, ""],
   "delta_minus": [Particle.Flavour.DELTA_MINUS, false, Particle.ColourCharge.NONE, ""],
   "delta_plus": [Particle.Flavour.DELTA_PLUS, false, Particle.ColourCharge.NONE, ""],
-  "nucleus": [Particle.Flavour.NUCLEUS, false, Particle.ColourCharge.NONE, ""],
 }
 
 const SYMBOLS := {"pion_plus": "π⁺", "pion_minus": "π⁻", "pion_zero": "π⁰", "delta_minus": "Δ⁻", "delta_plus": "Δ⁺"}
@@ -79,31 +100,37 @@ static func emission(particle: String) -> ParticleEmission:
   return entry
 
 static func instantiate(flavour: Particle.Flavour, anti := false, colour := Particle.ColourCharge.NONE) -> Particle:
-  var scene: PackedScene
-  match flavour:
-    Particle.Flavour.UP, Particle.Flavour.DOWN: scene = QUARK
-    Particle.Flavour.ELECTRON: scene = ELECTRON
-    Particle.Flavour.PHOTON: scene = PHOTON
-    Particle.Flavour.GLUON, Particle.Flavour.Z_BOSON: scene = BOSON
-    Particle.Flavour.MUON, Particle.Flavour.NEUTRINO: scene = LEPTON
-    _: scene = HADRON
-  var particle := scene.instantiate() as Particle
-  particle.flavour = flavour
-  if particle.is_quark():
-    particle.colour = colour if colour != Particle.ColourCharge.NONE else Particle.ColourCharge.RED
-  particle.isAnti = anti
-  particle.speed = particle.mass_speed()
-  return particle
+  # Anticolours can be passed when copying an already initialized quark.
+  var base_colour: Particle.ColourCharge = colour
+  if colour >= Particle.ColourCharge.ANTIRED:
+    base_colour = colour - 3
+  if flavour in [Particle.Flavour.UP, Particle.Flavour.DOWN]:
+    if base_colour == Particle.ColourCharge.NONE: base_colour = Particle.ColourCharge.RED
+  else:
+    base_colour = Particle.ColourCharge.NONE
+  for name in TYPES:
+    var type: Array = TYPES[name]
+    if type[0] == flavour and type[1] == anti and type[2] == base_colour:
+      return SCENES[name].instantiate() as Particle
+  if anti:
+    for name in TYPES:
+      var type: Array = TYPES[name]
+      if type[0] == flavour and not type[1] and type[2] == base_colour:
+        if ANTI_QUARK_SCENES.has(name):
+          return ANTI_QUARK_SCENES[name].instantiate() as Particle
+        # Preserve the emitter's optional antiparticle setting for other flavours.
+        var particle := SCENES[name].instantiate() as Particle
+        particle.isAnti = true
+        particle.charge = -particle.charge
+        return particle
+  push_error("No particle scene for flavour %s, anti %s, colour %s" % [flavour, anti, colour])
+  return null
 
 static func texture_for(particle: String) -> Texture2D:
-  var type: Array = TYPES[emission_name(particle)]
-  match type[0]:
-    Particle.Flavour.ELECTRON:
-      return preload("res://Particles/Electron/positron.png") if type[1] else preload("res://Particles/Electron/electron.png")
-    Particle.Flavour.PHOTON: return PHOTON_ART.TEXTURE
-    Particle.Flavour.GLUON: return BOSON_ART.TIP
-    Particle.Flavour.Z_BOSON: return BOSON_ART.Z_TEXTURE
-    Particle.Flavour.NEUTRINO: return preload("res://anti_neutrino.png") if type[1] else preload("res://neutrino.png")
-    Particle.Flavour.MUON: return preload("res://anti_muon.png") if type[1] else preload("res://muon.png")
-    Particle.Flavour.UP, Particle.Flavour.DOWN: return QUARK_ART.SPRITES[type[0]][type[2]]
-    _: return HADRON_ART.SPRITES[type[0]]
+  var scene: PackedScene = SCENES[emission_name(particle)]
+  var instance := scene.instantiate() as Particle
+  var texture: Texture2D = instance.get_node("Sprite2D").texture
+  if not instance.textures.is_empty():
+    texture = instance.textures[1] if instance.isAnti and instance.textures.size() > 1 else instance.textures[0]
+  instance.free()
+  return texture

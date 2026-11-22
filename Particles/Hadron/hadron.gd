@@ -8,7 +8,6 @@ const SPRITES := {
   Flavour.NEUTRON: preload("res://Particles/Hadron/neutron.png"),
   Flavour.DELTA_MINUS: preload("res://Particles/Hadron/delta_minus.png"),
   Flavour.DELTA_PLUS: preload("res://Particles/Hadron/delta_plus.png"),
-  Flavour.NUCLEUS: preload("res://Particles/Hadron/nucleus.svg"),
 }
 
 func _ready() -> void:
@@ -16,10 +15,4 @@ func _ready() -> void:
     var first := Flavour.DOWN if flavour == Flavour.PION_MINUS else Flavour.UP
     var second := Flavour.UP if flavour == Flavour.PION_PLUS else Flavour.DOWN
     constituents = [Vector2i(first, ColourCharge.RED), Vector2i(second, ColourCharge.GREEN)]
-  charge = 0
-  if flavour in [Flavour.PION_PLUS, Flavour.PROTON, Flavour.DELTA_PLUS, Flavour.NUCLEUS]:
-    charge = 1
-  elif flavour in [Flavour.PION_MINUS, Flavour.DELTA_MINUS]:
-    charge = -1
-  textures = [SPRITES[flavour]]
   super._ready()

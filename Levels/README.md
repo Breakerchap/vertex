@@ -14,7 +14,7 @@ The level selector reads the `.level` files in this directory and the game's cus
 
 ## Emitters, detectors and goals
 
-Photons, neutrinos and antineutrinos travel 1.5 tiles per grid tick. Baryons and nuclei start at half a tile per grid tick. Other particles start at one tile per grid tick. An elastic collision can redistribute speed between equal-mass particles with nonzero mass. The sprite and its hitbox move together during transit. Emitters repeat their particle list and emit electrons when the list is empty. Rates use particles per step and accept decimals or fractions, as in `rate=0.5/step` and `rate=1/2`. Quark colours use `_r`, `_g` or `_b` on `up` and `down`. Use `anti_neutrino` for an antineutrino and `nucleus` for the mass-5 particle.
+Photons, neutrinos and antineutrinos travel 1.5 tiles per grid tick. Baryons start at half a tile per grid tick. Other particles start at one tile per grid tick. An elastic collision can redistribute speed between equal-mass particles with nonzero mass. The sprite and its hitbox move together during transit. Emitters repeat their particle list and emit electrons when the list is empty. Rates use particles per step and accept decimals or fractions, as in `rate=0.5/step` and `rate=1/2`. Quark colours use `_r`, `_g` or `_b` on `up` and `down`. Use `anti_neutrino` for an antineutrino.
 
 Detectors absorb particles and count those that match their expression. For example, `[electron OR positron]` matches either type, while `[(up OR down) AND up_r]` matches a red up quark. `AND` binds more tightly than `OR`, and commas mean `OR`. Use a broad name such as `up` to match every colour of that quark.
 

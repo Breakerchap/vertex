@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://Particles/Boson/boson.tscn" id="1"]
+[ext_resource type="Texture2D" path="res://gluon_tip.png" id="2"]
+
+[node name="Gluon" instance=ExtResource("1")]
+flavour = 14
+isAnti = false
+colour = 0
+charge = 0
+mass = 0.0
+speed = 2.0
+size = 0.55
+
+[node name="Sprite2D" parent="." index="0"]
+texture = ExtResource("2")

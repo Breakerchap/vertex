@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://Particles/Quark/quark.tscn" id="1"]
+[ext_resource type="Texture2D" path="res://Particles/Quark/up_g.png" id="2"]
+
+[node name="AntiUpG" instance=ExtResource("1")]
+flavour = 0
+isAnti = true
+colour = 2
+charge = -1
+mass = 2.0
+speed = 1.0
+size = 0.85
+
+[node name="Sprite2D" parent="." index="0"]
+texture = ExtResource("2")

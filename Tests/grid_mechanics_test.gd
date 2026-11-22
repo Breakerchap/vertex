@@ -216,10 +216,10 @@ func _mass_and_split() -> void:
   sim.step_simulation()
   _check(sim._particles().size() == 2 and a.direction == Vector2.LEFT and b.direction == Vector2.RIGHT, "Two antineutrinos should use the equal-mass fallback.")
   _new_board()
-  a = _particle("nucleus", Vector2.RIGHT, Vector2.LEFT)
+  a = _particle("proton", Vector2.RIGHT, Vector2.LEFT)
   b = _particle("electron", Vector2.LEFT)
   sim.step_simulation(2.0)
-  _check(b.is_queued_for_deletion() and _at(a, Vector2.ZERO) and a.direction == Vector2.LEFT, "The lighter particle should be absorbed while the nucleus continues on course.")
+  _check(b.is_queued_for_deletion() and _at(a, Vector2.ZERO) and a.direction == Vector2.LEFT, "The lighter particle should be absorbed while the heavier particle continues on course.")
   for name in ["electron", "positron"]:
     _new_board()
     a = _particle(name, Vector2.LEFT)
@@ -269,7 +269,7 @@ func _elastic_bounce() -> void:
 func _muons_and_mass_speeds() -> void:
   var expected := {"photon": [0.0, 1.5], "neutrino": [0.0, 1.5], "anti_neutrino": [0.0, 1.5], "electron": [1.0, 1.0],
     "positron": [1.0, 1.0], "muon": [2.0, 1.0], "anti_muon": [2.0, 1.0],
-    "up_r": [2.0, 1.0], "pion_zero": [3.0, 1.0], "proton": [4.0, 0.5], "nucleus": [5.0, 0.5]}
+    "up_r": [2.0, 1.0], "pion_zero": [3.0, 1.0], "proton": [4.0, 0.5]}
   _new_board()
   for name in expected:
     var particle := _particle(name, Vector2(20, 20))
@@ -290,7 +290,9 @@ func _muons_and_mass_speeds() -> void:
     var names: Array[String] = []
     for particle in sim._particles():
       names.append(particle.level_particle_name())
-      _check(particle.speed == particle.mass_speed(), "Reaction products should use their mass-based speed.")
+      var defaults := PARTICLES.instantiate(particle.flavour, particle.isAnti, particle.colour)
+      _check(particle.speed == defaults.speed, "Reaction products should use their scene speed.")
+      defaults.free()
     names.sort()
     _check(names == reaction[2], "Incorrect products for %s + %s: %s" % [reaction[0], reaction[1], names])
     sim.step_simulation(0.1)
@@ -381,7 +383,7 @@ func _reflectors_and_neutrino_holders() -> void:
     var products := sim._particles().filter(func(p: Particle) -> bool: return p.flavour != Particle.Flavour.PHOTON)
     var result := "muon" if name == "anti_neutrino" else "positron"
     _check(holder.held_particle == null and products.size() == 1 and products[0].level_particle_name() == result and products[0].direction == Vector2.LEFT, "A reaction should release the holder and its product.")
-  for name in ["photon", "pion_zero", "neutron", "electron", "pion_plus", "proton", "nucleus"]:
+  for name in ["photon", "pion_zero", "neutron", "electron", "pion_plus", "proton"]:
     for side in [Vector2.UP, Vector2.DOWN, Vector2.RIGHT]:
       _new_board()
       _device("reflector", Vector2.ZERO)

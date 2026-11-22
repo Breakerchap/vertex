@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://Particles/Hadron/hadron.tscn" id="1"]
+[ext_resource type="Texture2D" path="res://Particles/Hadron/delta_minus.png" id="2"]
+
+[node name="DeltaMinus" instance=ExtResource("1")]
+flavour = 9
+isAnti = false
+colour = 0
+charge = -1
+mass = 4.0
+speed = 0.5
+size = 1.2
+
+[node name="Sprite2D" parent="." index="0"]
+texture = ExtResource("2")

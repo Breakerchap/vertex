@@ -657,7 +657,6 @@ func _bind_quarks(participants: Array[Particle], at: Vector2, momentum: Vector2)
   var result := PARTICLES.instantiate(pions[ups] if constituents.size() == 2 else baryons[ups])
   result.constituents = constituents
   result.direction = momentum
-  result.speed = result.mass_speed()
   result.position = to_local(SimulationGrid.center(at))
   add_child(result)
   particle_event.emit("fusion", result.global_position)

@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://Particles/Lepton/lepton.tscn" id="1"]
+[ext_resource type="Texture2D" path="res://neutrino.png" id="2"]
+
+[node name="Neutrino" instance=ExtResource("1")]
+flavour = 12
+isAnti = false
+colour = 0
+charge = 0
+mass = 0.0
+speed = 1.5
+size = 0.32
+
+[node name="Sprite2D" parent="." index="0"]
+texture = ExtResource("2")
