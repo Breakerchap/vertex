@@ -1,6 +1,7 @@
 extends RefCounted
 
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
+const BOSON = preload("res://Particles/Boson/boson.gd")
 const FRAME_BUDGET_USEC := 3000
 
 var shadow: ParticleSimulation
@@ -59,6 +60,14 @@ func _init(source: ParticleSimulation, buildings: Array[Node], steps: float) -> 
     copy.flight_cell = original.flight_cell
     particle_copies[original] = copy
   for original in particle_copies:
+    if original.flavour == Particle.Flavour.GLUON:
+      var gluon := original as BOSON
+      var trail := particle_copies[original] as BOSON
+      trail.trail_points = gluon.trail_points.duplicate()
+      trail.edge_stopped = gluon.edge_stopped
+      trail.blocked_by = particle_copies.get(gluon.blocked_by)
+      for captive in gluon.caught:
+        if particle_copies.has(captive): trail.trap(particle_copies[captive])
     for partner in original.separating_from:
       if particle_copies.has(partner):
         particle_copies[original].separating_from.append(particle_copies[partner])

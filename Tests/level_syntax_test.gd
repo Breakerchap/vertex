@@ -24,6 +24,8 @@ func _ready() -> void:
   var reflectors := PARSER.parse("3 x 3; goal: {anti_neutrino: 1, 1, 1}; mirror: {x=0,y=0}; reflector: {x=1,y=1}; inventory: {mirror=2}; emitter: {x=2,y=2,[anti_neutrino,nucleus]};")
   assert(not reflectors.has("error") and reflectors.buildings[0].kind == "reflector" and reflectors.buildings[1].kind == "reflector" and reflectors.inventory.reflector == 2)
   assert(reflectors.buildings[2].particles == ["anti_neutrino", "nucleus"])
+  var bosons := PARSER.parse("3 x 3; goal: {photon: 1, 2, 3}; emitter: {x=1,y=1,[gluon,z_boson]};")
+  assert(not bosons.has("error") and bosons.buildings[0].particles == ["gluon", "z_boson"])
   assert(overlap.has("error"), "Overlapping buildings must be rejected")
   var metadata := PARSER.parse("3 x 3;\ntitle: A small test;\nhint: Try the mirror;\ngoal: {photon: 1, 1, 1};")
   assert(metadata.title == "A small test" and metadata.hint == "Try the mirror")

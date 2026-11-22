@@ -5,6 +5,8 @@ const QUARK = preload("res://Particles/Quark/quark.tscn")
 const PHOTON = preload("res://Particles/Photon/photon.tscn")
 const LEPTON = preload("res://Particles/Lepton/lepton.tscn")
 const HADRON = preload("res://Particles/Hadron/hadron.tscn")
+const BOSON = preload("res://Particles/Boson/boson.tscn")
+const BOSON_ART = preload("res://Particles/Boson/boson.gd")
 const PHOTON_ART = preload("res://Particles/Photon/photon.gd")
 const QUARK_ART = preload("res://Particles/Quark/quark.gd")
 const HADRON_ART = preload("res://Particles/Hadron/hadron.gd")
@@ -17,6 +19,8 @@ const TYPES := {
   "neutrino": [Particle.Flavour.NEUTRINO, false, Particle.ColourCharge.NONE, ""],
   "anti_neutrino": [Particle.Flavour.NEUTRINO, true, Particle.ColourCharge.NONE, ""],
   "photon": [Particle.Flavour.PHOTON, false, Particle.ColourCharge.NONE, ""],
+  "gluon": [Particle.Flavour.GLUON, false, Particle.ColourCharge.NONE, ""],
+  "z_boson": [Particle.Flavour.Z_BOSON, false, Particle.ColourCharge.NONE, ""],
   "up_r": [Particle.Flavour.UP, false, Particle.ColourCharge.RED, "up"],
   "up_g": [Particle.Flavour.UP, false, Particle.ColourCharge.GREEN, "up"],
   "up_b": [Particle.Flavour.UP, false, Particle.ColourCharge.BLUE, "up"],
@@ -80,6 +84,7 @@ static func instantiate(flavour: Particle.Flavour, anti := false, colour := Part
     Particle.Flavour.UP, Particle.Flavour.DOWN: scene = QUARK
     Particle.Flavour.ELECTRON: scene = ELECTRON
     Particle.Flavour.PHOTON: scene = PHOTON
+    Particle.Flavour.GLUON, Particle.Flavour.Z_BOSON: scene = BOSON
     Particle.Flavour.MUON, Particle.Flavour.NEUTRINO: scene = LEPTON
     _: scene = HADRON
   var particle := scene.instantiate() as Particle
@@ -96,6 +101,8 @@ static func texture_for(particle: String) -> Texture2D:
     Particle.Flavour.ELECTRON:
       return preload("res://Particles/Electron/positron.png") if type[1] else preload("res://Particles/Electron/electron.png")
     Particle.Flavour.PHOTON: return PHOTON_ART.TEXTURE
+    Particle.Flavour.GLUON: return BOSON_ART.TIP
+    Particle.Flavour.Z_BOSON: return BOSON_ART.Z_TEXTURE
     Particle.Flavour.NEUTRINO: return preload("res://anti_neutrino.png") if type[1] else preload("res://neutrino.png")
     Particle.Flavour.MUON: return preload("res://anti_muon.png") if type[1] else preload("res://muon.png")
     Particle.Flavour.UP, Particle.Flavour.DOWN: return QUARK_ART.SPRITES[type[0]][type[2]]

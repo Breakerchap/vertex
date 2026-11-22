@@ -22,12 +22,20 @@ Each goal has three thresholds, one for each star. Conditions in one goal are re
 
 Output meters show rates over the most recent eight steps. From step 28 onward, the game can run an isolated 240-step forecast to check sustained output before awarding stars. Best results are kept across launches.
 
+## Gluons and Z bosons
+
+Use `gluon` and `z_boson` in emitter sequences. Gluons have mass zero and travel two tiles per tick. Glass slows them, reflectors bounce them, pushers shift them, and walls and filters block them. The trail follows the tip's route. Two gluon tips stop when they meet, and a tip also stops if it hits another gluon's trail.
+
+The first particle to touch a trail stays in place. When a second touches it, the tip stops moving and both particles are pulled together at three tiles per tick. They interact on contact and the trail disappears. A trail stays active when its tip reaches the edge of the board. If a building absorbs the tip, the trail disappears and releases its captive.
+
+Z bosons travel one tile per tick. They bounce off other particles, gluon trails, and buildings that would otherwise absorb them. They still pass through an open gate.
+
 ## Devices
 
 | Declaration | Behavior |
 | --- | --- |
 | `gate: {x=2, y=1, open=false};` | Starts closed by default. Along its facing axis, a closed gate absorbs the hit and opens, and an open gate passes the hit and closes. Hits from other directions are blocked. |
-| `glass: {x=2, y=1};` | Electrons, muons, neutrinos, their antiparticles and photons pause while passing through. Glass blocks all other particles. |
+| `glass: {x=2, y=1};` | Electrons, muons, neutrinos, their antiparticles, photons and gluons pause while passing through. Glass blocks all other particles. |
 | `filter: {x=2, y=1, colour=blue};` | Passes photons and quarks of one matching colour. Choose red, green or blue. |
 | `edge_wall: {x=2, y=1, N};` | Blocks the chosen cardinal edge while leaving the cell free for a building. Click near an edge to place or select its wall. |
 | `reflector: {x=2, y=1, N};` | Reflects uncharged particles and absorbs charged ones. Existing `mirror` declarations and inventory entries still load. |

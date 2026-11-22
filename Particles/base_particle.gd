@@ -2,7 +2,7 @@ class_name Particle
 extends Node2D
 
 enum ColourCharge { NONE, RED, GREEN, BLUE, ANTIRED, ANTIGREEN, ANTIBLUE }
-enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO, NUCLEUS }
+enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO, NUCLEUS, GLUON, Z_BOSON }
 
 const COLOUR_TINTS := {
   ColourCharge.RED: Color(1.0, 0.35, 0.35),
@@ -30,7 +30,7 @@ var separating_from: Array[Particle] = []
 
 var mass: float:
   get:
-    if flavour in [Flavour.PHOTON, Flavour.NEUTRINO]: return 0.0
+    if flavour in [Flavour.PHOTON, Flavour.NEUTRINO, Flavour.GLUON]: return 0.0
     if flavour == Flavour.ELECTRON: return 1.0
     if is_quark() or flavour == Flavour.MUON: return 2.0
     if is_pion(): return 3.0
@@ -43,6 +43,7 @@ var progress := 0.0
 var magnetic_exit := Vector2.ZERO
 var glass_wait := 0.0
 var held_by: Node2D
+var trapped_by: Particle
 var source_building: Node2D
 var passed_gates: Array[Node] = []
 var placeholder_label := ""
@@ -117,6 +118,8 @@ func world_collision_radius() -> float:
   return shape.radius * absf(global_scale.x)
 
 func mass_speed() -> float:
+  if flavour == Flavour.GLUON: return 2.0
+  if flavour == Flavour.Z_BOSON: return 1.0
   if mass == 0.0: return 1.5
   if mass >= 4.0: return 0.5
   return 1.0
@@ -128,7 +131,7 @@ func is_pion() -> bool:
   return flavour in [Flavour.PION_PLUS, Flavour.PION_MINUS, Flavour.PION_ZERO]
 
 func passes_glass() -> bool:
-  return flavour in [Flavour.ELECTRON, Flavour.MUON, Flavour.NEUTRINO, Flavour.PHOTON]
+  return flavour in [Flavour.ELECTRON, Flavour.MUON, Flavour.NEUTRINO, Flavour.PHOTON, Flavour.GLUON]
 
 ## Name used by level goals and detectors.
 func level_particle_name() -> String:
@@ -152,4 +155,6 @@ func level_particle_name() -> String:
     Flavour.DELTA_MINUS: return "delta_minus"
     Flavour.DELTA_PLUS: return "delta_plus"
     Flavour.NUCLEUS: return "nucleus"
+    Flavour.GLUON: return "gluon"
+    Flavour.Z_BOSON: return "z_boson"
   return "unknown"
