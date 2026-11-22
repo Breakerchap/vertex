@@ -26,3 +26,7 @@ Global="*res://Global.gd"
 [dotnet]
 
 project/assembly_name="Vertex"
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true

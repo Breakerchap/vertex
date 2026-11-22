@@ -1,0 +1,141 @@
+
+name: Build and release Vertex
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vertex-release
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Build macOS and Linux
+    runs-on: ubuntu-24.04
+
+    env:
+      GODOT_VERSION: "4.7.2"
+      GODOT_PROJECT_PATH: "."
+      MACOS_PRESET: "macOS"
+      LINUX_PRESET: "Linux"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Godot and export templates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+
+          curl -fL --retry 3 \
+            "$BASE/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" \
+            -o /tmp/godot.zip
+
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          sudo install -m 755 \
+            "/tmp/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" \
+            /usr/local/bin/godot
+
+          curl -fL --retry 3 \
+            "$BASE/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
+            -o /tmp/templates.tpz
+
+          mkdir -p /tmp/godot-templates
+          unzip -q /tmp/templates.tpz -d /tmp/godot-templates
+
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$TEMPLATE_DIR"
+          cp -a /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
+
+          godot --version
+
+      - name: Verify export configuration
+        working-directory: ${{ env.GODOT_PROJECT_PATH }}
+        run: |
+          test -f project.godot
+          test -f export_presets.cfg
+
+      - name: Import project resources
+        working-directory: ${{ env.GODOT_PROJECT_PATH }}
+        run: |
+          godot --headless --path . --import
+
+      - name: Export macOS
+        working-directory: ${{ env.GODOT_PROJECT_PATH }}
+        env:
+          PRESET: ${{ env.MACOS_PRESET }}
+        run: |
+          mkdir -p build/macos
+          godot --headless --path . \
+            --export-release "$PRESET" \
+            build/macos/vertex-macos.zip
+
+          test -s build/macos/vertex-macos.zip
+
+      - name: Export Linux x86-64
+        working-directory: ${{ env.GODOT_PROJECT_PATH }}
+        env:
+          PRESET: ${{ env.LINUX_PRESET }}
+        run: |
+          mkdir -p build/linux
+          godot --headless --path . \
+            --export-release "$PRESET" \
+            build/linux/Vertex.x86_64
+
+          test -s build/linux/Vertex.x86_64
+          chmod +x build/linux/Vertex.x86_64
+
+      - name: Package releases
+        working-directory: ${{ env.GODOT_PROJECT_PATH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release
+
+          cp build/macos/vertex-macos.zip \
+            release/vertex-macos.zip
+
+          tar -czf release/vertex-linux-x86_64.tar.gz \
+            -C build/linux .
+
+          cd release
+
+          for archive in vertex-macos.zip vertex-linux-x86_64.tar.gz; do
+            sha256sum "$archive" | awk '{print $1}' \
+              > "$archive.sha256"
+          done
+
+          ls -lh
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Vertex Build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: "true"
+          prerelease: false
+          generate_release_notes: false
+          body: |
+            Automated Vertex build.
+
+            Commit: ${{ github.sha }}
+
+            - macOS Universal (Intel and Apple Silicon)
+            - Linux x86-64
+          files: |
+            ${{ env.GODOT_PROJECT_PATH }}/release/vertex-macos.zip
+            ${{ env.GODOT_PROJECT_PATH }}/release/vertex-macos.zip.sha256
+            ${{ env.GODOT_PROJECT_PATH }}/release/vertex-linux-x86_64.tar.gz
+            ${{ env.GODOT_PROJECT_PATH }}/release/vertex-linux-x86_64.tar.gz.sha256
+          fail_on_unmatched_files: true
