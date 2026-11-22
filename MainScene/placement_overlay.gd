@@ -48,7 +48,13 @@ func _draw() -> void:
         draw_rect(rectangle.grow(2.0), Color.WHITE, false, 2.0)
 
     var hover: Vector2i = game._mouse_cell()
-    if game.is_cell_on_board(hover):
+    if game.area_selection_enabled:
+      var selection: Rect2i = game._area_selection(hover)
+      if selection.has_area():
+        var rect: Rect2 = game._area_rect(selection)
+        draw_rect(rect, Color("8fc7ff", 0.25))
+        draw_rect(rect.grow(-1.5), Color("8fc7ff"), false, 3.0)
+    elif game.is_cell_on_board(hover):
       var palette = game.external_palette if game.editor_preview else game.palette
       var kind: String = game.selected_kind
       if is_instance_valid(palette):
@@ -68,7 +74,7 @@ func _draw() -> void:
             facing = CATALOG.DIRECTIONS[game.selected_building.orientation]
         elif kind == "edge_wall":
           facing = game._edge_facing(hover, game.get_global_mouse_position())
-        var valid: bool = game._building_at(hover, kind, facing) == null
+        var valid: bool = game._can_place_building(hover, kind, facing)
         if dragging_building:
           valid = valid and (game.editor_preview or not game.selected_building.get_meta("fixed_position"))
         var rect := _outline(kind, game._cell_position(hover), facing)

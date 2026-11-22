@@ -176,6 +176,7 @@ func _ready() -> void:
   editor.game.begin_run()
   editor._unhandled_key_input(escape)
   assert(not editor.game.simulating, "Escape should reset the running preview.")
+  await _check_build_areas(editor, target)
   editor.free()
   print("Level editor checks passed")
   get_tree().quit()
@@ -186,3 +187,73 @@ func _choose_particle(picker: OptionButton, name: String) -> void:
       picker.item_selected.emit(i)
       return
   assert(false, "Particle is missing from the dropdown: " + name)
+
+func _check_build_areas(editor, target: String) -> void:
+  var level_source := "6 x 6;\ngoal: {photon: 1, 2, 3};\ninventory: {wall=3, edge_wall=1};\n# Preserve this comment.\n"
+  editor._set_source(level_source)
+  await get_tree().process_frame
+  editor.block_area_button.pressed.emit()
+  _area_drag(editor.game, Vector2i(5, 5), Vector2i(5, 5))
+  assert(editor.parsed.no_build_areas == [Rect2i(5, 5, 1, 1)], "A single click should block one cell.")
+  editor._undo_editor()
+  _area_drag(editor.game, Vector2i(4, 4), Vector2i(1, 1))
+  assert(editor.parsed.no_build_areas == [Rect2i(1, 1, 4, 4)], "A reverse drag should block the entire rectangle.")
+  assert(PARSER.parse(level_source + "no_build: {x=4..6, y=1};").has("error"))
+  editor.unblock_area_button.pressed.emit()
+  _area_drag(editor.game, Vector2i(2, 2), Vector2i(3, 3))
+  for x in range(6):
+    for y in range(6):
+      var cell := Vector2i(x, y)
+      var blocked := Rect2i(1, 1, 4, 4).has_point(cell) and not Rect2i(2, 2, 2, 2).has_point(cell)
+      assert(editor.game._is_build_blocked(cell) == blocked, "Unblocking should clear only the selected cells.")
+  editor._undo_editor()
+  assert(editor.game._is_build_blocked(Vector2i(2, 2)))
+  editor._redo_editor()
+  assert(not editor.game._is_build_blocked(Vector2i(2, 2)))
+  editor.palette.buttons.holder.pressed.emit()
+  assert(not editor.game.area_selection_enabled)
+  editor._board_click(Vector2i(1, 2), MOUSE_BUTTON_LEFT)
+  assert(editor.game._building_at(Vector2i(1, 2)) != null, "The level author can still place starting buildings in restricted cells.")
+  var saved: String = editor.source.text
+  editor._write_file(target)
+  editor._set_source(level_source)
+  editor._file_selected(target)
+  DirAccess.remove_absolute(target)
+  assert(editor.source.text == saved and saved.contains("# Preserve this comment."))
+  editor._start_playtest()
+  var player = editor.test_game
+  assert(player._building_at(Vector2i(1, 2)) != null, "Authored buildings in restricted cells should load in playtest.")
+  player._select_inventory("wall")
+  player._click_cell(Vector2i(1, 1), MOUSE_BUTTON_LEFT)
+  player._drop_inventory("wall", _screen_cell(player, Vector2i(4, 4)))
+  assert(player.inventory.wall == 3 and player.cost == 0 and player.undo_history.is_empty(), "Rejected clicks and drops should leave the build unchanged.")
+  assert(player._building_at(Vector2i(1, 1)) == null and player._building_at(Vector2i(4, 4)) == null)
+  player._click_cell(Vector2i(2, 2), MOUSE_BUTTON_LEFT)
+  var wall: Node = player._building_at(Vector2i(2, 2))
+  assert(wall != null and player.inventory.wall == 2)
+  player._click_cell(Vector2i(2, 2), MOUSE_BUTTON_RIGHT)
+  player._move_selected_to(Vector2i(1, 1))
+  assert(wall.get_meta("cell") == Vector2i(2, 2), "Players cannot move buildings into a restricted area.")
+  player._move_selected_to(Vector2i(3, 3))
+  assert(wall.get_meta("cell") == Vector2i(3, 3))
+  player._select_inventory("edge_wall")
+  player._click_cell(Vector2i(0, 2), MOUSE_BUTTON_LEFT, null, "E")
+  assert(player.inventory.edge_wall == 1, "A restricted edge should also be blocked from the adjoining unrestricted cell.")
+  player._click_cell(Vector2i(0, 2), MOUSE_BUTTON_LEFT, null, "N")
+  var edge: Node = player._building_at(Vector2i(0, 2), "edge_wall", "N")
+  assert(edge != null)
+  player._click_cell(Vector2i(0, 2), MOUSE_BUTTON_RIGHT, edge, "N")
+  player._rotate_selected()
+  assert(player._building_at(Vector2i(0, 2), "edge_wall", "N") == edge, "Rotating an edge wall into a restricted area should be blocked.")
+  editor._end_playtest()
+
+func _area_drag(game, first: Vector2i, last: Vector2i) -> void:
+  for pressed in [true, false]:
+    var event := InputEventMouseButton.new()
+    event.button_index = MOUSE_BUTTON_LEFT
+    event.pressed = pressed
+    event.position = _screen_cell(game, first if pressed else last)
+    get_viewport().push_input(event, true)
+
+func _screen_cell(game, cell: Vector2i) -> Vector2:
+  return game.get_global_transform_with_canvas() * game._cell_position(cell)

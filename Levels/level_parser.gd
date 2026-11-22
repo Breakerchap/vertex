@@ -30,7 +30,7 @@ static func find_dimensions(text: String) -> RegExMatch:
 static func find_blocks(text: String) -> Array[RegExMatch]:
   var blocks := RegEx.new()
   var names: Array = CATALOG.SCENES.keys()
-  names.append_array(["goal", "inventory", "magnetic_field", "mirror"])
+  names.append_array(["goal", "inventory", "no_build", "magnetic_field", "mirror"])
   blocks.compile("(?is)\\b(" + "|".join(names) + ")\\s*:\\s*\\{([^}]*)\\}[ \\t]*;?")
   return blocks.search_all(_without_metadata(text))
 
@@ -39,7 +39,7 @@ static func parse(source: String) -> Dictionary:
   var size_match := find_dimensions(text)
   if size_match == null:
     return {"error": "Missing grid size (for example 15 x 7)."}
-  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "goals": [], "goal_targets": [], "buildings": [], "inventory": {}, "title": "", "hint": "", "rotation_steps": 8, "legacy_rates": false}
+  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "goals": [], "goal_targets": [], "buildings": [], "inventory": {}, "no_build_areas": [], "title": "", "hint": "", "rotation_steps": 8, "legacy_rates": false}
   if data.width <= 0 or data.height <= 0:
     return {"error": "Grid dimensions must be positive."}
   for item in find_metadata(text):
@@ -70,6 +70,11 @@ static func parse(source: String) -> Dictionary:
         var result := _parse_inventory(body, data.inventory)
         if result.has("error"):
           return result
+      "no_build":
+        var result := _parse_no_build(body, data.width, data.height)
+        if result.has("error"):
+          return result
+        data.no_build_areas.append(result.area)
       _:
         var result := parse_building(kind, body, data.width, data.height, data.legacy_rates)
         if result.has("error"):
@@ -141,6 +146,26 @@ static func _parse_inventory(body: String, inventory: Dictionary) -> Dictionary:
       return {"error": "Unknown inventory item: " + name}
     inventory[name] = int(pair[1])
   return {}
+
+static func _parse_no_build(body: String, width: int, height: int) -> Dictionary:
+  var axes := {}
+  for item in body.split(",", false):
+    var pair := item.split("=", true, 1)
+    var axis := pair[0].strip_edges().to_lower()
+    if pair.size() != 2 or axis not in ["x", "y"] or axes.has(axis):
+      return {"error": "A no-build area needs one x and one y coordinate or range."}
+    var endpoints := _range_endpoints(pair[1].strip_edges())
+    if endpoints.is_empty():
+      return {"error": "Invalid %s coordinate or range for a no-build area." % axis}
+    endpoints.sort()
+    axes[axis] = endpoints
+  if axes.size() != 2:
+    return {"error": "A no-build area needs one x and one y coordinate or range."}
+  if axes.x[0] < 0 or axes.x[1] >= width or axes.y[0] < 0 or axes.y[1] >= height:
+    return {"error": "A no-build area extends outside the grid."}
+  var first := Vector2i(axes.x[0], axes.y[0])
+  var last := Vector2i(axes.x[1], axes.y[1])
+  return {"area": Rect2i(first, last - first + Vector2i.ONE)}
 
 ## Bare values and /step are per step. /s is supported for existing levels.
 static func _parse_rate(value: String, legacy_bare := false) -> float:
@@ -224,13 +249,19 @@ static func parse_building(kind: String, body: String, width: int, height: int, 
       entries.append(placed)
   return {"entries": entries}
 
+static func _range_endpoints(value: String) -> Array[int]:
+  var parts := value.split("..")
+  if parts.size() > 2 or not parts[0].strip_edges().is_valid_int() or (parts.size() == 2 and not parts[1].strip_edges().is_valid_int()):
+    return []
+  var first := int(parts[0])
+  return [first, int(parts[1]) if parts.size() == 2 else first]
+
 static func _range_values(value: String) -> Array[int]:
   var result: Array[int] = []
-  var parts := value.split("..")
-  if parts.size() > 2 or not parts[0].is_valid_int() or (parts.size() == 2 and not parts[1].is_valid_int()):
-    return result
-  var first := int(parts[0])
-  var last := int(parts[1]) if parts.size() == 2 else first
+  var endpoints := _range_endpoints(value)
+  if endpoints.is_empty(): return result
+  var first := endpoints[0]
+  var last := endpoints[1]
   var direction := 1 if last >= first else -1
   for number in range(first, last + direction, direction):
     result.append(number)

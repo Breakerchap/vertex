@@ -8,6 +8,8 @@ const PARTICLE_PICKER = preload("res://MainScene/particle_picker.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
 const NEW_LEVEL := "9 x 9;\n\ngoal: {electron: 1/step, 2/step, 3/step};\n\n"
 
+enum AreaTool { NONE, BLOCK, UNBLOCK }
+
 var source: CodeEdit
 var game
 var editor_panel: PanelContainer
@@ -24,6 +26,9 @@ var property_fields: Array[Control] = []
 var property_prefix := ""
 var property_suffix := ""
 var palette: PanelContainer
+var block_area_button: Button
+var unblock_area_button: Button
+var area_tool := AreaTool.NONE
 var width_input: SpinBox
 var height_input: SpinBox
 var file_dialog: FileDialog
@@ -105,6 +110,7 @@ func _build_workspace() -> void:
   game.editor_sidebar_width = 290
   game.editor_cell_clicked.connect(_board_click)
   game.editor_cell_dragged.connect(_move_block)
+  game.editor_area_selected.connect(_edit_build_area)
 
   var hud := CanvasLayer.new()
   add_child(hud)
@@ -156,6 +162,12 @@ func _build_workspace() -> void:
   height_input = _spin(controls)
   width_input.value_changed.connect(_resize_board)
   height_input.value_changed.connect(_resize_board)
+  block_area_button = UI.button(controls, "Block area", _toggle_area_tool.bind(AreaTool.BLOCK))
+  block_area_button.toggle_mode = true
+  block_area_button.tooltip_text = "Drag across cells to block player building placement. Esc exits the tool."
+  unblock_area_button = UI.button(controls, "Unblock area", _toggle_area_tool.bind(AreaTool.UNBLOCK))
+  unblock_area_button.toggle_mode = true
+  unblock_area_button.tooltip_text = "Drag across cells to allow player building placement. Esc exits the tool."
   palette = PALETTE.new()
   palette.infinite = true
   hud.add_child(palette)
@@ -238,7 +250,7 @@ func _build_source_dialog() -> void:
   highlighter.number_color = Color("e6b66c")
   highlighter.symbol_color = Color("a6c8e8")
   highlighter.add_color_region("#", "", Color("8192a4"), true)
-  for word in CATALOG.SCENES.keys() + ["goal", "inventory", "magnetic_field", "mirror", "rotation"]:
+  for word in CATALOG.SCENES.keys() + ["goal", "inventory", "no_build", "magnetic_field", "mirror", "rotation"]:
     highlighter.add_keyword_color(word, Color("7bd9bd"))
   for word in ["x", "y", "fixed", "rate", "AND", "OR"]:
     highlighter.add_keyword_color(word, Color("b5a6f1"))
@@ -323,6 +335,7 @@ func _select_move_tool() -> void:
   _select_palette_kind("")
 
 func _select_palette_kind(kind: String) -> void:
+  if area_tool != AreaTool.NONE: _set_area_tool(AreaTool.NONE)
   pasting = false
   palette.selected = kind
   palette.refresh()
@@ -332,6 +345,7 @@ func _drop_palette_kind(kind: String, screen_position: Vector2) -> void:
   if game.simulating or parsed.has("error") or parsed.is_empty(): return
   var cell: Vector2i = game.screen_to_cell(screen_position)
   if not game.is_cell_on_board(cell): return
+  if area_tool != AreaTool.NONE: _set_area_tool(AreaTool.NONE)
   var facing: String = game._edge_facing(cell, game.get_canvas_transform().affine_inverse() * screen_position) if kind == "edge_wall" else "E"
   _place_editor_kind(kind, cell, facing)
 
@@ -371,7 +385,10 @@ func _source_changed() -> void:
   parsed = PARSER.parse(source.text)
   _select_block(-1)
   blocks.clear()
+  block_area_button.disabled = parsed.has("error")
+  unblock_area_button.disabled = block_area_button.disabled
   if parsed.has("error"):
+    _set_area_tool(AreaTool.NONE)
     source_error.text = "Source error: " + str(parsed.error)
     status.text = "Invalid source • Showing last valid board"
     status.tooltip_text = str(parsed.error)
@@ -387,8 +404,16 @@ func _source_changed() -> void:
   game.level = parsed
   game._load_initial_board()
   game._fit_camera()
+  _update_level_status()
+
+func _update_level_status() -> void:
   var warnings := _level_warnings(parsed)
-  status.text = (path.get_file() if not path.is_empty() else "Untitled") + ("  • unsaved" if source.text != saved_text else "") + ("  • %d warning(s)" % warnings.size() if not warnings.is_empty() else "")
+  status.text = (path.get_file() if not path.is_empty() else "Untitled") + ("  • unsaved" if source.text != saved_text else "")
+  if area_tool != AreaTool.NONE:
+    var action := "block" if area_tool == AreaTool.BLOCK else "unblock"
+    status.text += "  • Drag to %s an area. Esc exits." % action
+  elif not warnings.is_empty():
+    status.text += "  • %d warning(s)" % warnings.size()
   status.tooltip_text = "\n".join(warnings)
   status.add_theme_color_override("font_color", UI.MUTED)
   source_error.text = "\n".join(warnings)
@@ -421,6 +446,63 @@ func _resize_board(_value: float) -> void:
     updating = false
     return
   _set_source(updated)
+
+func _toggle_area_tool(tool: AreaTool) -> void:
+  if game.simulating:
+    block_area_button.set_pressed_no_signal(area_tool == AreaTool.BLOCK)
+    unblock_area_button.set_pressed_no_signal(area_tool == AreaTool.UNBLOCK)
+    return
+  var next := AreaTool.NONE if area_tool == tool else tool
+  _select_move_tool()
+  _set_area_tool(next)
+
+func _set_area_tool(tool: AreaTool) -> void:
+  area_tool = tool
+  block_area_button.set_pressed_no_signal(tool == AreaTool.BLOCK)
+  unblock_area_button.set_pressed_no_signal(tool == AreaTool.UNBLOCK)
+  game.area_selection_enabled = tool != AreaTool.NONE
+  game.area_origin = Vector2i(-1, -1)
+  game.drag_cell = Vector2i(-1, -1)
+  if not parsed.has("error"): _update_level_status()
+
+func _edit_build_area(selection: Rect2i) -> void:
+  if parsed.has("error") or area_tool == AreaTool.NONE: return
+  var restricting := area_tool == AreaTool.BLOCK
+  var areas: Array = parsed.no_build_areas
+  if restricting:
+    for area in areas:
+      if area.encloses(selection): return
+
+  var spans: Array[RegExMatch] = []
+  for span in PARSER.find_blocks(PARSER.mask_comments(source.text)):
+    if span.get_string(1).to_lower() == "no_build": spans.append(span)
+  var updated := source.text
+  for index in range(areas.size() - 1, -1, -1):
+    var area: Rect2i = areas[index]
+    var overlap := area.intersection(selection)
+    if not overlap.has_area(): continue
+    var remaining := PackedStringArray()
+    # Keep two horizontal strips and the sides between them.
+    var strips := [
+      Rect2i(area.position.x, area.position.y, area.size.x, overlap.position.y - area.position.y),
+      Rect2i(area.position.x, overlap.end.y, area.size.x, area.end.y - overlap.end.y),
+      Rect2i(area.position.x, overlap.position.y, overlap.position.x - area.position.x, overlap.size.y),
+      Rect2i(overlap.end.x, overlap.position.y, area.end.x - overlap.end.x, overlap.size.y),
+    ]
+    for strip in strips:
+      if strip.has_area(): remaining.append(_build_area_declaration(strip))
+    var span := spans[index]
+    updated = updated.left(span.get_start()) + "\n".join(remaining) + updated.substr(span.get_end())
+  if restricting:
+    updated = updated.trim_suffix("\n") + "\n" + _build_area_declaration(selection) + "\n"
+  if updated != source.text: _set_source(updated)
+
+func _build_area_declaration(area: Rect2i) -> String:
+  var first := area.position
+  var last := area.end - Vector2i.ONE
+  var xs := str(first.x) if first.x == last.x else "%d..%d" % [first.x, last.x]
+  var ys := str(first.y) if first.y == last.y else "%d..%d" % [first.y, last.y]
+  return "no_build: {x=%s, y=%s};" % [xs, ys]
 
 func _board_click(cell: Vector2i, button: int, target: Node = null, facing := "E") -> void:
   if parsed.has("error"): return
@@ -505,6 +587,7 @@ func _start_paste() -> void:
 
 func _paste_at_cursor() -> void:
   if game.simulating or copied_declaration.is_empty(): return
+  if area_tool != AreaTool.NONE: _set_area_tool(AreaTool.NONE)
   var cell: Vector2i = game._mouse_cell()
   if not game.is_cell_on_board(cell):
     _start_paste()

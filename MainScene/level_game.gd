@@ -22,9 +22,12 @@ const FORECAST_WINDOWS := 6
 
 signal editor_cell_clicked(cell: Vector2i, button: int, target: Node, facing: String)
 signal editor_cell_dragged(from_cell: Vector2i, to_cell: Vector2i)
+signal editor_area_selected(area: Rect2i)
 signal exit_playtest_requested
 var drag_cell := Vector2i(-1, -1)
 var drag_start := Vector2.ZERO
+var area_selection_enabled := false
+var area_origin := Vector2i(-1, -1)
 
 var editor_preview := false
 var editor_playtest := false
@@ -107,6 +110,10 @@ func _draw() -> void:
   for x in range(level.width):
     for y in range(level.height):
       draw_texture_rect(TILE, Rect2(Vector2(x, y) * CELL - Vector2.ONE * CELL * 0.5, Vector2.ONE * CELL), false)
+  for area in level.get("no_build_areas", []):
+    var rect := _area_rect(area)
+    draw_rect(rect, Color("e39662", 0.24))
+    draw_rect(rect.grow(-1.0), Color("e39662", 0.85), false, 2.0)
 
 func get_playback_speed() -> float:
   if editor_preview or not automatic_speed or not simulating:
@@ -321,6 +328,7 @@ func _load_initial_board() -> void:
   redo_history.clear()
   selected_building = null
   selected_kind = ""
+  area_origin = Vector2i(-1, -1)
   for entry in level.buildings:
     _place_building(entry, false)
   level_bounds_enabled = true
@@ -398,6 +406,33 @@ func _world_to_cell(world_position: Vector2) -> Vector2i:
 func is_cell_on_board(cell: Vector2i) -> bool:
   return cell.x >= 0 and cell.y >= 0 and cell.x < level.get("width", 0) and cell.y < level.get("height", 0)
 
+func _area_rect(area: Rect2i) -> Rect2:
+  var top_left := _cell_position(Vector2i(area.position.x, area.end.y - 1)) - Vector2.ONE * CELL * 0.5
+  return Rect2(top_left, Vector2(area.size) * CELL)
+
+func _area_selection(cell: Vector2i) -> Rect2i:
+  if area_origin.x < 0: return Rect2i()
+  var last := cell.clamp(Vector2i.ZERO, Vector2i(level.width - 1, level.height - 1))
+  var first := area_origin.min(last)
+  return Rect2i(first, area_origin.max(last) - first + Vector2i.ONE)
+
+func _is_build_blocked(cell: Vector2i) -> bool:
+  for area in level.get("no_build_areas", []):
+    if area.has_point(cell): return true
+  return false
+
+func _edge_neighbor(cell: Vector2i, facing: String) -> Vector2i:
+  var offset: Vector2 = SimulationGrid.VECTORS[CATALOG.DIRECTIONS.find(facing)]
+  return cell + Vector2i(offset.x, -offset.y)
+
+func _can_place_building(cell: Vector2i, kind: String, facing: String) -> bool:
+  if not is_cell_on_board(cell): return false
+  if not editor_preview:
+    if _is_build_blocked(cell): return false
+    # An edge can be placed from either adjoining cell.
+    if kind == "edge_wall" and _is_build_blocked(_edge_neighbor(cell, facing)): return false
+  return _building_at(cell, kind, facing) == null
+
 func _building_at(cell: Vector2i, kind := "", facing := "E") -> Node:
   var key := CATALOG.occupancy_key(kind, cell, facing)
   for building in buildings:
@@ -423,6 +458,18 @@ func _board_target(cell: Vector2i, world: Vector2) -> Node:
     var edge := _building_at(cell, "edge_wall", _edge_facing(cell, world))
     if edge != null: return edge
   return _building_at(cell)
+
+func _input(event: InputEvent) -> void:
+  if not area_selection_enabled or area_origin.x < 0 or not is_visible_in_tree(): return
+  if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+    var area := _area_selection(screen_to_cell(event.position))
+    area_origin = Vector2i(-1, -1)
+    if not simulating: editor_area_selected.emit(area)
+    get_viewport().set_input_as_handled()
+
+func _notification(what: int) -> void:
+  if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+    area_origin = Vector2i(-1, -1)
 
 func _unhandled_input(event: InputEvent) -> void:
   if not is_visible_in_tree(): return
@@ -463,6 +510,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _handle_board_input(event: InputEvent) -> void:
   if simulating or not event is InputEventMouseButton:
     return
+  if area_selection_enabled:
+    if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+      var origin := screen_to_cell(event.position)
+      if is_cell_on_board(origin): area_origin = origin
+    return
   var cell := _mouse_cell()
   if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
     if drag_cell.x >= 0 and event.position.distance_to(drag_start) > 8.0:
@@ -490,10 +542,10 @@ func _handle_board_input(event: InputEvent) -> void:
 
 func _move_selected_to(cell: Vector2i) -> void:
   if not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position"): return
-  if not is_cell_on_board(cell) or selected_building.get_meta("cell") == cell: return
+  if selected_building.get_meta("cell") == cell: return
   var kind: String = selected_building.get_meta("kind")
   var facing: String = CATALOG.DIRECTIONS[selected_building.orientation] if kind == "edge_wall" else "E"
-  if _building_at(cell, kind, facing) != null: return
+  if not _can_place_building(cell, kind, facing): return
   _record_undo()
   selected_building.position = _cell_position(cell)
   selected_building.set_meta("cell", cell)
@@ -508,8 +560,7 @@ func _click_cell(cell: Vector2i, button_index: int, target: Node = null, facing 
     selected_kind = ""
   elif button_index == MOUSE_BUTTON_LEFT:
     var placement_facing := facing if selected_kind == "edge_wall" else CATALOG.default_facing(selected_kind)
-    if not selected_kind.is_empty() and int(inventory.get(selected_kind, 0)) > 0 and _building_at(cell, selected_kind, placement_facing) == null:
-      _place_inventory_building(selected_kind, cell, placement_facing)
+    if not selected_kind.is_empty() and _place_inventory_building(selected_kind, cell, placement_facing):
       if inventory[selected_kind] == 0: selected_kind = ""
     elif target != null:
       selected_building = target
@@ -531,7 +582,10 @@ func _rotate_selected(turn: int = 1) -> void:
   if kind not in CATALOG.ROTATABLE_KINDS: return
   if kind == "edge_wall":
     var orientation := CATALOG.next_orientation(selected_building.orientation, turn, 4)
-    var occupied := _building_at(selected_building.get_meta("cell"), kind, CATALOG.DIRECTIONS[orientation])
+    var cell: Vector2i = selected_building.get_meta("cell")
+    var facing: String = CATALOG.DIRECTIONS[orientation]
+    if not editor_preview and _is_build_blocked(_edge_neighbor(cell, facing)): return
+    var occupied := _building_at(cell, kind, facing)
     if occupied != null and occupied != selected_building: return
   _record_undo()
   match kind:
@@ -601,22 +655,22 @@ func _refresh_output() -> void:
     row.meter.set_rate(rate, simulating)
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
-  if simulating or int(inventory.get(kind, 0)) <= 0: return
   var cell := screen_to_cell(screen_position)
   if not is_cell_on_board(cell): return
   var facing := _edge_facing(cell, get_canvas_transform().affine_inverse() * screen_position) if kind == "edge_wall" else CATALOG.default_facing(kind)
-  if _building_at(cell, kind, facing) != null: return
-  _place_inventory_building(kind, cell, facing)
+  if not _place_inventory_building(kind, cell, facing): return
   selected_building = _building_at(cell, kind, facing)
   _refresh_ui()
   queue_redraw()
 
-func _place_inventory_building(kind: String, cell: Vector2i, facing := "") -> void:
+func _place_inventory_building(kind: String, cell: Vector2i, facing := "") -> bool:
   if facing.is_empty(): facing = CATALOG.default_facing(kind)
+  if simulating or int(inventory.get(kind, 0)) <= 0 or not _can_place_building(cell, kind, facing): return false
   _record_undo()
   _place_building({"kind": kind, "x": cell.x, "y": cell.y, "facing": facing}, true)
   inventory[kind] -= 1
   cost += CATALOG.COSTS[kind]
+  return true
 
 func begin_run() -> void:
   if simulating: return
