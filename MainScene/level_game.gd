@@ -13,12 +13,16 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const BUILDING = preload("res://Buildings/building.gd")
 const CELL := BUILDING.GRID_SIZE
 const SIDEBAR_WIDTH := 288.0
-const RECENT_STEPS := 8.0
+const MIN_METER_STEPS := 8
+const MAX_METER_STEPS := 2400
+const METER_TARGET_COUNT := 8.0
 const SPEED_RAMP_START := 12.0
 const SPEED_RAMP_END := 24.0
 const WATCH_STEPS := 28.0
 const FORECAST_WINDOW_STEPS := 40.0
 const FORECAST_WINDOWS := 6
+const FORECAST_TARGET_COUNT := 2.0
+const MAX_FORECAST_CHUNKS_PER_WINDOW := 30
 
 signal editor_cell_clicked(cell: Vector2i, button: int, target: Node, facing: String)
 signal editor_cell_dragged(from_cell: Vector2i, to_cell: Vector2i)
@@ -40,6 +44,8 @@ var last_hud_update := 0.0
 var editor_bottom_inset := 190.0
 var editor_sidebar_width := 256.0
 var hud_panel: PanelContainer
+var level_heading: VBoxContainer
+var results_text: RichTextLabel
 var level: Dictionary = {}
 var buildings: Array[Node] = []
 var inventory: Dictionary = {}
@@ -48,16 +54,18 @@ var selected_building: Node = null
 var cost: int = 0
 var simulating: bool = false
 var total_counts: Dictionary = {}
-var recent_counts: Dictionary = {}
-var step_counts: Dictionary = {}
-var recent_samples: Array[Dictionary] = []
+var output_samples: Array[Dictionary] = []
+var sampled_counts: Dictionary = {}
+var sampled_step := 0
+var output_changed := false
 var elapsed: float = 0.0
 var automatic_speed := true
 var next_forecast_at := WATCH_STEPS
 var forecast: FORECAST
 var forecast_candidates: Array[Dictionary] = []
 var forecast_counts: Dictionary = {}
-var forecast_windows := 0
+var forecast_chunks := 0
+var forecast_best_stars := 0
 var completed: bool = false
 var selection_label: Label
 var output_rows: Array[Dictionary] = []
@@ -131,7 +139,8 @@ func _fit_camera() -> void:
   camera.position = Vector2(level.width - 1, level.height - 1) * CELL * 0.5
   var view := get_viewport_rect().size
   var bottom_inset := editor_bottom_inset if editor_preview else hud_panel.size.y + 28.0
-  var top_inset := 74.0 if editor_preview else 115.0
+  var toolbar: Control = $SimulationControls/Panel
+  var top_inset := toolbar.get_rect().end.y + 12.0 if editor_preview else level_heading.get_rect().end.y + 12.0
   var right_inset := editor_sidebar_width if editor_preview else SIDEBAR_WIDTH + 16.0
   var available := Vector2(maxf(100.0, view.x - right_inset - 36.0), maxf(100.0, view.y - top_inset - bottom_inset))
   var board := Vector2(level.width, level.height) * CELL
@@ -170,24 +179,25 @@ func _create_hud() -> void:
   rotate_left_button.tooltip_text = "Rotate counterclockwise"
   rotate_button = UI.button(actions, "↷  E", _rotate_selected)
   rotate_button.tooltip_text = "Rotate clockwise"
-  remove_button = UI.button(actions, "Remove  Del", _remove_selected)
+  remove_button = UI.button(actions, "Remove  " + UI.delete_key_label(), _remove_selected)
   stop_button = $SimulationControls.enable_build(stop_to_build)
   restart_button = UI.button(actions, "Restart", restart_run)
   UI.button(actions, "Reset  X", reset_level)
   UI.button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
   results = AcceptDialog.new()
-  results.theme = UI.theme()
-  results.title = "Level complete"
+  UI.setup_dialog(results, layer, "Level complete")
   results.ok_button_text = "Back to build"
   results.confirmed.connect(stop_to_build)
   results.canceled.connect(stop_to_build)
   results.custom_action.connect(_result_action)
   var next_level_button := results.add_button("Next level", true, "next")
   next_level_button.visible = not editor_playtest and not Global.next_level_path(Global.selected_level).is_empty()
-  layer.add_child(results)
+  results_text = RichTextLabel.new()
+  results.add_child(results_text)
 
 func _add_level_heading(layer: CanvasLayer) -> void:
   var header := VBoxContainer.new()
+  level_heading = header
   header.theme = UI.theme()
   header.set_anchors_preset(Control.PRESET_TOP_WIDE)
   header.offset_left = 16
@@ -201,6 +211,13 @@ func _add_level_heading(layer: CanvasLayer) -> void:
   UI.heading(heading, 25)
   heading.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
   header.add_child(heading)
+  var toolbar: Control = $SimulationControls/Panel
+  var fit := func() -> void:
+    header.offset_top = toolbar.get_rect().end.y + 8.0
+    _fit_camera()
+  toolbar.resized.connect(fit)
+  header.resized.connect(_fit_camera)
+  fit.call()
 
 func _add_sidebar(layer: CanvasLayer) -> void:
   var sidebar := VBoxContainer.new()
@@ -281,14 +298,13 @@ func _add_goals(rows: VBoxContainer) -> void:
         details.add_child(name_label)
       var rate_label := UI.label("")
       rate_label.add_theme_color_override("font_color", UI.ACCENT)
-      rate_label.tooltip_text = "Recent output · " + title
       rate_label.mouse_filter = Control.MOUSE_FILTER_STOP
       details.add_child(rate_label)
       var meter := OUTPUT_METER.new()
       meter.set_thresholds(goal[key])
       meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
       row.add_child(meter)
-      output_rows.append({"key": key, "meter": meter, "label": rate_label})
+      output_rows.append({"key": key, "title": title, "meter": meter, "label": rate_label, "window": _meter_window(goal[key])})
   var hint := str(level.get("hint", ""))
   if not hint.is_empty():
     var prompt := UI.label(hint)
@@ -473,26 +489,25 @@ func _notification(what: int) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
   if not is_visible_in_tree(): return
-  if editor_preview:
-    if event is InputEventKey and event.pressed and not event.echo:
-      if event.keycode == KEY_SPACE: $SimulationControls._toggle_running()
-      elif event.keycode == KEY_PERIOD: $SimulationControls._step_once()
-      return
+  if event is InputEventKey:
+    if event.pressed and not event.echo: _handle_game_shortcut(event)
+  else:
     _handle_board_input(event)
-    return
-  if event is InputEventKey and event.pressed and not event.echo:
-    if event.ctrl_pressed and event.keycode == KEY_Z:
+
+func _handle_game_shortcut(event: InputEventKey) -> void:
+  if not editor_preview and UI.is_primary_shortcut(event):
+    if event.keycode == KEY_Z:
       if event.shift_pressed: redo_build()
       else: undo_build()
-      return
-    if event.ctrl_pressed and event.keycode == KEY_Y:
-      redo_build()
-      return
+    elif event.keycode == KEY_Y and not event.shift_pressed: redo_build()
+    else: return
+  elif event.get_modifiers_mask() != 0: return
+  elif event.keycode == KEY_SPACE: $SimulationControls._toggle_running()
+  elif event.keycode == KEY_PERIOD: $SimulationControls._step_once()
+  elif not editor_preview:
     match event.keycode:
       KEY_B: stop_to_build()
       KEY_X: reset_level()
-      KEY_SPACE: $SimulationControls._toggle_running()
-      KEY_PERIOD: $SimulationControls._step_once()
       KEY_Q: _rotate_selected(-1)
       KEY_E, KEY_R: _rotate_selected(1)
       KEY_DELETE, KEY_BACKSPACE: _remove_selected()
@@ -504,8 +519,9 @@ func _unhandled_input(event: InputEvent) -> void:
           selected_kind = ""
           _refresh_ui()
           queue_redraw()
-    return
-  _handle_board_input(event)
+      _: return
+  else: return
+  get_viewport().set_input_as_handled()
 
 func _handle_board_input(event: InputEvent) -> void:
   if simulating or not event is InputEventMouseButton:
@@ -650,9 +666,36 @@ func _refresh_ui() -> void:
 
 func _refresh_output() -> void:
   for row in output_rows:
-    var rate := float(_goal_count(recent_counts, row.key)) / RECENT_STEPS
-    row.label.text = "%s/step" % String.num(rate, 2)
-    row.meter.set_rate(rate, simulating)
+    var measured_steps := mini(sampled_step, row.window)
+    var rate := _recent_rate(row.key, measured_steps)
+    row.label.text = "%s/step" % OUTPUT_METER.format_rate(rate)
+    row.label.tooltip_text = row.title
+    if measured_steps > 0 and measured_steps < row.window:
+      row.label.tooltip_text += " · measuring (%d of %d steps)" % [measured_steps, row.window]
+    elif measured_steps > 0:
+      row.label.tooltip_text += " · last %d steps" % measured_steps
+    row.meter.set_rate(rate, simulating and measured_steps > 0, measured_steps)
+
+func _meter_window(thresholds: Array) -> int:
+  var slowest := INF
+  for threshold in thresholds:
+    if threshold > 0.0: slowest = minf(slowest, threshold)
+  return ceili(clampf(METER_TARGET_COUNT / slowest, MIN_METER_STEPS, MAX_METER_STEPS))
+
+func _sample_at_or_before(step: int) -> int:
+  var lower := 0
+  var upper := output_samples.size()
+  while lower < upper:
+    var middle := (lower + upper) >> 1
+    if output_samples[middle].step <= step: lower = middle + 1
+    else: upper = middle
+  return lower - 1
+
+func _recent_rate(key: String, measured_steps: int) -> float:
+  if measured_steps <= 0: return 0.0
+  var previous := _sample_at_or_before(sampled_step - measured_steps)
+  var old_count := _goal_count(output_samples[previous].counts, key) if previous >= 0 else 0
+  return float(_goal_count(sampled_counts, key) - old_count) / measured_steps
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
   var cell := screen_to_cell(screen_position)
@@ -735,28 +778,30 @@ func _clear_stats() -> void:
   next_forecast_at = WATCH_STEPS
   last_hud_update = 0.0
   total_counts.clear()
-  recent_counts.clear()
-  step_counts.clear()
-  recent_samples.clear()
+  output_samples.clear()
+  sampled_counts = {}
+  sampled_step = 0
+  output_changed = false
   elapsed = 0.0
   if is_instance_valid(diagnostic_overlay): diagnostic_overlay.clear_events()
 
 func _on_particle_detected(name: String) -> void:
   for key in PARTICLES.detection_keys(name):
     total_counts[key] = int(total_counts.get(key, 0)) + 1
-    recent_counts[key] = int(recent_counts.get(key, 0)) + 1
-    step_counts[key] = int(step_counts.get(key, 0)) + 1
+  output_changed = true
 
 func _on_simulation_stepped(delta: float) -> void:
   if not simulating or completed: return
   elapsed += delta
-  if not step_counts.is_empty():
-    recent_samples.append({"time": elapsed, "counts": step_counts})
-    step_counts = {}
-  while not recent_samples.is_empty() and recent_samples.front().time <= elapsed - RECENT_STEPS + 0.000001:
-    var expired: Dictionary = recent_samples.pop_front().counts
-    for key in expired:
-      recent_counts[key] -= expired[key]
+  var whole_step := floori(elapsed + 0.000001)
+  if whole_step > sampled_step:
+    sampled_step = whole_step
+    if output_changed:
+      sampled_counts = total_counts.duplicate()
+      output_samples.append({"step": sampled_step, "counts": sampled_counts})
+      output_changed = false
+      var cutoff := _sample_at_or_before(sampled_step - MAX_METER_STEPS)
+      if cutoff >= 64: output_samples = output_samples.slice(cutoff)
   if elapsed - last_hud_update >= 0.6:
     last_hud_update = elapsed
     _refresh_output()
@@ -765,14 +810,18 @@ func _on_simulation_stepped(delta: float) -> void:
   for goal in level.goals:
     for tier in range(3):
       var eligible := true
+      var window_chunks := 1
       for key in goal:
         var threshold: float = goal[key][tier]
         if key == "cost":
           if cost > threshold: eligible = false
         elif is_inf(threshold) or (threshold > 0.0 and _goal_count(total_counts, key) == 0):
           eligible = false
+        elif threshold > 0.0:
+          var chunks_needed := FORECAST_TARGET_COUNT / (threshold * FORECAST_WINDOW_STEPS)
+          window_chunks = maxi(window_chunks, ceili(minf(chunks_needed, MAX_FORECAST_CHUNKS_PER_WINDOW)))
       if eligible:
-        forecast_candidates.append({"goal": goal, "tier": tier})
+        forecast_candidates.append({"goal": goal, "tier": tier, "window_chunks": window_chunks, "previous_counts": {}})
   if not forecast_candidates.is_empty():
     forecast = FORECAST.new(self, buildings, FORECAST_WINDOW_STEPS)
 
@@ -780,16 +829,26 @@ func _process(_delta: float) -> void:
   if forecast == null or not forecast.advance(): return
   for key in forecast.counts:
     forecast_counts[key] = int(forecast_counts.get(key, 0)) + int(forecast.counts[key])
-  forecast_windows += 1
-  var finished := forecast_windows == FORECAST_WINDOWS
-  var stars := 0
+  forecast_chunks += 1
   for i in range(forecast_candidates.size() - 1, -1, -1):
     var candidate := forecast_candidates[i]
-    if not _meets_output(candidate, forecast.counts, FORECAST_WINDOW_STEPS, true):
+    var stars: int = candidate.tier + 1
+    if stars <= forecast_best_stars:
       forecast_candidates.remove_at(i)
-    elif finished and _meets_output(candidate, forecast_counts, FORECAST_WINDOWS * FORECAST_WINDOW_STEPS, false):
-      stars = maxi(stars, candidate.tier + 1)
-  if finished or forecast_candidates.is_empty():
+      continue
+    var chunks: int = candidate.window_chunks
+    if forecast_chunks % chunks != 0: continue
+    var window_steps := FORECAST_WINDOW_STEPS * chunks
+    if not _meets_output(candidate, forecast_counts, window_steps, candidate.previous_counts):
+      forecast_candidates.remove_at(i)
+    elif forecast_chunks == chunks * FORECAST_WINDOWS:
+      if _meets_output(candidate, forecast_counts, window_steps * FORECAST_WINDOWS):
+        forecast_best_stars = stars
+      forecast_candidates.remove_at(i)
+    else:
+      candidate.previous_counts = forecast_counts.duplicate()
+  if forecast_candidates.is_empty() or forecast_best_stars == 3:
+    var stars := forecast_best_stars
     _cancel_forecast()
     next_forecast_at = elapsed + 8.0
     if stars > 0: _finish_run(stars)
@@ -800,7 +859,8 @@ func _cancel_forecast() -> void:
     forecast = null
   forecast_candidates.clear()
   forecast_counts.clear()
-  forecast_windows = 0
+  forecast_chunks = 0
+  forecast_best_stars = 0
 
 func _finish_run(stars: int) -> void:
   completed = true
@@ -810,10 +870,13 @@ func _finish_run(stars: int) -> void:
   _refresh_ui()
   var stats := ""
   for kind in total_counts:
-    stats += "\n%s: %d total · %.2f/step recent" % [PARTICLES.label(kind), int(total_counts[kind]), float(recent_counts.get(kind, 0)) / RECENT_STEPS]
+    var run_rate := float(total_counts[kind]) / elapsed if elapsed > 0.0 else 0.0
+    stats += "\n%s: %d total · %s/step live avg" % [PARTICLES.label(kind), int(total_counts[kind]), OUTPUT_METER.format_rate(run_rate)]
   if stats.is_empty(): stats = "\nNo particles detected"
-  results.dialog_text = "%d star(s) earned\nBuild cost: $%d\n\nDetected%s" % [stars, cost, stats]
-  results.popup_centered()
+  results_text.text = "%d star(s) earned\nBuild cost: $%d\n\nDetected%s" % [stars, cost, stats]
+  results_text.scroll_to_line(0)
+  var height := clampi(132 + stats.count("\n") * 25, 210, 520)
+  results.popup_centered_clamped(Vector2i(480, height), 0.88)
 
 func _goal_count(counts: Dictionary, key: String) -> int:
   if not (key.begins_with("[") and key.ends_with("]")):
@@ -826,14 +889,14 @@ func _goal_count(counts: Dictionary, key: String) -> int:
     total += int(counts.get(name, 0))
   return total
 
-func _meets_output(candidate: Dictionary, counts: Dictionary, steps: float, allow_fraction: bool) -> bool:
+func _meets_output(candidate: Dictionary, counts: Dictionary, steps: float, previous_counts := {}) -> bool:
   for key in candidate.goal:
     if key == "cost": continue
-    var required: float = candidate.goal[key][candidate.tier] * steps
-    # A whole-particle count can round down in one window. The full forecast
-    # still has to meet the authored average.
-    if allow_fraction: required = floorf(required + 0.000001)
-    if _goal_count(counts, key) + 0.000001 < required: return false
+    var threshold: float = candidate.goal[key][candidate.tier]
+    if is_inf(threshold): return false
+    if threshold <= 0.0: continue
+    var required := maxf(1.0, floorf(threshold * steps + 0.000001))
+    if _goal_count(counts, key) - _goal_count(previous_counts, key) < required: return false
   return true
 
 func _on_particle_event(kind: String, at: Vector2) -> void:

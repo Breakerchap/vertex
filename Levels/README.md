@@ -1,15 +1,17 @@
 # Levels
 
-The level selector reads the `.level` files in this directory and the game's custom levels folder. Coordinates start at the bottom-left and ranges include both ends. Directions are `E`, `SE`, `S`, `SW`, `W`, `NW` and `N`. Optional `title` and `hint` declarations set the displayed name and objective hint.
+The level selector reads the bundled `.level` files and files in the game's custom levels folder. Use **Custom levels folder** on the level screen to open it in Finder or your desktop file manager. The editor uses your system's Open and Save dialogs where available. You can work on files elsewhere, but save a copy in the custom levels folder to see it on the level screen. Bundled levels are read-only; use **Save as…** to keep an edited copy.
+
+Coordinates start at the bottom-left and ranges include both ends. Directions are `E`, `SE`, `S`, `SW`, `W`, `NW` and `N`. Optional `title` and `hint` declarations set the displayed name and objective hint.
 
 ## Editor and playtest
 
-- Pick a building and click the grid to place it. Right-click to select an existing building. Press **Delete** to remove the selection. Inspector changes apply automatically to the selected tile unless **Edit all cells in range** is enabled.
+- Pick a building and click the grid to place it. Right-click (secondary click on a trackpad) to select an existing building. Press **Delete** or **Backspace** to remove the selection. Inspector changes apply automatically to the selected tile unless **Edit all cells in range** is enabled.
 - Select **Block area** and drag across the grid to mark a rectangle where players cannot place or move buildings. Use **Unblock area** to clear part or all of it. Click once for a single cell. Orange shading shows the restricted area in the editor and during play. Players cannot add an edge wall along the boundary from either side. You can still place starting buildings there in the editor, and particles travel through the area normally. The source form is `no_build: {x=2..5, y=1..3};`.
-- **Ctrl+C** copies the selection. Hover over the destination and press **Ctrl+V**, or click **Paste** and then choose a destination. With a range selected, the paste location is the first tile of the copied range.
+- Use **Cmd** on macOS and **Ctrl** on Windows and Linux. **Cmd/Ctrl+C** copies the selection. Hover over the destination and press **Cmd/Ctrl+V**, or click **Paste** and then choose a destination. With a range selected, the paste location is the first tile of the copied range.
 - In **Level settings**, choose how players rotate. Eight directions use 45-degree turns and four directions use 90-degree turns. The source form is `rotation: 4;` or `rotation: 8;` on its own line. An emitter or reflector can override the level setting with its own rotation option. Its source form is `rotation=4` or `rotation=8` inside the building declaration. The direction picker can still author diagonal directions.
 - `fixed=p` locks position, `fixed=r` locks rotation, and `fixed=rp` locks both. Magnets use `c` to lock polarity.
-- **Ctrl+Z** and **Ctrl+Y** undo and redo changes. **Ctrl+S** saves and **Ctrl+Shift+S** opens Save As. **Playtest** uses a separate copy of the board with the authored inventory and locks. The editor shows the last valid board if a source edit has an error.
+- **Cmd/Ctrl+Z** and **Cmd/Ctrl+Shift+Z** undo and redo changes. **Cmd/Ctrl+N** starts a new level, **Cmd/Ctrl+O** opens one, **Cmd/Ctrl+S** saves, and **Cmd/Ctrl+Shift+S** opens Save As. **Playtest** uses a separate copy of the board with the authored inventory and locks. The editor shows the last valid board if a source edit has an error.
 
 **Space** plays or pauses, **.** requests one step, **B** returns to build mode, and **X** resets the level. A grid tick contains 15 simulation ticks, and a step contains four grid ticks. The step button advances one grid tick. Pausing finishes the current step. **Esc** clears the current selection and resets the level editor preview if it is running.
 
@@ -21,7 +23,7 @@ Detectors absorb particles and count those that match their expression. For exam
 
 Each goal has three thresholds, one for each star. Conditions in one goal are required together, and separate goal blocks offer alternative solutions. For example, `goal: {[electron OR positron]: 0.25/step, 0.5/step, 0.75/step; cost: inf, 30, 20};` combines the counts of electrons and positrons and adds a cost limit for the higher tiers. Old `/s` values still load and are converted to per-step rates.
 
-Output meters show rates over the most recent eight steps. From step 28 onward, the game can run an isolated 240-step forecast to check sustained output before awarding stars. Best results are kept across launches.
+Output meters use the last eight completed steps for normal targets and look back farther for slower targets (up to 2,400 steps). Hover over a rate to see how much time it covers. From step 28 onward, the game can run a separate forecast before awarding stars. Each tier is checked across six windows, normally 40 steps each; windows can grow to 1,200 steps for sparse targets. The forecast allows for discrete particles at window boundaries, but a single detection or a burst followed by silence does not earn stars for a positive rate. Best results are kept across launches.
 
 ## Gluons and Z bosons
 

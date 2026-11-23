@@ -58,6 +58,22 @@ static func button(parent: Node, text: String, action: Callable) -> Button:
   parent.add_child(control)
   return control
 
+static func setup_dialog(dialog: Window, parent: Node, title: String) -> void:
+  dialog.title = title
+  dialog.theme = theme()
+  dialog.transient = true
+  dialog.exclusive = true
+  parent.add_child(dialog)
+
+static func shortcut_label(key: String) -> String:
+  return ("Cmd+" if OS.has_feature("macos") else "Ctrl+") + key
+
+static func is_primary_shortcut(event: InputEventKey) -> bool:
+  return event.is_command_or_control_pressed() and not event.alt_pressed and not (event.ctrl_pressed and event.meta_pressed)
+
+static func delete_key_label() -> String:
+  return "Delete" if OS.has_feature("macos") else "Del"
+
 static func heading(label: Label, size: int = 19) -> void:
   label.add_theme_font_size_override("font_size", size)
   label.add_theme_color_override("font_color", TEXT)

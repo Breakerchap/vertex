@@ -15,7 +15,7 @@ const SCENES := {
   "pusher": preload("res://Buildings/GridDevices/pusher.tscn"),
 }
 const COSTS := {"reflector": 15, "wall": 5, "emitter": 40, "detector": 30, "magnet": 20,
-  "gate": 15, "glass": 10, "filter": 10, "edge_wall": 5, "holder": 15, "pusher": 15}
+  "gate": 15, "glass": 10, "filter": 10, "edge_wall": 5, "holder": 40, "pusher": 15}
 
 const DIRECTIONS := SimulationGrid.DIRECTIONS
 const CARDINALS := ["E", "S", "W", "N"]

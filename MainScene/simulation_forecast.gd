@@ -3,15 +3,18 @@ extends RefCounted
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const BOSON = preload("res://Particles/Boson/boson.gd")
 const FRAME_BUDGET_USEC := 3000
+const TICKS_PER_SIMULATION_STEP := SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP
 
 var shadow: ParticleSimulation
 var counts: Dictionary = {}
 var ticks_per_window: int
 var ticks_remaining := 0
+var emitters: Array[ParticleEmitter] = []
+var has_rails := false
 
 ## Copy the board and in-flight state so the prediction never advances the live run.
 func _init(source: ParticleSimulation, buildings: Array[Node], steps: float) -> void:
-  ticks_per_window = roundi(steps * SimulationGrid.GRID_TICKS_PER_STEP * SimulationGrid.TICKS_PER_STEP)
+  ticks_per_window = roundi(steps * TICKS_PER_SIMULATION_STEP)
   shadow = ParticleSimulation.new()
   shadow.running = false
   shadow.level_bounds_enabled = source.level_bounds_enabled
@@ -32,12 +35,14 @@ func _init(source: ParticleSimulation, buildings: Array[Node], steps: float) -> 
     building_copies[original] = copy
     match kind:
       "emitter":
+        emitters.append(copy)
         copy._continuous = original._continuous
         copy._pending = original._pending.duplicate()
         copy._sequence_template = original._sequence_template.duplicate()
         copy._time_until_next = original._time_until_next
       "gate": copy.gate_open = original.gate_open
       "pusher": copy.push_up = original.push_up
+      "rail": has_rails = true
   var particle_copies := {}
   for original in source._particles():
     var copy := PARTICLES.instantiate(original.flavour, original.isAnti, original.colour)
@@ -87,6 +92,8 @@ func advance() -> bool:
     ticks_remaining = ticks_per_window
   var deadline := Time.get_ticks_usec() + FRAME_BUDGET_USEC
   while ticks_remaining > 0:
+    _skip_idle_steps()
+    if ticks_remaining == 0: break
     shadow.step_simulation(SimulationGrid.TICK)
     for child in shadow.get_children():
       if child is Particle and child.is_queued_for_deletion():
@@ -94,6 +101,19 @@ func advance() -> bool:
     ticks_remaining -= 1
     if Time.get_ticks_usec() >= deadline: break
   return ticks_remaining == 0
+
+func _skip_idle_steps() -> void:
+  if has_rails or ticks_remaining < TICKS_PER_SIMULATION_STEP: return
+  var idle_steps := float(ticks_remaining) / TICKS_PER_SIMULATION_STEP
+  for emitter in emitters:
+    if emitter._continuous or not emitter._pending.is_empty():
+      idle_steps = minf(idle_steps, emitter._time_until_next - ParticleSimulation.EPSILON)
+      if idle_steps < 1.0: return
+  var whole_steps := floori(idle_steps)
+  if not shadow._particles().is_empty(): return
+  for emitter in emitters:
+    if emitter._continuous or not emitter._pending.is_empty(): emitter._time_until_next -= whole_steps
+  ticks_remaining -= whole_steps * TICKS_PER_SIMULATION_STEP
 
 func dispose() -> void:
   shadow.queue_free()

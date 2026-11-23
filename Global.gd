@@ -3,6 +3,28 @@ extends Node
 var selected_level: String = ""
 
 const PROGRESS_FILE := "user://level_progress.cfg"
+const CUSTOM_LEVELS := "user://levels"
+
+func _ready() -> void:
+  if not OS.has_feature("pc") or DisplayServer.get_name() == "headless" or Engine.is_embedded_in_editor(): return
+  var window := get_window()
+  var screen := window.current_screen
+  var usable := DisplayServer.screen_get_usable_rect(screen)
+  if not usable.has_area(): return
+  var scale := DisplayServer.screen_get_max_scale() if OS.has_feature("macos") else 1.0
+  var current_size := window.size
+  var limit := Vector2i(Vector2(usable.size) * 0.9)
+  window.min_size = Vector2i(Vector2(800, 500) * scale).min(limit)
+  if window.mode != Window.MODE_WINDOWED or current_size != window.content_scale_size: return
+  var preferred := Vector2(window.content_scale_size) * scale
+  var fit := minf(1.0, minf(limit.x / preferred.x, limit.y / preferred.y))
+  var initial_size := Vector2i(preferred * fit)
+  if initial_size != window.size:
+    window.size = initial_size
+    window.position = usable.position + Vector2i(Vector2(usable.size - window.size) * 0.5)
+
+func ensure_custom_levels() -> Error:
+  return DirAccess.make_dir_recursive_absolute(CUSTOM_LEVELS)
 
 func best_stars(level_path: String) -> int:
   var progress := ConfigFile.new()
@@ -23,7 +45,7 @@ func _stored_stars(progress: ConfigFile, level_path: String) -> int:
 
 func level_paths() -> Array[String]:
   var result: Array[String] = []
-  for directory in ["res://Levels", "user://levels"]:
+  for directory in ["res://Levels", CUSTOM_LEVELS]:
     if not DirAccess.dir_exists_absolute(directory): continue
     var files := DirAccess.get_files_at(directory)
     files.sort()

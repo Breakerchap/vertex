@@ -34,6 +34,8 @@ var height_input: SpinBox
 var file_dialog: FileDialog
 var confirm: ConfirmationDialog
 var path := ""
+var last_file_directory := ""
+var return_to_source := false
 var saved_text := NEW_LEVEL
 var pending_action := ""
 var blocks: Array[Dictionary] = []
@@ -74,32 +76,37 @@ func _exit_tree() -> void:
   get_tree().auto_accept_quit = true
 
 func _unhandled_key_input(event: InputEvent) -> void:
-  if is_instance_valid(test_game): return
-  if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+  if is_instance_valid(test_game) or not (event is InputEventKey and event.pressed and not event.echo): return
+  if UI.is_primary_shortcut(event):
+    if game.simulating: return
+    if event.keycode == KEY_S:
+      if event.shift_pressed: _save_as()
+      else: _save()
+    elif event.keycode == KEY_Z:
+      if event.shift_pressed: _redo_editor()
+      else: _undo_editor()
+    elif event.shift_pressed: return
+    elif event.keycode == KEY_N: _request_action("new")
+    elif event.keycode == KEY_O: _request_action("open")
+    elif event.keycode == KEY_Y: _redo_editor()
+    elif event.keycode == KEY_C: _copy_selected()
+    elif event.keycode == KEY_V: _paste_at_cursor()
+    else: return
+  elif event.get_modifiers_mask() != 0: return
+  elif event.keycode == KEY_ESCAPE:
     if game.simulating: _reset_preview()
     _select_move_tool()
-    get_viewport().set_input_as_handled()
-    return
-  if event is InputEventKey and event.pressed and not event.echo and not game.simulating:
-    if event.ctrl_pressed:
-      if event.keycode == KEY_S:
-        if event.shift_pressed: _save_as()
-        else: _save()
-      elif event.keycode == KEY_Z:
-        if event.shift_pressed: _redo_editor()
-        else: _undo_editor()
-      elif event.keycode == KEY_Y: _redo_editor()
-      elif event.keycode == KEY_C: _copy_selected()
-      elif event.keycode == KEY_V: _paste_at_cursor()
-      else: return
-      get_viewport().set_input_as_handled()
-      return
-    if event.keycode == KEY_Q: _rotate_block(-1)
-    elif event.keycode in [KEY_E, KEY_R]: _rotate_block(1)
-    elif event.keycode == KEY_DELETE: _delete_selected()
+  elif game.simulating: return
+  elif event.keycode == KEY_Q: _rotate_block(-1)
+  elif event.keycode in [KEY_E, KEY_R]: _rotate_block(1)
+  elif event.keycode in [KEY_DELETE, KEY_BACKSPACE]: _delete_selected()
+  else: return
+  get_viewport().set_input_as_handled()
 
 func _notification(what: int) -> void:
-  if what == NOTIFICATION_WM_CLOSE_REQUEST:
+  if what == NOTIFICATION_WM_CLOSE_REQUEST and is_instance_valid(confirm) and not confirm.visible:
+    for dialog in [source_dialog, settings_dialog, inspector_dialog]:
+      dialog.hide()
     _request_action("quit")
 
 func _build_workspace() -> void:
@@ -139,15 +146,15 @@ func _build_workspace() -> void:
   var bar := HFlowContainer.new()
   bar.add_theme_constant_override("separation", 6)
   column.add_child(bar)
-  UI.button(bar, "New", func() -> void: _request_action("new"))
-  UI.button(bar, "Open...", func() -> void: _request_action("open"))
-  UI.button(bar, "Save", _save)
-  UI.button(bar, "Save as...", _save_as)
-  UI.button(bar, "Undo", _undo_editor)
-  UI.button(bar, "Redo", _redo_editor)
-  UI.button(bar, "Copy", _copy_selected).tooltip_text = "Copy the selected building (Ctrl+C)"
-  UI.button(bar, "Paste", _start_paste).tooltip_text = "Click a cell to paste the copied building"
-  UI.button(bar, "Source…", func() -> void: source_dialog.popup_centered_ratio(0.7))
+  UI.button(bar, "New", func() -> void: _request_action("new")).tooltip_text = UI.shortcut_label("N")
+  UI.button(bar, "Open…", func() -> void: _request_action("open")).tooltip_text = UI.shortcut_label("O")
+  UI.button(bar, "Save", _save).tooltip_text = UI.shortcut_label("S")
+  UI.button(bar, "Save as…", _save_as).tooltip_text = UI.shortcut_label("Shift+S")
+  UI.button(bar, "Undo", _undo_editor).tooltip_text = UI.shortcut_label("Z")
+  UI.button(bar, "Redo", _redo_editor).tooltip_text = UI.shortcut_label("Shift+Z")
+  UI.button(bar, "Copy", _copy_selected).tooltip_text = "Copy the selected building (%s)" % UI.shortcut_label("C")
+  UI.button(bar, "Paste", _start_paste).tooltip_text = "Click a cell to paste, or hover over it and press %s" % UI.shortcut_label("V")
+  UI.button(bar, "Source…", _open_source)
   UI.button(bar, "Levels", func() -> void: _request_action("back"))
   status = Label.new()
   status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -202,7 +209,7 @@ func _build_inspector(hud: CanvasLayer) -> void:
   var inspector_actions := HFlowContainer.new()
   inspector_column.add_child(inspector_actions)
   UI.button(inspector_actions, "Tools", _select_move_tool)
-  UI.button(inspector_actions, "Delete  Del", _delete_selected)
+  UI.button(inspector_actions, "Remove  " + UI.delete_key_label(), _delete_selected)
   var inspector_scroll := ScrollContainer.new()
   inspector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
   inspector_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -219,14 +226,15 @@ func _build_inspector(hud: CanvasLayer) -> void:
 
 func _build_dialogs() -> void:
   inspector_dialog = AcceptDialog.new()
-  inspector_dialog.title = "Properties"
-  inspector_dialog.min_size = Vector2i(420, 250)
-  inspector_dialog.theme = UI.theme()
   inspector_dialog.ok_button_text = "Close"
-  add_child(inspector_dialog)
+  UI.setup_dialog(inspector_dialog, self, "Properties")
+  var scroll := ScrollContainer.new()
+  scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+  inspector_dialog.add_child(scroll)
   var inspector := VBoxContainer.new()
+  inspector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   inspector.add_theme_constant_override("separation", 8)
-  inspector_dialog.add_child(inspector)
+  scroll.add_child(inspector)
   property_form = VBoxContainer.new()
   inspector.add_child(property_form)
   declaration_error = UI.label("")
@@ -240,10 +248,10 @@ func _build_dialogs() -> void:
 
 func _build_source_dialog() -> void:
   source_dialog = AcceptDialog.new()
-  source_dialog.title = "Level source"
-  source_dialog.theme = UI.theme()
   source_dialog.ok_button_text = "Close"
-  add_child(source_dialog)
+  UI.setup_dialog(source_dialog, self, "Level source")
+  var column := VBoxContainer.new()
+  source_dialog.add_child(column)
   source = CodeEdit.new()
   source.set_draw_line_numbers(true)
   var highlighter := CodeHighlighter.new()
@@ -255,24 +263,33 @@ func _build_source_dialog() -> void:
   for word in ["x", "y", "fixed", "rate", "AND", "OR"]:
     highlighter.add_keyword_color(word, Color("b5a6f1"))
   source.syntax_highlighter = highlighter
-  source.custom_minimum_size = Vector2(360, 300)
+  source.size_flags_vertical = Control.SIZE_EXPAND_FILL
   source.text_changed.connect(_source_changed)
-  source_dialog.add_child(source)
+  source.gui_input.connect(_handle_source_shortcut)
+  column.add_child(source)
   source_error = UI.label("")
-  source_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-  source_dialog.add_child(source_error)
+  source_error.max_lines_visible = 3
+  source_error.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+  source_error.add_theme_color_override("font_color", UI.ERROR)
+  column.add_child(source_error)
+
+func _open_source() -> void:
+  source_dialog.popup_centered_clamped(Vector2i(840, 560), 0.88)
+  source.grab_focus()
+
+func _handle_source_shortcut(event: InputEvent) -> void:
+  if not (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_S and UI.is_primary_shortcut(event)): return
+  source.accept_event()
+  if event.shift_pressed: _save_as()
+  else: _save()
 
 func _build_settings_dialog() -> void:
   settings_dialog = AcceptDialog.new()
-  settings_dialog.title = "Level settings"
-  settings_dialog.min_size = Vector2i(480, 420)
-  settings_dialog.theme = UI.theme()
   settings_dialog.ok_button_text = "Cancel"
-  add_child(settings_dialog)
+  UI.setup_dialog(settings_dialog, self, "Level settings")
   var settings_root := VBoxContainer.new()
   settings_dialog.add_child(settings_root)
   var settings_scroll := ScrollContainer.new()
-  settings_scroll.custom_minimum_size = Vector2(440, 320)
   settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
   settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
   settings_root.add_child(settings_scroll)
@@ -323,13 +340,16 @@ func _build_settings_dialog() -> void:
 func _build_file_dialogs() -> void:
   file_dialog = FileDialog.new()
   file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-  file_dialog.filters = PackedStringArray(["*.level ; Level files"])
+  file_dialog.use_native_dialog = true
+  file_dialog.mode_overrides_title = false
   file_dialog.file_selected.connect(_file_selected)
-  add_child(file_dialog)
+  file_dialog.canceled.connect(_restore_source_after_file_dialog)
+  UI.setup_dialog(file_dialog, self, "Open level")
   confirm = ConfirmationDialog.new()
   confirm.dialog_text = "Discard unsaved changes?"
-  confirm.confirmed.connect(_perform_pending_action)
-  add_child(confirm)
+  confirm.ok_button_text = "Discard changes"
+  confirm.confirmed.connect(_perform_pending_action, CONNECT_DEFERRED)
+  UI.setup_dialog(confirm, self, "Unsaved level")
 
 func _select_move_tool() -> void:
   _select_palette_kind("")
@@ -390,6 +410,7 @@ func _source_changed() -> void:
   if parsed.has("error"):
     _set_area_tool(AreaTool.NONE)
     source_error.text = "Source error: " + str(parsed.error)
+    source_error.tooltip_text = source_error.text
     status.text = "Invalid source • Showing last valid board"
     status.tooltip_text = str(parsed.error)
     status.add_theme_color_override("font_color", UI.ERROR)
@@ -417,6 +438,7 @@ func _update_level_status() -> void:
   status.tooltip_text = "\n".join(warnings)
   status.add_theme_color_override("font_color", UI.MUTED)
   source_error.text = "\n".join(warnings)
+  source_error.tooltip_text = source_error.text
 
 # Mask comments without changing offsets so editing preserves the original text.
 func _index_blocks() -> void:
@@ -866,7 +888,7 @@ func _open_properties() -> void:
   if not edit_range: declaration = _single_declaration(declaration, selected_cell)
   declaration_error.text = ""
   _build_property_form(declaration)
-  inspector_dialog.popup_centered()
+  inspector_dialog.popup_centered_clamped(Vector2i(560, 340), 0.88)
 
 func _clear_property_form() -> void:
   property_fields.clear()
@@ -1057,8 +1079,7 @@ func _open_settings() -> void:
     _add_goal_group(parsed.goals[i], parsed.goal_targets[i], i)
   for kind in inventory_fields:
     inventory_fields[kind].value = int(parsed.inventory.get(kind, 0))
-  var available := Vector2i(get_viewport_rect().size)
-  settings_dialog.popup_centered(Vector2i(mini(620, available.x - 40), mini(660, available.y - 60)))
+  settings_dialog.popup_centered_clamped(Vector2i(620, 660), 0.88)
 
 func _apply_settings() -> void:
   var old_goals := {}
@@ -1226,40 +1247,75 @@ func _perform_pending_action() -> void:
       saved_text = NEW_LEVEL
       _set_source(NEW_LEVEL)
     "open":
-      file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-      file_dialog.current_dir = ProjectSettings.globalize_path("res://Levels")
-      file_dialog.popup_centered_ratio(0.8)
+      _show_file_dialog(FileDialog.FILE_MODE_OPEN_FILE)
     "back": get_tree().change_scene_to_file("res://MainScene/level_select.tscn")
     "quit": get_tree().quit()
 
 func _save() -> void:
-  if path.is_empty(): _save_as()
+  if path.is_empty() or _is_bundled_level(path): _save_as()
   else: _write_file(path)
 
 func _save_as() -> void:
-  DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://levels"))
-  file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-  file_dialog.current_dir = ProjectSettings.globalize_path("user://levels")
-  file_dialog.current_file = path.get_file() if not path.is_empty() else "new-level.level"
-  file_dialog.popup_centered_ratio(0.8)
+  if not _can_save(): return
+  _show_file_dialog(FileDialog.FILE_MODE_SAVE_FILE)
+
+func _show_file_dialog(mode: FileDialog.FileMode) -> void:
+  if file_dialog.visible: return
+  var directory := last_file_directory
+  if directory.is_empty() or not DirAccess.dir_exists_absolute(directory):
+    var error := Global.ensure_custom_levels()
+    directory = ProjectSettings.globalize_path(Global.CUSTOM_LEVELS if error == OK else "user://")
+  var saving := mode == FileDialog.FILE_MODE_SAVE_FILE
+  file_dialog.file_mode = mode
+  file_dialog.title = "Save Vertex level (.level)" if saving else "Open level"
+  file_dialog.filters = PackedStringArray() if saving else PackedStringArray(["*.level ; Vertex levels"])
+  file_dialog.current_dir = directory
+  file_dialog.current_file = (path.get_file() if not path.is_empty() else "new-level.level") if saving else ""
+  return_to_source = source_dialog.visible
+  if return_to_source: source_dialog.hide()
+  file_dialog.popup_centered_clamped(Vector2i(820, 560), 0.88)
+
+func _restore_source_after_file_dialog() -> void:
+  if not return_to_source: return
+  return_to_source = false
+  _open_source.call_deferred()
+
+func _is_bundled_level(target: String) -> bool:
+  return ProjectSettings.localize_path(target.simplify_path()).begins_with("res://Levels/")
 
 func _file_selected(selected_path: String) -> void:
+  _restore_source_after_file_dialog()
   if file_dialog.file_mode == FileDialog.FILE_MODE_SAVE_FILE:
-    if not selected_path.to_lower().ends_with(".level"): selected_path += ".level"
+    if not selected_path.to_lower().ends_with(".level"):
+      selected_path += ".level"
+      if FileAccess.file_exists(selected_path):
+        status.text = "A file named %s already exists. Select it explicitly to replace it." % selected_path.get_file()
+        return
     _write_file(selected_path)
   else:
+    if not selected_path.to_lower().ends_with(".level"):
+      status.text = "Choose a .level file."
+      return
     var file := FileAccess.open(selected_path, FileAccess.READ)
     if file == null:
       status.text = "Could not open file: " + error_string(FileAccess.get_open_error())
       return
     path = selected_path
+    if not _is_bundled_level(path): last_file_directory = path.get_base_dir()
     saved_text = file.get_as_text()
     _set_source(saved_text)
 
-func _write_file(target: String) -> void:
+func _can_save() -> bool:
   var data: Dictionary = PARSER.parse(source.text)
   if data.has("error"):
     status.text = "Cannot save: " + str(data.error)
+    return false
+  return true
+
+func _write_file(target: String) -> void:
+  if not _can_save(): return
+  if _is_bundled_level(target):
+    status.text = "Built-in levels are read-only. Save a copy in another folder."
     return
   var file := FileAccess.open(target, FileAccess.WRITE)
   if file == null:
@@ -1271,6 +1327,7 @@ func _write_file(target: String) -> void:
     status.text = "Could not write file: " + error_string(file.get_error())
     return
   path = target
+  last_file_directory = target.get_base_dir()
   saved_text = source.text
   _source_changed()
 

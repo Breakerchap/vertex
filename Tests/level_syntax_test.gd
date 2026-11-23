@@ -42,9 +42,13 @@ func _ready() -> void:
   game.buildings[0].free()
   game.buildings.clear()
   var candidate := {"goal": level.goals[0], "tier": 0}
-  assert(game._meets_output(candidate, {"electron": 10, "positron": 0}, 10.0, false))
-  assert(game._meets_output(candidate, {"electron": 6, "positron": 4}, 10.0, false))
-  assert(not game._meets_output(candidate, {"electron": 9, "positron": 0}, 10.0, false))
+  assert(game._meets_output(candidate, {"electron": 10, "positron": 0}, 10.0))
+  assert(game._meets_output(candidate, {"electron": 6, "positron": 4}, 10.0))
+  assert(not game._meets_output(candidate, {"electron": 9, "positron": 0}, 10.0))
+  var slow_candidate := {"goal": {"electron": [1.0 / 300.0]}, "tier": 0}
+  assert(game._meets_output(slow_candidate, {"electron": 6}, 1920.0), "A partial cycle at the edge may round down.")
+  assert(not game._meets_output(slow_candidate, {"electron": 5}, 1920.0), "Only the fractional part may round down.")
+  assert(not game._meets_output(slow_candidate, {"electron": 6}, 320.0, {"electron": 6}), "Earlier detections cannot cover a silent window.")
   assert(game._goal_count({"up": 4, "up_r": 2}, "[up,up_r]") == 4)
   game._place_building(level.buildings[2], false)
   game.selected_building = game.buildings[0]
@@ -101,13 +105,11 @@ func _ready() -> void:
       if child is Particle and child.is_queued_for_deletion(): child.free()
   assert(game.forecast != null)
   assert(game.get_playback_speed() == 2.0)
-  assert(game.recent_counts.positron > 0)
+  assert(game._recent_rate("positron", 8) > 0.0)
   var live_counts: Dictionary = game.total_counts.duplicate()
-  var forecast_deadline := Time.get_ticks_msec() + 20000
-  while game.forecast != null and not game.completed and Time.get_ticks_msec() < forecast_deadline:
-    await get_tree().process_frame
-  assert(game.completed, "A positron beam meeting the grouped goal should complete the level")
-  assert(game.results.dialog_text.begins_with("1 star(s) earned"))
+  _advance_forecast(game)
+  assert(game.completed, "A positron beam meeting the grouped goal should complete the level (live=%s, chunks=%d, forecast=%s)" % [live_counts, game.forecast_chunks, game.forecast_counts])
+  assert(game.results_text.text.begins_with("1 star(s) earned"))
   assert(game.total_counts == live_counts, "The forecast must leave the live simulation alone")
   game.stop_to_build()
   game.begin_run()
@@ -116,5 +118,49 @@ func _ready() -> void:
   game.elapsed = game.WATCH_STEPS
   assert(game.get_playback_speed() == 0.5, "A manual speed should override the automatic ramp")
   game.free()
+  _check_sparse_output()
+  _check_one_off_output()
   print("Level syntax checks passed")
   get_tree().quit()
+
+func _advance_forecast(game: Node2D) -> void:
+  var deadline := Time.get_ticks_msec() + 30000
+  while game.forecast != null and Time.get_ticks_msec() < deadline:
+    game._process(0.0)
+  assert(game.forecast == null, "The forecast did not finish within the test budget.")
+
+func _run_sparse_level(goal: String, repeating: bool) -> Node2D:
+  var game: Node2D = GAME.instantiate()
+  game.editor_playtest = true
+  game.level_override = PARSER.parse("3 x 2; goal: {electron: %s}; emitter: {x=0,y=0,E,[electron],rate=1/300}; detector: {x=2,y=0,[electron]};" % goal)
+  get_tree().root.add_child(game)
+  game.begin_run()
+  game.buildings[0].repeat_sequence = repeating
+  for tick in range(roundi(SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP * game.WATCH_STEPS)):
+    game.step_simulation(SimulationGrid.TICK)
+    for child in game.get_children():
+      if child is Particle and child.is_queued_for_deletion(): child.free()
+  assert(game.total_counts.get("electron", 0) == 1 and game.forecast != null)
+  return game
+
+func _check_sparse_output() -> void:
+  var game := _run_sparse_level("1/300, 1/200, 1/100", true)
+  game._refresh_output()
+  assert(game.output_rows[0].meter.sample_steps == game.WATCH_STEPS)
+  assert(game.output_rows[0].meter.rate > 0.0, "The live meter should not forget a sparse stream after eight steps.")
+  _advance_forecast(game)
+  assert(game.completed and game.results_text.text.begins_with("1 star(s) earned"), "A sustained particle every 300 steps should meet only the lowest tier.")
+  assert(game.total_counts.get("electron", 0) == 1, "Forecast counts must never enter live totals.")
+  game.stop_to_build()
+  assert(game.output_rows[0].meter.rate == 0.0 and game.output_rows[0].meter.sample_steps == 0.0)
+  game.free()
+
+func _check_one_off_output() -> void:
+  var game := _run_sparse_level("1/300, inf, inf", false)
+  _advance_forecast(game)
+  assert(not game.completed, "One detection followed by silence must not earn stars.")
+  game.next_forecast_at = INF
+  game._on_simulation_stepped(game.MAX_METER_STEPS)
+  game._refresh_output()
+  assert(game.output_rows[0].meter.rate == 0.0, "Old detections must expire from the adaptive meter.")
+  game.free()

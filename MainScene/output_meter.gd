@@ -12,6 +12,7 @@ var max_rate := 0.0
 var track_inset := 0.0
 var rate := 0.0
 var active := false
+var sample_steps := 0.0
 
 func _ready() -> void:
   resized.connect(_layout_markers)
@@ -31,11 +32,17 @@ func set_thresholds(thresholds: Array) -> void:
   for threshold in rates:
     markers.append({"rate": threshold, "tiers": tiers_by_rate[threshold]})
 
-func set_rate(value: float, measuring: bool) -> void:
+func set_rate(value: float, measuring: bool, steps: float) -> void:
+  sample_steps = steps
   if rate == value and active == measuring: return
   rate = value
   active = measuring
   queue_redraw()
+
+static func format_rate(value: float) -> String:
+  if value > 0.0 and value < 0.0001: return String.num_scientific(value)
+  if value == 0.0: return "0"
+  return String.num(value, clampi(2 - floori(log(value) / log(10.0)), 0, 6))
 
 func _layout_markers() -> void:
   track_inset = 0.0
@@ -72,7 +79,9 @@ func _draw() -> void:
     track.size.x *= _fraction(rate)
     draw_rect(track, UI.ACCENT)
   for marker in markers:
-    var reached: bool = active and rate + 0.000001 >= marker.rate
+    var target: float = marker.rate
+    var enough_time := sample_steps * target >= 1.0 - 0.000001 or target == 0.0
+    var reached: bool = active and enough_time and (rate >= target or (rate > 0.0 and is_equal_approx(rate / target, 1.0)))
     var shade := UI.GOLD if reached else UI.MUTED
     var y: float = track_y - 4.0 - (marker.lane + 1) * MARKER_HEIGHT
     var x: float = marker.x - STAR_SIZE * marker.tiers.size() * 0.5
@@ -88,4 +97,4 @@ func _get_tooltip(at_position: Vector2) -> String:
     if Rect2(marker.x - marker.width * 0.5, y, marker.width, MARKER_HEIGHT).has_point(at_position):
       var target := "∞" if is_inf(marker.rate) else "%s/step" % str(marker.rate).trim_suffix(".0")
       return "%s for star tier %s" % [target, ", ".join(marker.tiers)]
-  return "%.2f/step recent output" % rate
+  return "%s/step over %s steps" % [format_rate(rate), String.num(sample_steps, 1)] if active else "No active run"

@@ -3,6 +3,9 @@ extends Control
 const PARSER = preload("res://Levels/level_parser.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
 
+var levels: VBoxContainer
+var known_paths: Array[String] = []
+
 func _ready() -> void:
   theme = UI.theme()
   var background := ColorRect.new()
@@ -18,8 +21,10 @@ func _ready() -> void:
   add_child(frame)
   var panel := PanelContainer.new()
   panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-  panel.custom_minimum_size.x = minf(580.0, get_viewport_rect().size.x - 56)
   frame.add_child(panel)
+  var fit := func() -> void: panel.custom_minimum_size.x = minf(580.0, frame.size.x)
+  frame.resized.connect(fit)
+  fit.call()
   var margin := UI.margin(18)
   panel.add_child(margin)
   var box := VBoxContainer.new()
@@ -37,12 +42,34 @@ func _ready() -> void:
   list.size_flags_vertical = Control.SIZE_EXPAND_FILL
   list.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
   box.add_child(list)
-  var levels := VBoxContainer.new()
+  levels = VBoxContainer.new()
   levels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   levels.add_theme_constant_override("separation", 8)
   list.add_child(levels)
-  DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://levels"))
+  _refresh_levels()
+  get_window().focus_entered.connect(_refresh_levels)
+  var actions := HFlowContainer.new()
+  box.add_child(actions)
+  var editor := Button.new()
+  editor.name = "LevelEditor"
+  editor.text = "Level editor"
+  editor.theme_type_variation = "PrimaryButton"
+  editor.custom_minimum_size.y = 44
+  editor.pressed.connect(func() -> void: get_tree().change_scene_to_file("res://MainScene/level_editor.tscn"))
+  editor.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  actions.add_child(editor)
+  if OS.has_feature("pc"):
+    var folder := UI.button(actions, "Custom levels folder", _show_custom_levels)
+    folder.custom_minimum_size.y = 44
+    folder.tooltip_text = "Open the folder where Vertex looks for your custom levels"
+
+func _refresh_levels() -> void:
   var paths := Global.level_paths()
+  if paths == known_paths and levels.get_child_count() > 0: return
+  known_paths = paths
+  for child in levels.get_children():
+    levels.remove_child(child)
+    child.queue_free()
   var custom_section := false
   for path in paths:
     var parsed: Dictionary = PARSER.parse(FileAccess.get_file_as_string(path))
@@ -82,13 +109,18 @@ func _ready() -> void:
     var empty := Label.new()
     empty.text = "No levels"
     levels.add_child(empty)
-  var editor := Button.new()
-  editor.name = "LevelEditor"
-  editor.text = "Level editor"
-  editor.theme_type_variation = "PrimaryButton"
-  editor.custom_minimum_size.y = 44
-  editor.pressed.connect(func() -> void: get_tree().change_scene_to_file("res://MainScene/level_editor.tscn"))
-  box.add_child(editor)
+
+func _show_custom_levels() -> void:
+  var error := Global.ensure_custom_levels()
+  if error == OK: error = OS.shell_open(ProjectSettings.globalize_path(Global.CUSTOM_LEVELS))
+  if error != OK:
+    var dialog := AcceptDialog.new()
+    UI.setup_dialog(dialog, self, "Could not open level folder")
+    dialog.dialog_text = error_string(error)
+    dialog.visibility_changed.connect(func() -> void:
+      if not dialog.visible: dialog.queue_free()
+    )
+    dialog.popup_centered()
 
 func _open_level(path: String) -> void:
   Global.selected_level = path

@@ -16,6 +16,7 @@ func _ready() -> void:
   var panel_rect: Rect2 = editor.editor_panel.get_global_rect()
   assert(panel_rect.position.x >= 0 and panel_rect.position.y >= 0)
   assert(panel_rect.end.x <= viewport_size.x and panel_rect.end.y <= viewport_size.y)
+  await _check_adaptive_layout(editor)
   for file in DirAccess.get_files_at("res://Levels"):
     if file.ends_with(".level"):
       assert(not PARSER.parse(FileAccess.get_file_as_string("res://Levels/" + file)).has("error"), file)
@@ -24,8 +25,17 @@ func _ready() -> void:
   editor._set_source("Not a valid level")
   assert(editor.parsed.has("error"))
   assert(editor.game.level.width == 5, "Last valid board must remain visible during an invalid source edit")
-  editor._undo_editor()
+  var history_key := InputEventKey.new()
+  history_key.pressed = true
+  history_key.command_or_control_autoremap = true
+  history_key.keycode = KEY_Z
+  editor._unhandled_key_input(history_key)
   assert(not editor.parsed.has("error"))
+  history_key.shift_pressed = true
+  editor._unhandled_key_input(history_key)
+  assert(editor.parsed.has("error"), "Shift with the platform shortcut modifier should redo.")
+  history_key.shift_pressed = false
+  editor._unhandled_key_input(history_key)
   assert(editor.game.editor_preview)
   assert(editor.game.level.width == 5)
   assert(editor.game.buildings.size() == 3)
@@ -65,6 +75,14 @@ func _ready() -> void:
   key.keycode = KEY_E
   editor._unhandled_key_input(key)
   assert(editor.game._building_at(Vector2i(4, 4)).get_meta("entry").facing == "E")
+  key.keycode = KEY_BACKSPACE
+  key.alt_pressed = true
+  editor._unhandled_key_input(key)
+  assert(editor.game._building_at(Vector2i(4, 4)) != null, "A modified Backspace must not remove a building.")
+  key.alt_pressed = false
+  editor._unhandled_key_input(key)
+  assert(editor.game._building_at(Vector2i(4, 4)) == null, "Backspace must work as Delete.")
+  editor._undo_editor()
   editor._select_at(Vector2i(1, 0))
   editor.visual_fields.y_end.value = 1
   editor._apply_visual_properties()
@@ -103,15 +121,36 @@ func _ready() -> void:
   assert(editor.test_game.editor_playtest and editor.test_game.level.goals.size() == 2)
   editor._end_playtest()
   assert(editor.test_game == null)
-  var target := ProjectSettings.globalize_path("res://Tests/editor_roundtrip_tmp.level")
+  var target := ProjectSettings.globalize_path("user://éditeur roundtrip %d.level" % OS.get_process_id())
   editor._write_file(target)
   assert(FileAccess.file_exists(target))
   var saved := FileAccess.get_file_as_string(target)
   assert(saved == editor.source.text)
-  editor.file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+  assert(editor.last_file_directory == target.get_base_dir())
+  editor.file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
   editor._set_source("5 x 5; goal: {photon: 1, 2, 3};")
+  editor._file_selected(target.trim_suffix(".level"))
+  assert(FileAccess.get_file_as_string(target) == saved, "Appending an extension must not bypass overwrite confirmation.")
+  editor.file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
   editor._file_selected(target)
   assert(editor.source.text == saved)
+  assert(editor._is_bundled_level(ProjectSettings.globalize_path("res://Levels/01 - First Contact.level")))
+  editor._open_source()
+  editor._set_source("5 x 5; goal: {photon: 1, 2, 3};")
+  history_key.keycode = KEY_S
+  editor.source_dialog.push_input(history_key)
+  assert(FileAccess.get_file_as_string(target) == editor.source.text, "The platform save shortcut must work from the source editor.")
+  assert(editor.source_dialog.visible)
+  if DisplayServer.get_name() == "headless":
+    history_key.shift_pressed = true
+    editor.source_dialog.push_input(history_key)
+    assert(editor.file_dialog.visible and not editor.source_dialog.visible)
+    assert(editor.file_dialog.current_dir == target.get_base_dir())
+    editor.file_dialog.hide()
+    editor.file_dialog.canceled.emit()
+    await get_tree().process_frame
+    assert(editor.source_dialog.visible, "Canceling Save As must return to the source editor.")
+  editor.source_dialog.hide()
   DirAccess.remove_absolute(target)
   editor._set_source("5 x 5; goal: {photon: 1/step, 2/step, 3/step};")
   editor._place_editor_kind("holder", Vector2i(1, 1))
@@ -181,6 +220,39 @@ func _ready() -> void:
   print("Level editor checks passed")
   get_tree().quit()
 
+func _check_adaptive_layout(editor: Control) -> void:
+  var original_size := get_window().size
+  assert(editor.file_dialog.use_native_dialog and editor.file_dialog.access == FileDialog.ACCESS_FILESYSTEM)
+  for resolution in [Vector2i(800, 500), Vector2i(1920, 650), Vector2i(800, 1000), Vector2i(2304, 1440)]:
+    get_window().size = resolution
+    await get_tree().process_frame
+    await get_tree().process_frame
+    var workspace := get_viewport().get_visible_rect()
+    assert(absf(workspace.size.aspect() - Vector2(resolution).aspect()) < 0.01, "The viewport must expand to the window's aspect ratio.")
+    assert(workspace.encloses(editor.editor_panel.get_global_rect()))
+    assert(workspace.encloses(editor.palette.get_global_rect()))
+    var board_center: Vector2i = editor.game.screen_to_cell(editor.game.get_canvas_transform() * editor.game._cell_position(Vector2i(4, 4)))
+    assert(board_center == Vector2i(4, 4), "The scaled board must still map pointer positions to cells.")
+    editor._open_source()
+    editor.source_error.text = "Source diagnostic for layout"
+    await get_tree().process_frame
+    await get_tree().process_frame
+    assert(editor.source_dialog.visible and editor.source.has_focus())
+    assert(workspace.encloses(Rect2(editor.source_dialog.position, editor.source_dialog.size)))
+    assert(not editor.source.get_rect().intersects(editor.source_error.get_rect()), "Source and diagnostics must not overlap.")
+    editor.source_dialog.hide()
+    editor._start_playtest()
+    await get_tree().process_frame
+    await get_tree().process_frame
+    var game: Node2D = editor.test_game
+    assert(workspace.encloses(game.hud_panel.get_global_rect()))
+    assert(workspace.encloses(game.palette.get_global_rect()))
+    game._finish_run(1)
+    assert(game.results.visible and workspace.encloses(Rect2(game.results.position, game.results.size)))
+    editor._end_playtest()
+    await get_tree().process_frame
+  get_window().size = original_size
+
 func _choose_particle(picker: OptionButton, name: String) -> void:
   for i in range(1, picker.item_count):
     if picker.get_item_metadata(i) == name:
@@ -217,6 +289,7 @@ func _check_build_areas(editor, target: String) -> void:
   var saved: String = editor.source.text
   editor._write_file(target)
   editor._set_source(level_source)
+  editor.file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
   editor._file_selected(target)
   DirAccess.remove_absolute(target)
   assert(editor.source.text == saved and saved.contains("# Preserve this comment."))
