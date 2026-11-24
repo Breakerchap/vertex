@@ -1,4 +1,3 @@
-
 name: Build and release Vertex
 
 on:
@@ -16,7 +15,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build macOS and Linux
+    name: Build macOS, Linux and Android
     runs-on: ubuntu-24.04
 
     env:
@@ -24,10 +23,27 @@ jobs:
       GODOT_PROJECT_PATH: "."
       MACOS_PRESET: "macOS"
       LINUX_PRESET: "Linux"
+      ANDROID_PRESET: "Android"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sdkmanager --sdk_root="$ANDROID_HOME" \
+            "platform-tools" \
+            "build-tools;35.0.1" \
+            "platforms;android-35"
 
       - name: Install Godot and export templates
         shell: bash
@@ -58,6 +74,52 @@ jobs:
 
           godot --version
 
+      - name: Configure Godot Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/godot"
+          mkdir -p "$CONFIG_DIR"
+
+          GODOT_MINOR="${GODOT_VERSION%.*}"
+
+          cat > "$CONFIG_DIR/editor_settings-${GODOT_MINOR}.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/java_sdk_path = "$JAVA_HOME"
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          EOF
+
+      - name: Restore Android signing key
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing."
+            exit 1
+          fi
+
+          KEYSTORE="$RUNNER_TEMP/vertex-debug.keystore"
+
+          echo "$ANDROID_KEYSTORE_BASE64" \
+            | base64 --decode > "$KEYSTORE"
+
+          chmod 600 "$KEYSTORE"
+
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$KEYSTORE" \
+            >> "$GITHUB_ENV"
+
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" \
+            >> "$GITHUB_ENV"
+
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" \
+            >> "$GITHUB_ENV"
+
       - name: Verify export configuration
         working-directory: ${{ env.GODOT_PROJECT_PATH }}
         run: |
@@ -75,6 +137,7 @@ jobs:
           PRESET: ${{ env.MACOS_PRESET }}
         run: |
           mkdir -p build/macos
+
           godot --headless --path . \
             --export-release "$PRESET" \
             build/macos/vertex-macos.zip
@@ -87,12 +150,105 @@ jobs:
           PRESET: ${{ env.LINUX_PRESET }}
         run: |
           mkdir -p build/linux
+
           godot --headless --path . \
             --export-release "$PRESET" \
             build/linux/Vertex.x86_64
 
           test -s build/linux/Vertex.x86_64
           chmod +x build/linux/Vertex.x86_64
+
+      - name: Set Android version
+        working-directory: ${{ env.GODOT_PROJECT_PATH }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("export_presets.cfg")
+          content = path.read_text()
+
+          preset_name = os.environ["ANDROID_PRESET"]
+          build_number = os.environ["GITHUB_RUN_NUMBER"]
+
+          pattern = re.compile(
+              r'^\[preset\.(\d+)\]\n(.*?)(?=^\[|\Z)',
+              re.MULTILINE | re.DOTALL
+          )
+
+          preset_id = None
+
+          for match in pattern.finditer(content):
+              if re.search(
+                  rf'^name="{re.escape(preset_name)}"$',
+                  match.group(2),
+                  re.MULTILINE
+              ):
+                  preset_id = match.group(1)
+                  break
+
+          if preset_id is None:
+              raise SystemExit("Android export preset not found.")
+
+          options_pattern = re.compile(
+              rf'(^\[preset\.{preset_id}\.options\]\n)'
+              r'(.*?)(?=^\[|\Z)',
+              re.MULTILINE | re.DOTALL
+          )
+
+          def update_options(match):
+              options = match.group(2)
+
+              values = {
+                  "version/code": build_number,
+                  "version/name": f'"0.1.{build_number}"'
+              }
+
+              for key, value in values.items():
+                  line = f"{key}={value}"
+                  pattern = rf'^{re.escape(key)}=.*$'
+
+                  if re.search(pattern, options, re.MULTILINE):
+                      options = re.sub(
+                          pattern, line, options,
+                          flags=re.MULTILINE
+                      )
+                  else:
+                      options = options.rstrip() + "\n" + line + "\n"
+
+              return match.group(1) + options.rstrip() + "\n\n"
+
+          content, count = options_pattern.subn(
+              update_options, content
+          )
+
+          if count != 1:
+              raise SystemExit("Android preset options not found.")
+
+          path.write_text(content)
+          print(f"Android version code: {build_number}")
+          PY
+
+      - name: Export Android APK
+        working-directory: ${{ env.GODOT_PROJECT_PATH }}
+        env:
+          PRESET: ${{ env.ANDROID_PRESET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p build/android
+
+          godot --headless --path . \
+            --export-debug "$PRESET" \
+            build/android/vertex-android.apk
+
+          test -s build/android/vertex-android.apk
+
+          "$ANDROID_HOME/build-tools/35.0.1/apksigner" verify \
+            build/android/vertex-android.apk
 
       - name: Package releases
         working-directory: ${{ env.GODOT_PROJECT_PATH }}
@@ -108,9 +264,16 @@ jobs:
           tar -czf release/vertex-linux-x86_64.tar.gz \
             -C build/linux .
 
+          cp build/android/vertex-android.apk \
+            release/vertex-android.apk
+
           cd release
 
-          for archive in vertex-macos.zip vertex-linux-x86_64.tar.gz; do
+          for archive in \
+            vertex-macos.zip \
+            vertex-linux-x86_64.tar.gz \
+            vertex-android.apk
+          do
             sha256sum "$archive" | awk '{print $1}' \
               > "$archive.sha256"
           done
@@ -133,9 +296,12 @@ jobs:
 
             - macOS Universal (Intel and Apple Silicon)
             - Linux x86-64
+            - Android APK (ARM64 and ARMv7)
           files: |
             ${{ env.GODOT_PROJECT_PATH }}/release/vertex-macos.zip
             ${{ env.GODOT_PROJECT_PATH }}/release/vertex-macos.zip.sha256
             ${{ env.GODOT_PROJECT_PATH }}/release/vertex-linux-x86_64.tar.gz
             ${{ env.GODOT_PROJECT_PATH }}/release/vertex-linux-x86_64.tar.gz.sha256
+            ${{ env.GODOT_PROJECT_PATH }}/release/vertex-android.apk
+            ${{ env.GODOT_PROJECT_PATH }}/release/vertex-android.apk.sha256
           fail_on_unmatched_files: true
