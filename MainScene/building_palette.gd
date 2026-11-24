@@ -22,7 +22,7 @@ var height_limit := INF:
     _fit_list()
 var scroll: ScrollContainer
 var contents: VBoxContainer
-var list: Container
+var list: GridContainer
 var buttons := {}
 var empty: Label
 var drag_kind := ""
@@ -55,12 +55,8 @@ func _ready() -> void:
   contents = VBoxContainer.new()
   contents.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   scroll.add_child(contents)
-  if infinite:
-    list = VBoxContainer.new()
-  else:
-    var grid := GridContainer.new()
-    grid.columns = 2
-    list = grid
+  list = GridContainer.new()
+  list.columns = 1 if infinite else 2
   contents.add_child(list)
   empty = Label.new()
   empty.text = "Empty"
@@ -85,6 +81,13 @@ func _fit_list() -> void:
   if not is_instance_valid(contents) or infinite: return
   var frame_height := get_combined_minimum_size().y - scroll.get_combined_minimum_size().y
   scroll.custom_minimum_size.y = minf(contents.get_combined_minimum_size().y, maxf(44.0, height_limit - frame_height))
+
+func set_compact(compact: bool) -> void:
+  if not infinite: return
+  list.columns = 2 if compact else 1
+  for button in buttons.values():
+    button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    button.custom_minimum_size.y = 44 if compact else 56
 
 func refresh() -> void:
   if not is_instance_valid(list): return

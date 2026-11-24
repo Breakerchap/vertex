@@ -15,6 +15,10 @@ var source: CodeEdit
 var game
 var editor_panel: PanelContainer
 var file_bar: HFlowContainer
+var edit_bar: HFlowContainer
+var quick_bar: HFlowContainer
+var playtest_button: Button
+var done_button: Button
 var menu_button: Button
 var tools_button: Button
 var inspect_button: Button
@@ -173,14 +177,8 @@ func _build_workspace() -> void:
   status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
   UI.muted(status)
   var controls := HFlowContainer.new()
-  controls.add_theme_constant_override("separation", 6)
+  edit_bar = controls
   column.add_child(controls)
-  menu_button = UI.button(controls, "Menu", _toggle_editor_menu)
-  menu_button.toggle_mode = true
-  tools_button = UI.button(controls, "Tools", _toggle_editor_tools)
-  tools_button.toggle_mode = true
-  inspect_button = UI.button(controls, "Inspect", _toggle_editor_inspector)
-  inspect_button.toggle_mode = true
   controls.add_child(UI.label("Grid"))
   width_input = _spin(controls)
   controls.add_child(UI.label("x"))
@@ -205,7 +203,17 @@ func _build_workspace() -> void:
   palette.kind_dropped.connect(_drop_palette_kind)
   UI.button(controls, "Level settings…", _open_settings)
   UI.button(controls, "Reset preview", _reset_preview)
-  UI.button(controls, "Playtest", _start_playtest).theme_type_variation = "PrimaryButton"
+  quick_bar = HFlowContainer.new()
+  column.add_child(quick_bar)
+  menu_button = UI.button(quick_bar, "Menu", _toggle_editor_menu)
+  menu_button.toggle_mode = true
+  tools_button = UI.button(quick_bar, "Tools", _toggle_editor_tools)
+  tools_button.toggle_mode = true
+  inspect_button = UI.button(quick_bar, "Inspect", _toggle_editor_inspector)
+  inspect_button.toggle_mode = true
+  done_button = UI.button(quick_bar, "Done", _select_move_tool)
+  playtest_button = UI.button(controls, "Playtest", _start_playtest)
+  playtest_button.theme_type_variation = "PrimaryButton"
   column.add_child(status)
 
   _build_inspector(hud)
@@ -406,15 +414,23 @@ func _layout_workspace() -> void:
     tools_open = false
     menu_open = false
   game.editor_sidebar_width = 0.0 if compact else 290.0
-  editor_panel.offset_right = -16.0 if compact else -306.0
+  palette.set_compact(compact)
   editor_heading.visible = not compact and not is_instance_valid(test_game)
-  menu_button.visible = compact
   menu_button.set_pressed_no_signal(menu_open)
   file_bar.visible = not compact or menu_open
+  edit_bar.visible = not compact or menu_open
+  quick_bar.visible = compact
+  var playtest_parent := quick_bar if compact else edit_bar
+  if playtest_button.get_parent() != playtest_parent: playtest_button.reparent(playtest_parent)
   _refresh_tool_panels()
-  _fit_editor_panel()
 
 func _fit_editor_panel() -> void:
+  if compact_layout:
+    var width := get_viewport_rect().size.x
+    var dock_width := minf(width - 32.0, maxf(UI.flow_width(quick_bar) + 22.0, 240.0))
+    editor_panel.offset_right = -16.0 if menu_open else 16.0 + dock_width - width
+  else:
+    editor_panel.offset_right = -306.0
   var minimum := 0.0 if compact_layout else 121.0
   editor_panel.offset_top = -16.0 - maxf(minimum, editor_panel.get_combined_minimum_size().y)
   _update_camera_inset()
@@ -426,13 +442,15 @@ func _position_tool_panels() -> void:
   var left := view.x - 290.0
   var top := maxf(72.0, toolbar.get_rect().end.y + 8.0) if toolbar.get_rect().end.x + 8.0 > left else 72.0
   var bottom := view.y - 16.0
+  var right := view.x - 16.0
   if compact_layout:
     left = 16.0
     bottom = editor_panel.get_rect().position.y - 8.0
-    top = maxf(toolbar.get_rect().end.y + 8.0, bottom - minf(320.0, view.y * 0.44))
+    top = maxf(toolbar.get_rect().end.y + 8.0, bottom - minf(250.0, view.y * 0.46))
+    right = minf(right, left + 420.0)
   for panel in [palette, inspector_panel]:
     panel.offset_left = left
-    panel.offset_right = view.x - 16.0
+    panel.offset_right = right
     panel.offset_top = top
     panel.offset_bottom = bottom
 
@@ -446,20 +464,30 @@ func _refresh_tool_panels() -> void:
   inspect_button.visible = compact_layout and selected_block >= 0
   inspect_button.set_pressed_no_signal(tools_open and selected_block >= 0)
   game.editor_tool_panel = inspector_panel if selected_block >= 0 else palette
+  _refresh_dock_status()
+
+func _refresh_dock_status() -> void:
+  var active := area_tool != AreaTool.NONE or pasting
+  done_button.visible = active
+  status.visible = not compact_layout or menu_open or active or parsed.has("error")
+  _fit_editor_panel()
 
 func _toggle_editor_menu() -> void:
   menu_open = not menu_open
+  if menu_open: tools_open = false
   _layout_workspace()
 
 func _toggle_editor_tools() -> void:
   var open := not tools_open or selected_block >= 0
   _select_move_tool()
   tools_open = open
-  _refresh_tool_panels()
+  if tools_open: menu_open = false
+  _layout_workspace()
 
 func _toggle_editor_inspector() -> void:
   tools_open = not tools_open
-  _refresh_tool_panels()
+  if tools_open: menu_open = false
+  _layout_workspace()
 
 func _reset_preview() -> void:
   game._load_initial_board()
@@ -502,6 +530,7 @@ func _source_changed() -> void:
     status.text = "Invalid source • Showing last valid board"
     status.tooltip_text = str(parsed.error)
     status.add_theme_color_override("font_color", UI.ERROR)
+    _refresh_dock_status()
     return
   source_error.text = ""
   updating = true
@@ -516,13 +545,14 @@ func _source_changed() -> void:
   _update_level_status()
 
 func _update_level_status() -> void:
+  _refresh_dock_status()
   var warnings := _level_warnings(parsed)
   status.text = (path.get_file() if not path.is_empty() else "Untitled") + ("  • unsaved" if source.text != saved_text else "")
   if area_tool == AreaTool.STAR:
-    status.text += "  • Click a cell to toggle a star. Esc exits."
+    status.text = "Tap a cell to toggle a star." if compact_layout else status.text + "  • Click a cell to toggle a star. Esc exits."
   elif area_tool != AreaTool.NONE:
     var action := "block" if area_tool == AreaTool.BLOCK else "unblock"
-    status.text += "  • Drag to %s an area. Esc exits." % action
+    status.text = "Drag to %s an area." % action if compact_layout else status.text + "  • Drag to %s an area. Esc exits." % action
   elif not warnings.is_empty():
     status.text += "  • %d warning(s)" % warnings.size()
   status.tooltip_text = "\n".join(warnings)
@@ -568,6 +598,11 @@ func _toggle_area_tool(tool: AreaTool) -> void:
   var next := AreaTool.NONE if area_tool == tool else tool
   _select_move_tool()
   _set_area_tool(next)
+  if compact_layout and next != AreaTool.NONE: _close_editor_menu()
+
+func _close_editor_menu() -> void:
+  menu_open = false
+  _layout_workspace()
 
 func _set_area_tool(tool: AreaTool) -> void:
   area_tool = tool
@@ -669,6 +704,7 @@ func _select_block(index: int, cell: Vector2i = Vector2i(-1, -1)) -> void:
 func _place_editor_kind(kind: String, cell: Vector2i, facing := "E") -> void:
   if game._building_at(cell, kind, facing) != null:
     status.text = "That position is occupied."
+    status.show()
     return
   var extra := ""
   if kind == "emitter": extra = ", E, rate=1/step"
@@ -700,7 +736,8 @@ func _start_paste() -> void:
   if game.simulating or copied_declaration.is_empty(): return
   _select_move_tool()
   pasting = true
-  status.text = "Click a cell to paste the copied building."
+  status.text = "Tap a cell to paste." if compact_layout else "Click a cell to paste the copied building."
+  if compact_layout: _close_editor_menu()
 
 func _paste_at_cursor() -> void:
   if game.simulating or copied_declaration.is_empty(): return
@@ -710,6 +747,7 @@ func _paste_at_cursor() -> void:
     _start_paste()
   elif not _paste_building(cell):
     pasting = true
+    _refresh_dock_status()
 
 func _paste_building(cell: Vector2i) -> bool:
   if copied_declaration.is_empty() or parsed.has("error"): return false

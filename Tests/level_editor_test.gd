@@ -236,14 +236,20 @@ func _ready() -> void:
 func _check_adaptive_layout(editor: Control) -> void:
   var original_size := get_window().size
   assert(editor.file_dialog.use_native_dialog and editor.file_dialog.access == FileDialog.ACCESS_FILESYSTEM)
-  for resolution in [Vector2i(800, 500), Vector2i(1920, 650), Vector2i(390, 844), Vector2i(2304, 1440)]:
+  var phone_landscape := Vector2i(1160, 540)
+  for resolution in [Vector2i(800, 500), Vector2i(1920, 650), Vector2i(390, 844), phone_landscape, Vector2i(2304, 1440)]:
     get_window().size = resolution
+    if resolution == phone_landscape:
+      get_window().size_changed.disconnect(Global._update_window_scale)
+      get_window().content_scale_size = phone_landscape
     await get_tree().process_frame
     await get_tree().process_frame
     var workspace := get_viewport().get_visible_rect()
     assert(absf(workspace.size.aspect() - Vector2(resolution).aspect()) < 0.01, "The viewport must expand to the window's aspect ratio.")
     assert(workspace.encloses(editor.editor_panel.get_global_rect()))
     assert(workspace.encloses(editor.palette.get_global_rect()))
+    if resolution == phone_landscape:
+      await _check_landscape_editor_docks(editor, workspace)
     var board_center: Vector2i = editor.game.screen_to_cell(editor.game.get_canvas_transform() * editor.game._cell_position(Vector2i(4, 4)))
     assert(board_center == Vector2i(4, 4), "The scaled board must still map pointer positions to cells.")
     editor._open_source()
@@ -283,6 +289,9 @@ func _check_adaptive_layout(editor: Control) -> void:
     var game: Node2D = editor.test_game
     assert(workspace.encloses(game.hud_panel.get_global_rect()))
     assert(workspace.encloses(game.palette.get_global_rect()))
+    if resolution == phone_landscape:
+      assert(game.compact_layout and not game.game_sidebar.visible and not game.hud_options.visible)
+      assert(game._board_view().size.y >= workspace.size.y * 0.70, "The closed docks should leave room for the board.")
     if resolution.x < resolution.y:
       game.sidebar_toggle.pressed.emit()
       assert(game.palette.is_visible_in_tree() and workspace.encloses(game.game_sidebar.get_global_rect()))
@@ -292,7 +301,37 @@ func _check_adaptive_layout(editor: Control) -> void:
     assert(game.results.visible and workspace.encloses(Rect2(game.results.position, game.results.size)))
     editor._end_playtest()
     await get_tree().process_frame
+    if resolution == phone_landscape:
+      get_window().size_changed.connect(Global._update_window_scale)
   get_window().size = original_size
+
+func _check_landscape_editor_docks(editor, workspace: Rect2) -> void:
+  var toolbar: PanelContainer = editor.game.get_node("SimulationControls/Panel")
+  var more: Button = toolbar.get_node("Margin/Controls/More")
+  var original_toolbar_size := toolbar.size
+  var original_dock_size: Vector2 = editor.editor_panel.size
+  assert(editor.compact_layout and not editor.palette.visible and not editor.edit_bar.visible and not editor.file_bar.visible)
+  assert(editor.game._board_view().size.y >= workspace.size.y * 0.70)
+  more.button_pressed = true
+  editor.menu_button.pressed.emit()
+  await get_tree().process_frame
+  await get_tree().process_frame
+  assert(editor.file_bar.visible and editor.edit_bar.visible)
+  assert(toolbar.size.x > original_toolbar_size.x)
+  more.button_pressed = false
+  editor.block_area_button.pressed.emit()
+  assert(not editor.menu_open and editor.done_button.visible)
+  editor.done_button.pressed.emit()
+  editor.tools_button.pressed.emit()
+  assert(editor.palette.visible and editor.palette.list.columns == 2)
+  editor.tools_button.pressed.emit()
+  await get_tree().process_frame
+  await get_tree().process_frame
+  assert(toolbar.size.is_equal_approx(original_toolbar_size))
+  assert(editor.editor_panel.size.is_equal_approx(original_dock_size))
+  editor.game.fit_board()
+  var board_rect: Rect2 = editor.game.get_canvas_transform() * editor.game.level_bounds
+  assert(editor.game._board_view().encloses(board_rect), "The fitted board should sit between the closed docks.")
 
 func _check_camera(game) -> void:
   var camera: Camera2D = game.get_node("Camera2D")

@@ -16,7 +16,7 @@ static func theme() -> Theme:
   shared = Theme.new()
   shared.default_font_size = 15
   shared.set_color("font_color", "Label", TEXT)
-  var button_padding := 11 if OS.has_feature("mobile") or DisplayServer.is_touchscreen_available() else 5
+  var button_padding := 11 if _touch_device() else 5
   for type in ["Button", "OptionButton"]:
     shared.set_stylebox("normal", type, _box(Color("233248"), LINE, 8, button_padding))
     shared.set_stylebox("hover", type, _box(Color("30445d"), Color("657f9d"), 8, button_padding))
@@ -48,7 +48,19 @@ static func theme() -> Theme:
   return shared
 
 static func compact_board(view_size: Vector2) -> bool:
-  return view_size.x < 760.0
+  return _touch_device() or view_size.x < 760.0 or view_size.y <= 560.0
+
+static func _touch_device() -> bool:
+  return OS.has_feature("mobile") or DisplayServer.is_touchscreen_available()
+
+static func flow_width(flow: HFlowContainer) -> float:
+  var width := 0.0
+  var gap := flow.get_theme_constant("h_separation")
+  for child in flow.get_children():
+    if child is Control and child.visible:
+      if width > 0.0: width += gap
+      width += child.get_combined_minimum_size().x
+  return width
 
 static func label(text: String) -> Label:
   var control := Label.new()

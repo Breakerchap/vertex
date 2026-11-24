@@ -60,6 +60,9 @@ var goal_content: VBoxContainer
 var sidebar_toggle: Button
 var compact_layout := false
 var sidebar_open := false
+var hud_actions: HFlowContainer
+var hud_options: HBoxContainer
+var hud_menu: Button
 var results_text: RichTextLabel
 var results_medals: HBoxContainer
 var results_button: Button
@@ -165,7 +168,9 @@ func _fit_camera() -> void:
 func _board_view() -> Rect2:
   var view := get_viewport_rect().size
   var toolbar: Control = $SimulationControls/Panel
-  var top_inset := toolbar.get_rect().end.y if editor_preview else level_heading.get_rect().end.y
+  var top_inset := toolbar.get_rect().end.y
+  if not editor_preview and level_heading.visible:
+    top_inset = maxf(top_inset, level_heading.get_rect().end.y)
   var bottom_inset := editor_bottom_inset if editor_preview else view.y - hud_panel.get_rect().position.y
   var right_inset := editor_sidebar_width if editor_preview else (0.0 if compact_layout else SIDEBAR_WIDTH + 16.0)
   return Rect2(0, top_inset, maxf(1.0, view.x - right_inset), maxf(1.0, view.y - top_inset - bottom_inset))
@@ -207,19 +212,39 @@ func _zoom_from_button(factor: float) -> void:
 
 func _add_camera_controls() -> void:
   var toolbar: PanelContainer = $SimulationControls/Panel
+  var controls: HFlowContainer = $SimulationControls/Panel/Margin/Controls
   var group := HBoxContainer.new()
-  $SimulationControls/Panel/Margin/Controls.add_child(group)
+  controls.add_child(group)
   var zoom_out := UI.button(group, "−", _zoom_from_button.bind(1.0 / ZOOM_STEP))
   zoom_out.tooltip_text = "Zoom out"
   zoom_out.custom_minimum_size.x = 34
   var zoom_in := UI.button(group, "+", _zoom_from_button.bind(ZOOM_STEP))
   zoom_in.tooltip_text = "Zoom in"
   zoom_in.custom_minimum_size.x = 34
-  var fit := UI.button(group, "Fit board", fit_board)
+  var fit := UI.button(controls, "Fit board", fit_board)
   fit.tooltip_text = "Fit the whole board. Pan with a middle or right drag, or drag with one finger. Zoom with the wheel or a pinch."
+  var more := Button.new()
+  more.name = "More"
+  more.text = "More"
+  more.toggle_mode = true
+  more.tooltip_text = "Show playback speed and zoom controls"
+  controls.add_child(more)
+  controls.move_child(fit, 3)
+  controls.move_child(more, 4)
+  var extras := [controls.get_node("Slower"), controls.get_node("Speed"), controls.get_node("Faster"),
+    controls.get_node("ResetSpeed"), group]
   var layout := func() -> void:
-    toolbar.size.x = minf(590.0, get_viewport_rect().size.x - 32.0)
+    var view := get_viewport_rect().size
+    var compact := UI.compact_board(view)
+    if not compact: more.set_pressed_no_signal(false)
+    more.visible = compact
+    for control in extras:
+      control.visible = not compact or more.button_pressed
+    var width := UI.flow_width(controls) + 18.0
+    toolbar.size = Vector2(minf(width, view.x - 32.0), toolbar.get_combined_minimum_size().y)
+  more.toggled.connect(func(_open: bool) -> void: layout.call())
   get_viewport().size_changed.connect(layout)
+  toolbar.minimum_size_changed.connect(layout)
   layout.call()
 
 func _create_hud() -> void:
@@ -247,19 +272,25 @@ func _create_hud() -> void:
   UI.muted(selection_label)
   column.add_child(selection_label)
   var actions := HFlowContainer.new()
+  hud_actions = actions
   column.add_child(actions)
   sidebar_toggle = UI.button(actions, "Medals & inventory", _toggle_sidebar)
   sidebar_toggle.toggle_mode = true
   sidebar_toggle.hide()
+  hud_menu = UI.button(actions, "Menu", _toggle_hud_menu)
+  hud_menu.toggle_mode = true
+  hud_menu.hide()
   rotate_left_button = UI.button(actions, "↶  Q", _rotate_selected.bind(-1))
   rotate_left_button.tooltip_text = "Rotate counterclockwise"
   rotate_button = UI.button(actions, "↷  E", _rotate_selected)
   rotate_button.tooltip_text = "Rotate clockwise"
   remove_button = UI.button(actions, "Remove  " + UI.delete_key_label(), _remove_selected)
   stop_button = $SimulationControls.enable_build(stop_to_build)
-  restart_button = UI.button(actions, "Restart", restart_run)
-  UI.button(actions, "Reset  X", reset_level)
-  UI.button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
+  hud_options = HBoxContainer.new()
+  actions.add_child(hud_options)
+  restart_button = UI.button(hud_options, "Restart", restart_run)
+  UI.button(hud_options, "Reset  X", reset_level)
+  UI.button(hud_options, "Back to editor" if editor_playtest else "Levels", _return_to_select)
   results_button = UI.button(actions, "Level cleared", _show_results)
   results_button.theme_type_variation = "PrimaryButton"
   results_button.tooltip_text = "View results and continue to the next level"
@@ -281,7 +312,9 @@ func _create_hud() -> void:
   results_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
   summary.add_child(results_text)
   get_viewport().size_changed.connect(_layout_hud)
-  panel.resized.connect(_layout_hud)
+  panel.minimum_size_changed.connect(_fit_game_dock)
+  panel.resized.connect(_update_hud_inset)
+  results_button.visibility_changed.connect(_fit_game_dock)
   _layout_hud()
 
 func _layout_hud() -> void:
@@ -290,17 +323,34 @@ func _layout_hud() -> void:
   if compact_layout != compact:
     compact_layout = compact
     sidebar_open = false
-  var right := -16.0 if compact else -SIDEBAR_WIDTH - 32.0
-  hud_panel.offset_right = right
-  level_heading.offset_right = right
+    hud_menu.set_pressed_no_signal(false)
   sidebar_toggle.visible = compact
   sidebar_toggle.set_pressed_no_signal(sidebar_open)
+  hud_menu.visible = compact
+  hud_options.visible = not compact or hud_menu.button_pressed
   game_sidebar.visible = not compact or sidebar_open
+  _layout_level_heading()
+  _update_hud_actions()
+  _fit_game_dock()
+
+func _fit_game_dock() -> void:
+  var width := get_viewport_rect().size.x
+  var dock_width := minf(width - 32.0, UI.flow_width(hud_actions) + 22.0)
+  hud_panel.offset_right = 16.0 + dock_width - width if compact_layout else -SIDEBAR_WIDTH - 32.0
+  hud_panel.offset_top = -16.0 - hud_panel.get_combined_minimum_size().y
+  _update_hud_inset()
+
+func _update_hud_inset() -> void:
   _layout_sidebar()
   _fit_camera()
 
 func _toggle_sidebar() -> void:
   sidebar_open = not sidebar_open
+  if sidebar_open: hud_menu.set_pressed_no_signal(false)
+  _layout_hud()
+
+func _toggle_hud_menu() -> void:
+  if hud_menu.button_pressed: sidebar_open = false
   _layout_hud()
 
 func _add_level_heading(layer: CanvasLayer) -> void:
@@ -319,13 +369,18 @@ func _add_level_heading(layer: CanvasLayer) -> void:
   UI.heading(heading, 25)
   heading.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
   header.add_child(heading)
-  var toolbar: Control = $SimulationControls/Panel
-  var fit := func() -> void:
-    header.offset_top = toolbar.get_rect().end.y + 8.0
-    _fit_camera()
-  toolbar.resized.connect(fit)
+  $SimulationControls/Panel.resized.connect(_layout_level_heading)
   header.resized.connect(_fit_camera)
-  fit.call()
+
+func _layout_level_heading() -> void:
+  var toolbar: Control = $SimulationControls/Panel
+  var toolbar_rect := toolbar.get_rect()
+  var view := get_viewport_rect().size
+  level_heading.offset_right = -16.0 if compact_layout else -SIDEBAR_WIDTH - 32.0
+  level_heading.offset_left = toolbar_rect.end.x + 12.0 if compact_layout else 16.0
+  level_heading.visible = not compact_layout or view.x - level_heading.offset_left >= 156.0
+  level_heading.offset_top = toolbar_rect.position.y if compact_layout else toolbar_rect.end.y + 8.0
+  _fit_camera()
 
 func _add_sidebar(layer: CanvasLayer) -> void:
   var sidebar := VBoxContainer.new()
@@ -363,13 +418,13 @@ func _layout_sidebar() -> void:
   var bottom := view.y - 16.0
   if compact_layout:
     bottom = hud_panel.get_rect().position.y - 8.0
-    top = maxf(toolbar_end.y + 8.0, bottom - minf(360.0, view.y * 0.5))
+    top = maxf(toolbar_end.y + 8.0, bottom - minf(310.0, view.y * 0.55))
   var available := bottom - top
   var frame_height := goal_panel.get_combined_minimum_size().y - goal_scroll.get_combined_minimum_size().y
   goal_scroll.custom_minimum_size.y = minf(goal_content.get_combined_minimum_size().y, maxf(44.0, available * 0.46 - frame_height))
   palette.height_limit = available - frame_height - goal_scroll.custom_minimum_size.y - game_sidebar.get_theme_constant("separation")
   game_sidebar.offset_left = 16.0 if compact_layout else view.x - SIDEBAR_WIDTH - 16.0
-  game_sidebar.offset_right = view.x - 16.0
+  game_sidebar.offset_right = minf(436.0, view.x - 16.0) if compact_layout else view.x - 16.0
   game_sidebar.offset_top = top
   game_sidebar.offset_bottom = bottom
 
@@ -857,29 +912,39 @@ func _refresh_ui() -> void:
   for row in cost_rows:
     row.label.text = "$%d / $%s" % [cost, str(row.limit).trim_suffix(".0")]
     row.label.add_theme_color_override("font_color", UI.ACCENT if cost <= row.limit else UI.ERROR)
+  results_button.visible = completed
+  _update_hud_actions()
+  _fit_game_dock()
+  palette.counts = inventory
+  palette.selected = selected_kind
+  palette.locked = simulating
+  palette.refresh()
+
+func _update_hud_actions() -> void:
   var has_selection := is_instance_valid(selected_building)
   var kind: String = selected_building.get_meta("kind") if has_selection else ""
   var action := {"magnet": "Flip polarity", "filter": "Change colour"}.get(kind, "") as String
   var can_rotate: bool = has_selection and kind in CATALOG.ROTATABLE_KINDS and not selected_building.get_meta("fixed_rotation")
-  rotate_left_button.visible = action.is_empty() or kind == "filter"
   rotate_left_button.disabled = simulating or not can_rotate
-  rotate_button.text = action + "  E" if not action.is_empty() else "↷  E"
+  rotate_left_button.visible = (action.is_empty() or kind == "filter") and (not compact_layout or not rotate_left_button.disabled)
+  rotate_left_button.text = "↶" if compact_layout else "↶  Q"
+  rotate_button.text = ("↷" if action.is_empty() else action) + ("" if compact_layout else "  E")
   rotate_button.tooltip_text = action if not action.is_empty() else "Rotate clockwise"
   rotate_button.disabled = simulating or not can_rotate
+  rotate_button.visible = not compact_layout or not rotate_button.disabled
   remove_button.disabled = simulating or not has_selection or selected_building.get_meta("fixed_position")
-  selection_label.visible = has_selection
+  remove_button.visible = not compact_layout or not remove_button.disabled
+  remove_button.text = "Remove" if compact_layout else "Remove  " + UI.delete_key_label()
+  selection_label.visible = has_selection and (not compact_layout or hud_menu.button_pressed)
   if has_selection:
     var cell: Vector2i = selected_building.get_meta("cell")
     selection_label.text = "%s (%d, %d)" % [kind.capitalize(), cell.x, cell.y]
     if kind == "magnet":
       selection_label.text += "  %s" % ("+" if selected_building.polarity > 0 else "−")
   stop_button.disabled = not simulating
+  stop_button.visible = not compact_layout or simulating
+  stop_button.text = "Build" if compact_layout else "Build  B"
   restart_button.disabled = not simulating
-  results_button.visible = completed
-  palette.counts = inventory
-  palette.selected = selected_kind
-  palette.locked = simulating
-  palette.refresh()
 
 func _refresh_output() -> void:
   for row in output_rows:
