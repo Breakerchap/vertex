@@ -16,11 +16,12 @@ static func theme() -> Theme:
   shared = Theme.new()
   shared.default_font_size = 15
   shared.set_color("font_color", "Label", TEXT)
+  var button_padding := 11 if OS.has_feature("mobile") or DisplayServer.is_touchscreen_available() else 5
   for type in ["Button", "OptionButton"]:
-    shared.set_stylebox("normal", type, _box(Color("233248"), LINE, 8, 5))
-    shared.set_stylebox("hover", type, _box(Color("30445d"), Color("657f9d"), 8, 5))
-    shared.set_stylebox("pressed", type, _box(Color("22483f"), ACCENT, 8, 5))
-    shared.set_stylebox("disabled", type, _box(Color("1e2939"), Color("29384a"), 8, 5))
+    shared.set_stylebox("normal", type, _box(Color("233248"), LINE, 8, button_padding))
+    shared.set_stylebox("hover", type, _box(Color("30445d"), Color("657f9d"), 8, button_padding))
+    shared.set_stylebox("pressed", type, _box(Color("22483f"), ACCENT, 8, button_padding))
+    shared.set_stylebox("disabled", type, _box(Color("1e2939"), Color("29384a"), 8, button_padding))
     shared.set_stylebox("focus", type, _box(Color.TRANSPARENT, ACCENT))
     shared.set_color("font_color", type, TEXT)
     shared.set_color("font_hover_color", type, Color.WHITE)
@@ -29,7 +30,7 @@ static func theme() -> Theme:
   shared.set_stylebox("panel", "PanelContainer", _box(SURFACE, LINE))
   shared.set_stylebox("panel", "PopupMenu", _box(SURFACE, LINE, 5, 5))
   shared.set_stylebox("hover", "PopupMenu", _box(Color("30445d"), Color.TRANSPARENT, 5, 1))
-  shared.set_constant("v_separation", "PopupMenu", 7)
+  shared.set_constant("v_separation", "PopupMenu", button_padding + 2)
   shared.set_stylebox("normal", "LineEdit", _box(BACKGROUND, LINE, 8, 5))
   shared.set_stylebox("focus", "LineEdit", _box(Color.TRANSPARENT, ACCENT))
   shared.set_color("font_color", "LineEdit", TEXT)
@@ -41,10 +42,13 @@ static func theme() -> Theme:
   shared.set_constant("h_separation", "HFlowContainer", 6)
   shared.set_constant("v_separation", "HFlowContainer", 5)
   shared.set_type_variation("PrimaryButton", "Button")
-  shared.set_stylebox("normal", "PrimaryButton", _box(Color("22483f"), Color("579e88"), 8, 5))
-  shared.set_stylebox("hover", "PrimaryButton", _box(Color("2f5d51"), ACCENT, 8, 5))
+  shared.set_stylebox("normal", "PrimaryButton", _box(Color("22483f"), Color("579e88"), 8, button_padding))
+  shared.set_stylebox("hover", "PrimaryButton", _box(Color("2f5d51"), ACCENT, 8, button_padding))
   shared.set_color("font_color", "PrimaryButton", ACCENT)
   return shared
+
+static func compact_board(view_size: Vector2) -> bool:
+  return view_size.x < 760.0
 
 static func label(text: String) -> Label:
   var control := Label.new()

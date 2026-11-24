@@ -5,7 +5,12 @@ var selected_level: String = ""
 const PROGRESS_FILE := "user://level_progress.cfg"
 const CUSTOM_LEVELS := "user://levels"
 
+var desktop_view_size: Vector2i
+
 func _ready() -> void:
+  desktop_view_size = get_window().content_scale_size
+  get_window().size_changed.connect(_update_window_scale)
+  _update_window_scale()
   if not OS.has_feature("pc") or DisplayServer.get_name() == "headless" or Engine.is_embedded_in_editor(): return
   var window := get_window()
   var screen := window.current_screen
@@ -22,6 +27,18 @@ func _ready() -> void:
   if initial_size != window.size:
     window.size = initial_size
     window.position = usable.position + Vector2i(Vector2(usable.size - window.size) * 0.5)
+
+func _update_window_scale() -> void:
+  var window := get_window()
+  if window.size.x <= 0 or window.size.y <= 0: return
+  var aspect := float(window.size.x) / window.size.y
+  var target := desktop_view_size
+  if aspect < 1.15:
+    target = Vector2i(480, roundi(480.0 / aspect))
+  elif OS.has_feature("mobile") or DisplayServer.is_touchscreen_available():
+    target = Vector2i(roundi(540.0 * aspect), 540)
+  if target != window.content_scale_size:
+    window.content_scale_size = target
 
 func ensure_custom_levels() -> Error:
   return DirAccess.make_dir_recursive_absolute(CUSTOM_LEVELS)

@@ -13,6 +13,13 @@ enum AreaTool { NONE, BLOCK, UNBLOCK }
 var source: CodeEdit
 var game
 var editor_panel: PanelContainer
+var file_bar: HFlowContainer
+var menu_button: Button
+var tools_button: Button
+var inspect_button: Button
+var compact_layout := false
+var menu_open := false
+var tools_open := false
 var inspector_panel: PanelContainer
 var inspector_heading: Label
 var test_game
@@ -138,12 +145,14 @@ func _build_workspace() -> void:
   panel.offset_bottom = -16
   panel.theme = UI.theme()
   panel.resized.connect(_update_camera_inset)
+  panel.minimum_size_changed.connect(_fit_editor_panel)
   var margin := UI.margin(10)
   panel.add_child(margin)
   var column := VBoxContainer.new()
   column.add_theme_constant_override("separation", 8)
   margin.add_child(column)
   var bar := HFlowContainer.new()
+  file_bar = bar
   bar.add_theme_constant_override("separation", 6)
   column.add_child(bar)
   UI.button(bar, "New", func() -> void: _request_action("new")).tooltip_text = UI.shortcut_label("N")
@@ -163,6 +172,12 @@ func _build_workspace() -> void:
   var controls := HFlowContainer.new()
   controls.add_theme_constant_override("separation", 6)
   column.add_child(controls)
+  menu_button = UI.button(controls, "Menu", _toggle_editor_menu)
+  menu_button.toggle_mode = true
+  tools_button = UI.button(controls, "Tools", _toggle_editor_tools)
+  tools_button.toggle_mode = true
+  inspect_button = UI.button(controls, "Inspect", _toggle_editor_inspector)
+  inspect_button.toggle_mode = true
   controls.add_child(UI.label("Grid"))
   width_input = _spin(controls)
   controls.add_child(UI.label("x"))
@@ -178,7 +193,7 @@ func _build_workspace() -> void:
   palette = PALETTE.new()
   palette.infinite = true
   hud.add_child(palette)
-  palette.offset_left = -290
+  palette.set_anchors_preset(Control.PRESET_TOP_LEFT)
   game.external_palette = palette
   palette.kind_selected.connect(_select_palette_kind)
   palette.kind_dropped.connect(_drop_palette_kind)
@@ -188,15 +203,13 @@ func _build_workspace() -> void:
   column.add_child(status)
 
   _build_inspector(hud)
+  get_viewport().size_changed.connect(_layout_workspace)
+  game.get_node("SimulationControls/Panel").resized.connect(_layout_workspace)
+  _layout_workspace()
 
 func _build_inspector(hud: CanvasLayer) -> void:
   inspector_panel = PanelContainer.new()
   hud.add_child(inspector_panel)
-  inspector_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-  inspector_panel.offset_left = -290
-  inspector_panel.offset_right = -16
-  inspector_panel.offset_top = 72
-  inspector_panel.offset_bottom = -16
   inspector_panel.theme = UI.theme()
   var inspector_margin := UI.margin(12)
   inspector_panel.add_child(inspector_margin)
@@ -245,6 +258,8 @@ func _build_dialogs() -> void:
   _build_source_dialog()
   _build_settings_dialog()
   _build_file_dialogs()
+  for dialog in [inspector_dialog, source_dialog, settings_dialog, file_dialog, confirm]:
+    dialog.about_to_popup.connect(game.cancel_board_gesture)
 
 func _build_source_dialog() -> void:
   source_dialog = AcceptDialog.new()
@@ -314,6 +329,7 @@ func _build_settings_dialog() -> void:
   settings_column.add_child(goal_title)
   var goal_help := UI.label("Meet every condition in any one solution to earn stars.")
   UI.muted(goal_help)
+  goal_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
   settings_column.add_child(goal_help)
   goal_rows = VBoxContainer.new()
   goal_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -339,8 +355,9 @@ func _build_settings_dialog() -> void:
 
 func _build_file_dialogs() -> void:
   file_dialog = FileDialog.new()
-  file_dialog.access = FileDialog.ACCESS_FILESYSTEM
-  file_dialog.use_native_dialog = true
+  var local_files := OS.has_feature("mobile") or OS.has_feature("web")
+  file_dialog.access = FileDialog.ACCESS_USERDATA if local_files else FileDialog.ACCESS_FILESYSTEM
+  file_dialog.use_native_dialog = not local_files
   file_dialog.mode_overrides_title = false
   file_dialog.file_selected.connect(_file_selected)
   file_dialog.canceled.connect(_restore_source_after_file_dialog)
@@ -359,20 +376,87 @@ func _select_palette_kind(kind: String) -> void:
   pasting = false
   palette.selected = kind
   palette.refresh()
+  if compact_layout and not kind.is_empty(): tools_open = false
   _select_block(-1)
 
 func _drop_palette_kind(kind: String, screen_position: Vector2) -> void:
   if game.simulating or parsed.has("error") or parsed.is_empty(): return
+  if not game.is_board_pointer(screen_position): return
   var cell: Vector2i = game.screen_to_cell(screen_position)
   if not game.is_cell_on_board(cell): return
   if area_tool != AreaTool.NONE: _set_area_tool(AreaTool.NONE)
+  if compact_layout: tools_open = false
   var facing: String = game._edge_facing(cell, game.get_canvas_transform().affine_inverse() * screen_position) if kind == "edge_wall" else "E"
   _place_editor_kind(kind, cell, facing)
 
 func _update_camera_inset() -> void:
   if not is_instance_valid(game) or not is_instance_valid(editor_panel): return
-  game.editor_bottom_inset = editor_panel.size.y + 16.0
+  game.editor_bottom_inset = get_viewport_rect().size.y - editor_panel.get_rect().position.y
+  _position_tool_panels()
   game._fit_camera()
+
+func _layout_workspace() -> void:
+  var view := get_viewport_rect().size
+  var compact := UI.compact_board(view)
+  if compact != compact_layout:
+    compact_layout = compact
+    tools_open = false
+    menu_open = false
+  game.editor_sidebar_width = 0.0 if compact else 290.0
+  editor_panel.offset_right = -16.0 if compact else -306.0
+  editor_heading.visible = not compact and not is_instance_valid(test_game)
+  menu_button.visible = compact
+  menu_button.set_pressed_no_signal(menu_open)
+  file_bar.visible = not compact or menu_open
+  _refresh_tool_panels()
+  _fit_editor_panel()
+
+func _fit_editor_panel() -> void:
+  var minimum := 0.0 if compact_layout else 121.0
+  editor_panel.offset_top = -16.0 - maxf(minimum, editor_panel.get_combined_minimum_size().y)
+  _update_camera_inset()
+
+func _position_tool_panels() -> void:
+  if not is_instance_valid(inspector_panel): return
+  var view := get_viewport_rect().size
+  var toolbar: Control = game.get_node("SimulationControls/Panel")
+  var left := view.x - 290.0
+  var top := maxf(72.0, toolbar.get_rect().end.y + 8.0) if toolbar.get_rect().end.x + 8.0 > left else 72.0
+  var bottom := view.y - 16.0
+  if compact_layout:
+    left = 16.0
+    bottom = editor_panel.get_rect().position.y - 8.0
+    top = maxf(toolbar.get_rect().end.y + 8.0, bottom - minf(320.0, view.y * 0.44))
+  for panel in [palette, inspector_panel]:
+    panel.offset_left = left
+    panel.offset_right = view.x - 16.0
+    panel.offset_top = top
+    panel.offset_bottom = bottom
+
+func _refresh_tool_panels() -> void:
+  var editing := not is_instance_valid(test_game)
+  var show_panel := editing and (not compact_layout or tools_open)
+  inspector_panel.visible = show_panel and selected_block >= 0
+  palette.visible = show_panel and selected_block < 0
+  tools_button.visible = compact_layout
+  tools_button.set_pressed_no_signal(tools_open and selected_block < 0)
+  inspect_button.visible = compact_layout and selected_block >= 0
+  inspect_button.set_pressed_no_signal(tools_open and selected_block >= 0)
+  game.editor_tool_panel = inspector_panel if selected_block >= 0 else palette
+
+func _toggle_editor_menu() -> void:
+  menu_open = not menu_open
+  _layout_workspace()
+
+func _toggle_editor_tools() -> void:
+  var open := not tools_open or selected_block >= 0
+  _select_move_tool()
+  tools_open = open
+  _refresh_tool_panels()
+
+func _toggle_editor_inspector() -> void:
+  tools_open = not tools_open
+  _refresh_tool_panels()
 
 func _reset_preview() -> void:
   game._load_initial_board()
@@ -566,8 +650,7 @@ func _select_block(index: int, cell: Vector2i = Vector2i(-1, -1)) -> void:
     selected_building = game._building_at(cell, entry.kind, entry.facing)
     inspector_heading.text = "%s  (%d, %d)" % [str(entry.kind).capitalize(), cell.x, cell.y]
   game.selected_building = selected_building
-  if is_instance_valid(inspector_panel): inspector_panel.visible = index >= 0
-  if is_instance_valid(palette): palette.visible = index < 0
+  _refresh_tool_panels()
   _build_visual_form()
   if index < 0: _clear_property_form()
 
@@ -1010,7 +1093,7 @@ func _add_goal_row(parent: VBoxContainer, target: String = "electron", values: A
   if parent.get_child_count() > 0: parent.add_child(HSeparator.new())
   var row := VBoxContainer.new()
   parent.add_child(row)
-  var header := HBoxContainer.new()
+  var header := HFlowContainer.new()
   row.add_child(header)
   var type := OptionButton.new()
   type.add_item("Particle output")
@@ -1046,6 +1129,7 @@ func _add_goal_row(parent: VBoxContainer, target: String = "electron", values: A
     fields.append(field)
   var help := UI.label("")
   UI.muted(help)
+  help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
   row.add_child(help)
   var show_type := func(index: int) -> void:
     expression.visible = index == 0
@@ -1246,6 +1330,7 @@ func _perform_pending_action() -> void:
       path = ""
       saved_text = NEW_LEVEL
       _set_source(NEW_LEVEL)
+      game.fit_board()
     "open":
       _show_file_dialog(FileDialog.FILE_MODE_OPEN_FILE)
     "back": get_tree().change_scene_to_file("res://MainScene/level_select.tscn")
@@ -1261,10 +1346,17 @@ func _save_as() -> void:
 
 func _show_file_dialog(mode: FileDialog.FileMode) -> void:
   if file_dialog.visible: return
+  for flag in [FileDialog.CUSTOMIZATION_FAVORITES, FileDialog.CUSTOMIZATION_RECENT, FileDialog.CUSTOMIZATION_LAYOUT,
+      FileDialog.CUSTOMIZATION_HIDDEN_FILES, FileDialog.CUSTOMIZATION_FILE_FILTER, FileDialog.CUSTOMIZATION_FILE_SORT]:
+    file_dialog.set_customization_flag_enabled(flag, not compact_layout)
+  file_dialog.min_size = Vector2i(400, 320) if compact_layout else Vector2i.ZERO
+  if compact_layout: file_dialog.display_mode = FileDialog.DISPLAY_LIST
   var directory := last_file_directory
   if directory.is_empty() or not DirAccess.dir_exists_absolute(directory):
     var error := Global.ensure_custom_levels()
-    directory = ProjectSettings.globalize_path(Global.CUSTOM_LEVELS if error == OK else "user://")
+    directory = Global.CUSTOM_LEVELS if error == OK else "user://"
+    if file_dialog.access == FileDialog.ACCESS_FILESYSTEM:
+      directory = ProjectSettings.globalize_path(directory)
   var saving := mode == FileDialog.FILE_MODE_SAVE_FILE
   file_dialog.file_mode = mode
   file_dialog.title = "Save Vertex level (.level)" if saving else "Open level"
@@ -1304,6 +1396,7 @@ func _file_selected(selected_path: String) -> void:
     if not _is_bundled_level(path): last_file_directory = path.get_base_dir()
     saved_text = file.get_as_text()
     _set_source(saved_text)
+    game.fit_board()
 
 func _can_save() -> bool:
   var data: Dictionary = PARSER.parse(source.text)
@@ -1361,16 +1454,16 @@ func _start_playtest() -> void:
   test_game.level_override = parsed.duplicate(true)
   test_game.editor_playtest = true
   add_child(test_game)
+  test_game.get_node("Camera2D").make_current()
+  test_game._fit_camera()
   test_game.exit_playtest_requested.connect(_end_playtest)
 
 func _end_playtest() -> void:
   if is_instance_valid(test_game): test_game.queue_free()
   test_game = null
   game.show()
+  game.get_node("Camera2D").make_current()
   game.get_node("SimulationControls").visible = true
   _reset_preview()
   editor_panel.show()
-  editor_heading.show()
-  inspector_panel.visible = selected_block >= 0
-  palette.visible = selected_block < 0
-  game._fit_camera()
+  _layout_workspace()

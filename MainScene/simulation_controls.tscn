@@ -30,8 +30,8 @@ theme_override_constants/margin_top = 7
 theme_override_constants/margin_right = 8
 theme_override_constants/margin_bottom = 7
 
-[node name="Controls" type="HBoxContainer" parent="Panel/Margin"]
-theme_override_constants/separation = 6
+[node name="Controls" type="HFlowContainer" parent="Panel/Margin"]
+theme_override_constants/h_separation = 6
 
 [node name="PlayPause" type="Button" parent="Panel/Margin/Controls"]
 custom_minimum_size = Vector2(66, 0)

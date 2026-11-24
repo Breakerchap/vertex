@@ -47,6 +47,7 @@ func _ready() -> void:
   var header := HBoxContainer.new()
   column.add_child(header)
   var title := Label.new()
+  title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
   title.text = "Building tools" if infinite else "Inventory"
   title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   UI.heading(title)
@@ -89,7 +90,7 @@ func _ready() -> void:
   refresh()
 
 func _fit_list() -> void:
-  if not is_instance_valid(contents): return
+  if not is_instance_valid(contents) or infinite: return
   var frame_height := get_combined_minimum_size().y - scroll.get_combined_minimum_size().y
   scroll.custom_minimum_size.y = minf(contents.get_combined_minimum_size().y, maxf(44.0, height_limit - frame_height))
 
@@ -132,7 +133,7 @@ func refresh() -> void:
     button.disabled = locked or (not infinite and amount <= 0)
 
 func _button_input(event: InputEvent, kind: String) -> void:
-  if not locked and not buttons[kind].disabled and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+  if not locked and not buttons[kind].disabled and event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
     drag_kind = kind
     drag_start = get_global_mouse_position()
 
@@ -146,12 +147,14 @@ func _process(_delta: float) -> void:
 
 func _input(event: InputEvent) -> void:
   if drag_kind.is_empty(): return
-  if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+  if event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
     var kind := drag_kind
     drag_kind = ""
     if is_instance_valid(ghost): ghost.hide()
-    if event.position.distance_to(drag_start) > 8.0 and not locked:
-      kind_dropped.emit(kind, event.position)
+    if event.position.distance_to(drag_start) > 8.0:
+      if not locked: kind_dropped.emit(kind, event.position)
+      var button: Button = buttons.get(kind)
+      if is_instance_valid(button): button.set_pressed_no_signal(selected == kind)
       get_viewport().set_input_as_handled()
 
 func _icon(kind: String) -> Texture2D:

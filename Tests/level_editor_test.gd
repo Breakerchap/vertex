@@ -223,7 +223,7 @@ func _ready() -> void:
 func _check_adaptive_layout(editor: Control) -> void:
   var original_size := get_window().size
   assert(editor.file_dialog.use_native_dialog and editor.file_dialog.access == FileDialog.ACCESS_FILESYSTEM)
-  for resolution in [Vector2i(800, 500), Vector2i(1920, 650), Vector2i(800, 1000), Vector2i(2304, 1440)]:
+  for resolution in [Vector2i(800, 500), Vector2i(1920, 650), Vector2i(390, 844), Vector2i(2304, 1440)]:
     get_window().size = resolution
     await get_tree().process_frame
     await get_tree().process_frame
@@ -241,17 +241,117 @@ func _check_adaptive_layout(editor: Control) -> void:
     assert(workspace.encloses(Rect2(editor.source_dialog.position, editor.source_dialog.size)))
     assert(not editor.source.get_rect().intersects(editor.source_error.get_rect()), "Source and diagnostics must not overlap.")
     editor.source_dialog.hide()
+    if resolution.x < resolution.y:
+      assert(editor.compact_layout and not editor.palette.visible)
+      editor.tools_button.pressed.emit()
+      assert(editor.palette.visible and workspace.encloses(editor.palette.get_global_rect()))
+      editor.tools_button.pressed.emit()
+      editor._open_settings()
+      await get_tree().process_frame
+      assert(workspace.encloses(Rect2(editor.settings_dialog.position, editor.settings_dialog.size)))
+      editor.settings_dialog.hide()
+      editor.file_dialog.use_native_dialog = false
+      editor.file_dialog.access = FileDialog.ACCESS_USERDATA
+      for mode in [FileDialog.FILE_MODE_OPEN_FILE, FileDialog.FILE_MODE_SAVE_FILE]:
+        editor._show_file_dialog(mode)
+        await get_tree().process_frame
+        var dialog_rect := Rect2(editor.file_dialog.position, editor.file_dialog.size)
+        editor.file_dialog.hide()
+        assert(dialog_rect.size.y >= 280 and workspace.encloses(dialog_rect),
+          "File dialog %s must fit inside %s with room for the file list." % [dialog_rect, workspace])
+      editor.file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+      editor.file_dialog.use_native_dialog = true
+      var original: String = editor.source.text
+      _check_camera(editor.game)
+      editor._set_source(original)
     editor._start_playtest()
     await get_tree().process_frame
     await get_tree().process_frame
     var game: Node2D = editor.test_game
     assert(workspace.encloses(game.hud_panel.get_global_rect()))
     assert(workspace.encloses(game.palette.get_global_rect()))
+    if resolution.x < resolution.y:
+      game.sidebar_toggle.pressed.emit()
+      assert(game.palette.is_visible_in_tree() and workspace.encloses(game.game_sidebar.get_global_rect()))
+      game.sidebar_toggle.pressed.emit()
+      _check_camera(game)
     game._finish_run(1)
     assert(game.results.visible and workspace.encloses(Rect2(game.results.position, game.results.size)))
     editor._end_playtest()
     await get_tree().process_frame
   get_window().size = original_size
+
+func _check_camera(game) -> void:
+  var camera: Camera2D = game.get_node("Camera2D")
+  var cell := Vector2i(5, 4)
+  var anchor := _screen_cell(game, cell)
+  var fitted := camera.zoom.x
+  var count: int = game.buildings.size()
+  if game.editor_preview:
+    game.external_palette.kind_selected.emit("wall")
+  else:
+    game.inventory["wall"] = 1
+    game._select_inventory("wall")
+  _mouse_button(MOUSE_BUTTON_WHEEL_UP, anchor, true)
+  assert(camera.zoom.x > fitted, "The wheel should zoom in.")
+  assert(_screen_cell(game, cell).distance_to(anchor) < 1.0, "Zoom should preserve the cell under the pointer.")
+  _mouse_button(MOUSE_BUTTON_RIGHT, anchor, true)
+  var drag := InputEventMouseMotion.new()
+  drag.position = anchor + Vector2(30, -12)
+  drag.relative = drag.position - anchor
+  get_viewport().push_input(drag, true)
+  _mouse_button(MOUSE_BUTTON_RIGHT, drag.position, false)
+  assert(_screen_cell(game, cell).distance_to(drag.position) < 1.0,
+    "Dragging should pan at the current zoom. Expected %s, got %s." % [drag.position, _screen_cell(game, cell)])
+  game.fit_board()
+  assert(is_equal_approx(camera.zoom.x, fitted) and _screen_cell(game, cell).distance_to(anchor) < 1.0)
+
+  var center := _screen_cell(game, Vector2i(4, 4))
+  var finger := center - Vector2(22, 0)
+  var other := center + Vector2(22, 0)
+  _touch(0, finger, true)
+  _mouse_button(MOUSE_BUTTON_LEFT, finger, true, InputEvent.DEVICE_ID_EMULATION)
+  _touch(1, other, true)
+  _touch_drag(1, other + Vector2(30, 0))
+  assert(camera.zoom.x > fitted, "A two-finger spread should zoom in.")
+  assert(_screen_cell(game, Vector2i(4, 4)).distance_to(center + Vector2(15, 0)) < 1.0)
+  _touch(1, other + Vector2(30, 0), false)
+  _touch(0, finger, false)
+  _mouse_button(MOUSE_BUTTON_LEFT, finger, false, InputEvent.DEVICE_ID_EMULATION)
+  game.fit_board()
+  _touch(0, center, true)
+  _touch_drag(0, center + Vector2(0, 24))
+  _touch(0, center + Vector2(0, 24), false)
+  assert(_screen_cell(game, Vector2i(4, 4)).distance_to(center + Vector2(0, 24)) < 1.0, "A one-finger drag should pan.")
+  assert(game.buildings.size() == count, "Camera gestures must preserve the board even when a placement tool is active.")
+  var destination := _screen_cell(game, cell)
+  _touch(0, destination, true)
+  _mouse_button(MOUSE_BUTTON_LEFT, destination, true, InputEvent.DEVICE_ID_EMULATION)
+  _touch(0, destination, false)
+  _mouse_button(MOUSE_BUTTON_LEFT, destination, false, InputEvent.DEVICE_ID_EMULATION)
+  assert(game.buildings.size() == count + 1 and game._building_at(cell) != null, "A touch tap should place once at the transformed cell.")
+  game.fit_board()
+
+func _mouse_button(button: int, at: Vector2, pressed: bool, device := 0) -> void:
+  var event := InputEventMouseButton.new()
+  event.button_index = button
+  event.position = at
+  event.pressed = pressed
+  event.device = device
+  get_viewport().push_input(event, true)
+
+func _touch(index: int, at: Vector2, pressed: bool) -> void:
+  var event := InputEventScreenTouch.new()
+  event.index = index
+  event.position = at
+  event.pressed = pressed
+  get_viewport().push_input(event, true)
+
+func _touch_drag(index: int, at: Vector2) -> void:
+  var event := InputEventScreenDrag.new()
+  event.index = index
+  event.position = at
+  get_viewport().push_input(event, true)
 
 func _choose_particle(picker: OptionButton, name: String) -> void:
   for i in range(1, picker.item_count):

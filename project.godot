@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="Vertex"
 run/main_scene="res://MainScene/level_select.tscn"
-config/features=PackedStringArray("4.7", "Forward Plus")
+config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
 
 [autoload]
@@ -25,10 +25,11 @@ Global="*res://Global.gd"
 
 [display]
 
-window/size/viewport_width=1152
+window/handheld/orientation=6
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/subwindows/embed_subwindows=true
 
 [dotnet]
 
@@ -36,4 +37,6 @@ project/assembly_name="Vertex"
 
 [rendering]
 
+renderer/rendering_method="mobile"
+renderer/rendering_method.macos="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true

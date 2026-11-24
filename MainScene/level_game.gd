@@ -13,6 +13,8 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const BUILDING = preload("res://Buildings/building.gd")
 const CELL := BUILDING.GRID_SIZE
 const SIDEBAR_WIDTH := 288.0
+const POINTER_SLOP := 8.0
+const ZOOM_STEP := 1.2
 const MIN_METER_STEPS := 8
 const MAX_METER_STEPS := 2400
 const METER_TARGET_COUNT := 8.0
@@ -32,11 +34,22 @@ var drag_cell := Vector2i(-1, -1)
 var drag_start := Vector2.ZERO
 var area_selection_enabled := false
 var area_origin := Vector2i(-1, -1)
+var camera_pan := Vector2.ZERO
+var camera_scale := 1.0
+var fitted_zoom := 1.0
+var pan_button := MOUSE_BUTTON_NONE
+var pan_start := Vector2.ZERO
+var mouse_panning := false
+var touches: Dictionary[int, Vector2] = {}
+var touch_start := Vector2.ZERO
+var touch_gesture := false
+var board_uses_touch := false
 
 var editor_preview := false
 var editor_playtest := false
 var level_override: Dictionary = {}
 var external_palette: PanelContainer
+var editor_tool_panel: Control
 var diagnostic_overlay
 var undo_history: Array[Dictionary] = []
 var redo_history: Array[Dictionary] = []
@@ -45,6 +58,13 @@ var editor_bottom_inset := 190.0
 var editor_sidebar_width := 256.0
 var hud_panel: PanelContainer
 var level_heading: VBoxContainer
+var game_sidebar: VBoxContainer
+var goal_panel: PanelContainer
+var goal_scroll: ScrollContainer
+var goal_content: VBoxContainer
+var sidebar_toggle: Button
+var compact_layout := false
+var sidebar_open := false
 var results_text: RichTextLabel
 var level: Dictionary = {}
 var buildings: Array[Node] = []
@@ -81,6 +101,7 @@ func _ready() -> void:
   running = false
   RenderingServer.set_default_clear_color(UI.BACKGROUND)
   $SimulationControls/Panel.theme = UI.theme()
+  _add_camera_controls()
   if editor_preview:
     _add_diagnostic_overlay()
     get_viewport().size_changed.connect(_fit_camera)
@@ -133,20 +154,72 @@ func set_playback_speed(speed: float) -> void:
   super.set_playback_speed(speed)
 
 func _fit_camera() -> void:
-  if level.is_empty():
-    return
-  var camera: Camera2D = $Camera2D
-  camera.position = Vector2(level.width - 1, level.height - 1) * CELL * 0.5
+  if level.is_empty() or level.has("error"): return
+  var available := _board_view()
+  var board_size := Vector2(level.width, level.height) * CELL
+  fitted_zoom = minf(1.0, minf(maxf(1.0, available.size.x - 36.0) / board_size.x,
+    maxf(1.0, available.size.y - 24.0) / board_size.y))
+  _update_board_camera(available)
+
+func _board_view() -> Rect2:
   var view := get_viewport_rect().size
-  var bottom_inset := editor_bottom_inset if editor_preview else hud_panel.size.y + 28.0
   var toolbar: Control = $SimulationControls/Panel
-  var top_inset := toolbar.get_rect().end.y + 12.0 if editor_preview else level_heading.get_rect().end.y + 12.0
-  var right_inset := editor_sidebar_width if editor_preview else SIDEBAR_WIDTH + 16.0
-  var available := Vector2(maxf(100.0, view.x - right_inset - 36.0), maxf(100.0, view.y - top_inset - bottom_inset))
-  var board := Vector2(level.width, level.height) * CELL
-  var zoom_amount := minf(1.0, minf(available.x / board.x, available.y / board.y))
+  var top_inset := toolbar.get_rect().end.y if editor_preview else level_heading.get_rect().end.y
+  var bottom_inset := editor_bottom_inset if editor_preview else view.y - hud_panel.get_rect().position.y
+  var right_inset := editor_sidebar_width if editor_preview else (0.0 if compact_layout else SIDEBAR_WIDTH + 16.0)
+  return Rect2(0, top_inset, maxf(1.0, view.x - right_inset), maxf(1.0, view.y - top_inset - bottom_inset))
+
+func _update_board_camera(available: Rect2) -> void:
+  var camera: Camera2D = $Camera2D
+  camera_scale = clampf(camera_scale, 0.5, 4.0 / fitted_zoom)
+  var zoom_amount := fitted_zoom * camera_scale
+  # Keep a strip of the board reachable at either end of a pan.
+  var border := (available.size * 0.5 - Vector2(48, 48)).max(Vector2.ZERO)
+  var pan_limit := Vector2(level.width, level.height) * CELL * 0.5 + border / zoom_amount
+  camera_pan = camera_pan.clamp(-pan_limit, pan_limit)
+  camera.position = Vector2(level.width - 1, level.height - 1) * CELL * 0.5 + camera_pan
   camera.zoom = Vector2.ONE * zoom_amount
-  camera.offset = Vector2(right_inset, bottom_inset - top_inset) * 0.5 / zoom_amount
+  camera.offset = (get_viewport_rect().size * 0.5 - available.get_center()) / zoom_amount
+  camera.force_update_scroll()
+
+func fit_board() -> void:
+  camera_pan = Vector2.ZERO
+  camera_scale = 1.0
+  _fit_camera()
+
+func _zoom_board(factor: float, anchor: Vector2, destination: Vector2) -> void:
+  var available := _board_view()
+  var old_zoom := fitted_zoom * camera_scale
+  camera_scale = clampf(camera_scale * factor, 0.5, 4.0 / fitted_zoom)
+  var center := available.get_center()
+  camera_pan += (anchor - center) / old_zoom - (destination - center) / (fitted_zoom * camera_scale)
+  _update_board_camera(available)
+
+func _pan_board(delta: Vector2) -> void:
+  camera_pan -= delta / (fitted_zoom * camera_scale)
+  _update_board_camera(_board_view())
+
+func _zoom_from_button(factor: float) -> void:
+  if level.is_empty(): return
+  var center := _board_view().get_center()
+  _zoom_board(factor, center, center)
+
+func _add_camera_controls() -> void:
+  var toolbar: PanelContainer = $SimulationControls/Panel
+  var group := HBoxContainer.new()
+  $SimulationControls/Panel/Margin/Controls.add_child(group)
+  var zoom_out := UI.button(group, "−", _zoom_from_button.bind(1.0 / ZOOM_STEP))
+  zoom_out.tooltip_text = "Zoom out"
+  zoom_out.custom_minimum_size.x = 34
+  var zoom_in := UI.button(group, "+", _zoom_from_button.bind(ZOOM_STEP))
+  zoom_in.tooltip_text = "Zoom in"
+  zoom_in.custom_minimum_size.x = 34
+  var fit := UI.button(group, "Fit board", fit_board)
+  fit.tooltip_text = "Fit the whole board. Pan with a middle or right drag, or drag with one finger. Zoom with the wheel or a pinch."
+  var layout := func() -> void:
+    toolbar.size.x = minf(590.0, get_viewport_rect().size.x - 32.0)
+  get_viewport().size_changed.connect(layout)
+  layout.call()
 
 func _create_hud() -> void:
   var layer := CanvasLayer.new()
@@ -162,7 +235,6 @@ func _create_hud() -> void:
   panel.offset_top = -16
   panel.offset_bottom = -16
   layer.add_child(panel)
-  panel.resized.connect(_fit_camera)
   var margin := UI.margin(10)
   panel.add_child(margin)
   var column := VBoxContainer.new()
@@ -175,6 +247,9 @@ func _create_hud() -> void:
   column.add_child(selection_label)
   var actions := HFlowContainer.new()
   column.add_child(actions)
+  sidebar_toggle = UI.button(actions, "Goals & inventory", _toggle_sidebar)
+  sidebar_toggle.toggle_mode = true
+  sidebar_toggle.hide()
   rotate_left_button = UI.button(actions, "↶  Q", _rotate_selected.bind(-1))
   rotate_left_button.tooltip_text = "Rotate counterclockwise"
   rotate_button = UI.button(actions, "↷  E", _rotate_selected)
@@ -186,6 +261,7 @@ func _create_hud() -> void:
   UI.button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
   results = AcceptDialog.new()
   UI.setup_dialog(results, layer, "Level complete")
+  results.about_to_popup.connect(cancel_board_gesture)
   results.ok_button_text = "Back to build"
   results.confirmed.connect(stop_to_build)
   results.canceled.connect(stop_to_build)
@@ -194,6 +270,28 @@ func _create_hud() -> void:
   next_level_button.visible = not editor_playtest and not Global.next_level_path(Global.selected_level).is_empty()
   results_text = RichTextLabel.new()
   results.add_child(results_text)
+  get_viewport().size_changed.connect(_layout_hud)
+  panel.resized.connect(_layout_hud)
+  _layout_hud()
+
+func _layout_hud() -> void:
+  var view := get_viewport_rect().size
+  var compact := UI.compact_board(view)
+  if compact_layout != compact:
+    compact_layout = compact
+    sidebar_open = false
+  var right := -16.0 if compact else -SIDEBAR_WIDTH - 32.0
+  hud_panel.offset_right = right
+  level_heading.offset_right = right
+  sidebar_toggle.visible = compact
+  sidebar_toggle.set_pressed_no_signal(sidebar_open)
+  game_sidebar.visible = not compact or sidebar_open
+  _layout_sidebar()
+  _fit_camera()
+
+func _toggle_sidebar() -> void:
+  sidebar_open = not sidebar_open
+  _layout_hud()
 
 func _add_level_heading(layer: CanvasLayer) -> void:
   var header := VBoxContainer.new()
@@ -221,13 +319,9 @@ func _add_level_heading(layer: CanvasLayer) -> void:
 
 func _add_sidebar(layer: CanvasLayer) -> void:
   var sidebar := VBoxContainer.new()
+  game_sidebar = sidebar
   sidebar.name = "Sidebar"
   sidebar.theme = UI.theme()
-  sidebar.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-  sidebar.offset_left = -SIDEBAR_WIDTH - 16.0
-  sidebar.offset_right = -16
-  sidebar.offset_top = 16
-  sidebar.offset_bottom = -16
   sidebar.mouse_filter = Control.MOUSE_FILTER_IGNORE
   layer.add_child(sidebar)
   var panel := PanelContainer.new()
@@ -246,19 +340,28 @@ func _add_sidebar(layer: CanvasLayer) -> void:
   sidebar.add_child(palette)
   palette.kind_selected.connect(_select_inventory)
   palette.kind_dropped.connect(_drop_inventory)
-  var toolbar: PanelContainer = $SimulationControls/Panel
-  var fit := func() -> void:
-    var view := get_viewport_rect().size
-    var toolbar_end := toolbar.get_rect().end
-    sidebar.offset_top = 16.0 if toolbar_end.x + 8.0 <= view.x - SIDEBAR_WIDTH - 16.0 else toolbar_end.y + 8.0
-    var available := view.y - sidebar.offset_top - 16.0
-    var frame_height := panel.get_combined_minimum_size().y - scroll.get_combined_minimum_size().y
-    scroll.custom_minimum_size.y = minf(rows.get_combined_minimum_size().y, maxf(44.0, available * 0.46 - frame_height))
-    palette.height_limit = available - frame_height - scroll.custom_minimum_size.y - sidebar.get_theme_constant("separation")
-  rows.minimum_size_changed.connect(fit)
-  get_viewport().size_changed.connect(fit)
-  toolbar.resized.connect(fit)
-  fit.call()
+  goal_panel = panel
+  goal_scroll = scroll
+  goal_content = rows
+  rows.minimum_size_changed.connect(_layout_sidebar)
+  $SimulationControls/Panel.resized.connect(_layout_sidebar)
+
+func _layout_sidebar() -> void:
+  var view := get_viewport_rect().size
+  var toolbar_end: Vector2 = $SimulationControls/Panel.get_rect().end
+  var top := 16.0 if toolbar_end.x + 8.0 <= view.x - SIDEBAR_WIDTH - 16.0 else toolbar_end.y + 8.0
+  var bottom := view.y - 16.0
+  if compact_layout:
+    bottom = hud_panel.get_rect().position.y - 8.0
+    top = maxf(toolbar_end.y + 8.0, bottom - minf(360.0, view.y * 0.5))
+  var available := bottom - top
+  var frame_height := goal_panel.get_combined_minimum_size().y - goal_scroll.get_combined_minimum_size().y
+  goal_scroll.custom_minimum_size.y = minf(goal_content.get_combined_minimum_size().y, maxf(44.0, available * 0.46 - frame_height))
+  palette.height_limit = available - frame_height - goal_scroll.custom_minimum_size.y - game_sidebar.get_theme_constant("separation")
+  game_sidebar.offset_left = 16.0 if compact_layout else view.x - SIDEBAR_WIDTH - 16.0
+  game_sidebar.offset_right = view.x - 16.0
+  game_sidebar.offset_top = top
+  game_sidebar.offset_bottom = bottom
 
 func _add_goals(rows: VBoxContainer) -> void:
   var targets: Array = level.get("goal_targets", [])
@@ -413,7 +516,15 @@ func _mouse_cell() -> Vector2i:
   return _world_to_cell(get_global_mouse_position())
 
 func screen_to_cell(screen_position: Vector2) -> Vector2i:
-  return _world_to_cell(get_canvas_transform().affine_inverse() * screen_position)
+  return _world_to_cell(_screen_to_world(screen_position))
+
+func _screen_to_world(screen_position: Vector2) -> Vector2:
+  return get_canvas_transform().affine_inverse() * screen_position
+
+func is_board_pointer(screen_position: Vector2) -> bool:
+  if level.is_empty() or not _board_view().has_point(screen_position): return false
+  var controls: Control = editor_tool_panel if editor_preview else game_sidebar
+  return not is_instance_valid(controls) or not controls.is_visible_in_tree() or not controls.get_global_rect().has_point(screen_position)
 
 func _world_to_cell(world_position: Vector2) -> Vector2i:
   var point := world_position / CELL
@@ -476,16 +587,53 @@ func _board_target(cell: Vector2i, world: Vector2) -> Node:
   return _building_at(cell)
 
 func _input(event: InputEvent) -> void:
-  if not area_selection_enabled or area_origin.x < 0 or not is_visible_in_tree(): return
-  if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
-    var area := _area_selection(screen_to_cell(event.position))
-    area_origin = Vector2i(-1, -1)
-    if not simulating: editor_area_selected.emit(area)
-    get_viewport().set_input_as_handled()
+  if not is_visible_in_tree(): return
+  if event is InputEventScreenDrag and touches.has(event.index):
+    _drag_touch(event)
+  elif event is InputEventScreenTouch and not event.pressed and touches.has(event.index):
+    _release_touch(event)
+  elif event is InputEventMouse and event.device != InputEvent.DEVICE_ID_EMULATION:
+    if event is InputEventMouseMotion:
+      board_uses_touch = false
+      if pan_button == MOUSE_BUTTON_NONE: return
+      var delta: Vector2 = event.relative
+      if not mouse_panning:
+        delta = event.position - pan_start
+        if delta.length() <= POINTER_SLOP: return
+        mouse_panning = true
+      _pan_board(delta)
+    elif event is InputEventMouseButton and not event.pressed:
+      if pan_button != MOUSE_BUTTON_NONE and event.button_index == pan_button:
+        var clicked := not mouse_panning and pan_button == MOUSE_BUTTON_RIGHT
+        pan_button = MOUSE_BUTTON_NONE
+        mouse_panning = false
+        if clicked and is_board_pointer(event.position):
+          _press_board(event.position, MOUSE_BUTTON_RIGHT)
+      elif event.button_index == MOUSE_BUTTON_LEFT and area_origin.x >= 0 and touches.is_empty():
+        _finish_area_selection(event.position)
+      elif event.button_index == MOUSE_BUTTON_LEFT and drag_cell.x >= 0:
+        var from := drag_cell
+        drag_cell = Vector2i(-1, -1)
+        if not simulating and not area_selection_enabled and is_board_pointer(event.position) and event.position.distance_to(drag_start) > POINTER_SLOP:
+          var cell := screen_to_cell(event.position)
+          if editor_preview: editor_cell_dragged.emit(from, cell)
+          elif is_cell_on_board(cell): _move_selected_to(cell)
+          else: _remove_selected()
+      else: return
+    else: return
+  else: return
+  get_viewport().set_input_as_handled()
 
 func _notification(what: int) -> void:
-  if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
-    area_origin = Vector2i(-1, -1)
+  if what == NOTIFICATION_APPLICATION_FOCUS_OUT or (what == NOTIFICATION_VISIBILITY_CHANGED and not is_visible_in_tree()):
+    cancel_board_gesture()
+
+func cancel_board_gesture() -> void:
+  area_origin = Vector2i(-1, -1)
+  drag_cell = Vector2i(-1, -1)
+  pan_button = MOUSE_BUTTON_NONE
+  mouse_panning = false
+  touches.clear()
 
 func _unhandled_input(event: InputEvent) -> void:
   if not is_visible_in_tree(): return
@@ -504,6 +652,7 @@ func _handle_game_shortcut(event: InputEventKey) -> void:
   elif event.get_modifiers_mask() != 0: return
   elif event.keycode == KEY_SPACE: $SimulationControls._toggle_running()
   elif event.keycode == KEY_PERIOD: $SimulationControls._step_once()
+  elif event.keycode == KEY_HOME: fit_board()
   elif not editor_preview:
     match event.keycode:
       KEY_B: stop_to_build()
@@ -524,37 +673,94 @@ func _handle_game_shortcut(event: InputEventKey) -> void:
   get_viewport().set_input_as_handled()
 
 func _handle_board_input(event: InputEvent) -> void:
-  if simulating or not event is InputEventMouseButton:
-    return
-  if area_selection_enabled:
-    if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-      var origin := screen_to_cell(event.position)
-      if is_cell_on_board(origin): area_origin = origin
-    return
-  var cell := _mouse_cell()
-  if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
-    if drag_cell.x >= 0 and event.position.distance_to(drag_start) > 8.0:
-      if editor_preview:
-        editor_cell_dragged.emit(drag_cell, cell)
-      else:
-        if is_cell_on_board(cell): _move_selected_to(cell)
-        else: _remove_selected()
-    drag_cell = Vector2i(-1, -1)
-    return
-  if not event.pressed or not is_cell_on_board(cell):
-    return
-  var world := get_global_mouse_position()
+  if event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION and event.pressed and is_board_pointer(event.position):
+    board_uses_touch = false
+    if pan_button != MOUSE_BUTTON_NONE or not touches.is_empty(): return
+    match event.button_index:
+      MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN:
+        var direction := 1.0 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0
+        _zoom_board(pow(ZOOM_STEP, direction * (event.factor if event.factor > 0.0 else 1.0)), event.position, event.position)
+      MOUSE_BUTTON_MIDDLE, MOUSE_BUTTON_RIGHT:
+        pan_button = event.button_index
+        pan_start = event.position
+        drag_cell = Vector2i(-1, -1)
+        area_origin = Vector2i(-1, -1)
+      MOUSE_BUTTON_LEFT:
+        if area_selection_enabled and not simulating:
+          _start_area_selection(event.position)
+        else:
+          _press_board(event.position, MOUSE_BUTTON_LEFT, true)
+      _: return
+  elif event is InputEventScreenTouch and event.pressed and is_board_pointer(event.position):
+    if pan_button != MOUSE_BUTTON_NONE: return
+    board_uses_touch = true
+    if touches.is_empty():
+      touch_start = event.position
+      touch_gesture = false
+      if area_selection_enabled and not simulating: _start_area_selection(event.position)
+    else:
+      area_origin = Vector2i(-1, -1)
+      touch_gesture = true
+    touches[event.index] = event.position
+  elif event is InputEventMagnifyGesture and touches.is_empty() and is_board_pointer(event.position):
+    if event.factor <= 0.0: return
+    _zoom_board(event.factor, event.position, event.position)
+  else: return
+  get_viewport().set_input_as_handled()
+
+func _start_area_selection(at: Vector2) -> void:
+  var origin := screen_to_cell(at)
+  if is_cell_on_board(origin): area_origin = origin
+
+func _finish_area_selection(at: Vector2) -> void:
+  var area := _area_selection(screen_to_cell(at))
+  area_origin = Vector2i(-1, -1)
+  if area_selection_enabled and not simulating: editor_area_selected.emit(area)
+
+func area_pointer_cell() -> Vector2i:
+  return _mouse_cell() if touches.is_empty() else screen_to_cell(touches.values()[0])
+
+func _drag_touch(event: InputEventScreenDrag) -> void:
+  var previous: Vector2 = touches[event.index]
+  if touches.size() >= 2:
+    var indices := touches.keys()
+    if event.index == indices[0] or event.index == indices[1]:
+      var other: Vector2 = touches[indices[1] if event.index == indices[0] else indices[0]]
+      var factor := maxf(1.0, event.position.distance_to(other)) / maxf(1.0, previous.distance_to(other))
+      _zoom_board(factor, (previous + other) * 0.5, (event.position + other) * 0.5)
+  elif area_origin.x < 0:
+    if touch_gesture:
+      _pan_board(event.position - previous)
+    elif event.position.distance_to(touch_start) > POINTER_SLOP:
+      touch_gesture = true
+      _pan_board(event.position - touch_start)
+  touches[event.index] = event.position
+
+func _release_touch(event: InputEventScreenTouch) -> void:
+  touches.erase(event.index)
+  if not touches.is_empty(): return
+  if event.canceled:
+    area_origin = Vector2i(-1, -1)
+  elif not touch_gesture:
+    if area_origin.x >= 0:
+      _finish_area_selection(event.position)
+    elif not area_selection_enabled and event.position.distance_to(touch_start) <= POINTER_SLOP and is_board_pointer(event.position):
+      _press_board(event.position, MOUSE_BUTTON_LEFT)
+
+func _press_board(at: Vector2, button: int, allow_drag := false) -> void:
+  if simulating or area_selection_enabled: return
+  var world := _screen_to_world(at)
+  var cell := _world_to_cell(world)
+  if not is_cell_on_board(cell): return
   var target := _board_target(cell, world)
   var facing := _edge_facing(cell, world)
-  if event.button_index == MOUSE_BUTTON_LEFT:
-    drag_cell = Vector2i(-1, -1)
-    if target != null:
-      drag_cell = target.get_meta("cell")
-      drag_start = event.position
+  if allow_drag:
+    drag_cell = target.get_meta("cell") if target != null else Vector2i(-1, -1)
+    drag_start = at
   if editor_preview:
-    editor_cell_clicked.emit(cell, event.button_index, target, facing)
+    editor_cell_clicked.emit(cell, button, target, facing)
   else:
-    _click_cell(cell, event.button_index, target, facing)
+    _click_cell(cell, button, target, facing)
 
 func _move_selected_to(cell: Vector2i) -> void:
   if not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position"): return
@@ -588,8 +794,8 @@ func _click_cell(cell: Vector2i, button_index: int, target: Node = null, facing 
         selected_building = null
     else:
       selected_building = null
-    _refresh_ui()
-    queue_redraw()
+  _refresh_ui()
+  queue_redraw()
 
 func _rotate_selected(turn: int = 1) -> void:
   if simulating or not is_instance_valid(selected_building) or selected_building.get_meta("fixed_rotation"):
@@ -634,6 +840,7 @@ func _select_inventory(kind: String) -> void:
   if simulating: return
   selected_building = null
   selected_kind = kind
+  if compact_layout and not kind.is_empty() and sidebar_open: _toggle_sidebar()
   _refresh_ui()
   queue_redraw()
 
@@ -698,11 +905,13 @@ func _recent_rate(key: String, measured_steps: int) -> float:
   return float(_goal_count(sampled_counts, key) - old_count) / measured_steps
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
+  if not is_board_pointer(screen_position): return
   var cell := screen_to_cell(screen_position)
   if not is_cell_on_board(cell): return
-  var facing := _edge_facing(cell, get_canvas_transform().affine_inverse() * screen_position) if kind == "edge_wall" else CATALOG.default_facing(kind)
+  var facing := _edge_facing(cell, _screen_to_world(screen_position)) if kind == "edge_wall" else CATALOG.default_facing(kind)
   if not _place_inventory_building(kind, cell, facing): return
   selected_building = _building_at(cell, kind, facing)
+  if compact_layout and sidebar_open: _toggle_sidebar()
   _refresh_ui()
   queue_redraw()
 

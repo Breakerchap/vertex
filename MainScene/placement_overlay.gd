@@ -47,14 +47,14 @@ func _draw() -> void:
       if building == game.selected_building:
         draw_rect(rectangle.grow(2.0), Color.WHITE, false, 2.0)
 
-    var hover: Vector2i = game._mouse_cell()
+    var hover: Vector2i = game.area_pointer_cell()
     if game.area_selection_enabled:
       var selection: Rect2i = game._area_selection(hover)
       if selection.has_area():
         var rect: Rect2 = game._area_rect(selection)
         draw_rect(rect, Color("8fc7ff", 0.25))
         draw_rect(rect.grow(-1.5), Color("8fc7ff"), false, 3.0)
-    elif game.is_cell_on_board(hover):
+    elif not game.board_uses_touch and not game.mouse_panning and game.is_board_pointer(game.get_viewport().get_mouse_position()) and game.is_cell_on_board(hover):
       var palette = game.external_palette if game.editor_preview else game.palette
       var kind: String = game.selected_kind
       if is_instance_valid(palette):
