@@ -22,7 +22,7 @@ const SPEED_RAMP_START := 12.0
 const SPEED_RAMP_END := 24.0
 const FORECAST_REFRESH_STEPS := 16.0
 
-signal editor_cell_clicked(cell: Vector2i, button: int, target: Node, facing: String)
+signal editor_cell_clicked(cell: Vector2i, button: int, target: Node, facing: String, touch: bool)
 signal editor_cell_dragged(from_cell: Vector2i, to_cell: Vector2i)
 signal editor_area_selected(area: Rect2i)
 signal exit_playtest_requested
@@ -213,6 +213,10 @@ func _zoom_from_button(factor: float) -> void:
 func _add_camera_controls() -> void:
   var toolbar: PanelContainer = $SimulationControls/Panel
   var controls: HFlowContainer = $SimulationControls/Panel/Margin/Controls
+  var margin: MarginContainer = $SimulationControls/Panel/Margin
+  margin.add_theme_constant_override("margin_top", 4)
+  margin.add_theme_constant_override("margin_bottom", 4)
+  controls.add_theme_constant_override("h_separation", 4)
   var group := HBoxContainer.new()
   controls.add_child(group)
   var zoom_out := UI.button(group, "−", _zoom_from_button.bind(1.0 / ZOOM_STEP))
@@ -807,9 +811,9 @@ func _release_touch(event: InputEventScreenTouch) -> void:
     if area_origin.x >= 0:
       _finish_area_selection(event.position)
     elif not area_selection_enabled and event.position.distance_to(touch_start) <= POINTER_SLOP and is_board_pointer(event.position):
-      _press_board(event.position, MOUSE_BUTTON_LEFT)
+      _press_board(event.position, MOUSE_BUTTON_LEFT, false, true)
 
-func _press_board(at: Vector2, button: int, allow_drag := false) -> void:
+func _press_board(at: Vector2, button: int, allow_drag := false, touch := false) -> void:
   if simulating or area_selection_enabled: return
   var world := _screen_to_world(at)
   var cell := _world_to_cell(world)
@@ -820,9 +824,9 @@ func _press_board(at: Vector2, button: int, allow_drag := false) -> void:
     drag_cell = target.get_meta("cell") if target != null else Vector2i(-1, -1)
     drag_start = at
   if editor_preview:
-    editor_cell_clicked.emit(cell, button, target, facing)
+    editor_cell_clicked.emit(cell, button, target, facing, touch)
   else:
-    _click_cell(cell, button, target, facing)
+    _click_cell(cell, button, target, facing, touch)
 
 func _move_selected_to(cell: Vector2i) -> void:
   if not is_instance_valid(selected_building) or selected_building.get_meta("fixed_position"): return
@@ -836,12 +840,13 @@ func _move_selected_to(cell: Vector2i) -> void:
   _refresh_ui()
   queue_redraw()
 
-func _click_cell(cell: Vector2i, button_index: int, target: Node = null, facing := "E") -> void:
+func _click_cell(cell: Vector2i, button_index: int, target: Node = null, facing := "E", touch := false) -> void:
   if simulating or not is_cell_on_board(cell): return
   if target == null: target = _building_at(cell)
-  if button_index == MOUSE_BUTTON_RIGHT:
+  if button_index == MOUSE_BUTTON_RIGHT or (touch and target != null):
     selected_building = target
     selected_kind = ""
+    if touch: _rotate_selected(-1)
   elif button_index == MOUSE_BUTTON_LEFT:
     var placement_facing := facing if selected_kind == "edge_wall" else CATALOG.default_facing(selected_kind)
     if not selected_kind.is_empty() and _place_inventory_building(selected_kind, cell, placement_facing):

@@ -238,6 +238,7 @@ func _check_adaptive_layout(editor: Control) -> void:
   assert(editor.file_dialog.use_native_dialog and editor.file_dialog.access == FileDialog.ACCESS_FILESYSTEM)
   var phone_landscape := Vector2i(1160, 540)
   for resolution in [Vector2i(800, 500), Vector2i(1920, 650), Vector2i(390, 844), phone_landscape, Vector2i(2304, 1440)]:
+    var original_source: String = editor.source.text
     get_window().size = resolution
     if resolution == phone_landscape:
       get_window().size_changed.disconnect(Global._update_window_scale)
@@ -249,7 +250,12 @@ func _check_adaptive_layout(editor: Control) -> void:
     assert(workspace.encloses(editor.editor_panel.get_global_rect()))
     assert(workspace.encloses(editor.palette.get_global_rect()))
     if resolution == phone_landscape:
-      await _check_landscape_editor_docks(editor, workspace)
+      _check_landscape_editor_docks(editor, workspace)
+      editor._set_source(original_source + "\nemitter: {x=4,y=4,E};\nmagnet: {x=5,y=4,+};\n")
+      _tap_cell(editor.game, Vector2i(4, 4))
+      _tap_cell(editor.game, Vector2i(5, 4))
+      assert(editor.game._building_at(Vector2i(4, 4)).get_meta("entry").facing == "NE")
+      assert(editor.game._building_at(Vector2i(5, 4)).polarity == -1)
     var board_center: Vector2i = editor.game.screen_to_cell(editor.game.get_canvas_transform() * editor.game._cell_position(Vector2i(4, 4)))
     assert(board_center == Vector2i(4, 4), "The scaled board must still map pointer positions to cells.")
     editor._open_source()
@@ -290,8 +296,16 @@ func _check_adaptive_layout(editor: Control) -> void:
     assert(workspace.encloses(game.hud_panel.get_global_rect()))
     assert(workspace.encloses(game.palette.get_global_rect()))
     if resolution == phone_landscape:
-      assert(game.compact_layout and not game.game_sidebar.visible and not game.hud_options.visible)
-      assert(game._board_view().size.y >= workspace.size.y * 0.70, "The closed docks should leave room for the board.")
+      assert(not game.compact_layout and game.game_sidebar.visible and game.hud_options.visible)
+      var emitter: Node = game._building_at(Vector2i(4, 4))
+      var magnet: Node = game._building_at(Vector2i(5, 4))
+      _tap_cell(game, Vector2i(4, 4))
+      assert(CATALOG.DIRECTIONS[emitter.orientation] == "N")
+      _tap_cell(game, Vector2i(5, 4))
+      assert(magnet.polarity == 1)
+      magnet.set_meta("fixed_rotation", true)
+      _tap_cell(game, Vector2i(5, 4))
+      assert(magnet.polarity == 1, "A touch tap must respect the same lock as Q.")
     if resolution.x < resolution.y:
       game.sidebar_toggle.pressed.emit()
       assert(game.palette.is_visible_in_tree() and workspace.encloses(game.game_sidebar.get_global_rect()))
@@ -303,35 +317,26 @@ func _check_adaptive_layout(editor: Control) -> void:
     await get_tree().process_frame
     if resolution == phone_landscape:
       get_window().size_changed.connect(Global._update_window_scale)
+      editor._set_source(original_source)
   get_window().size = original_size
 
 func _check_landscape_editor_docks(editor, workspace: Rect2) -> void:
   var toolbar: PanelContainer = editor.game.get_node("SimulationControls/Panel")
   var more: Button = toolbar.get_node("Margin/Controls/More")
-  var original_toolbar_size := toolbar.size
-  var original_dock_size: Vector2 = editor.editor_panel.size
-  assert(editor.compact_layout and not editor.palette.visible and not editor.edit_bar.visible and not editor.file_bar.visible)
+  assert(not editor.compact_layout and editor.palette.visible and editor.edit_bar.visible and editor.file_bar.visible)
+  assert(not more.visible and toolbar.get_node("Margin/Controls/Speed").visible)
+  assert(toolbar.size.y <= 55.0, "The simulation toolbar should only occupy one row in landscape.")
+  assert(editor.playtest_button.get_parent() == editor.file_bar)
+  assert(editor.editor_panel.size.y <= 100.0, "Playtest and status should fit alongside the file actions.")
   assert(editor.game._board_view().size.y >= workspace.size.y * 0.70)
-  more.button_pressed = true
-  editor.menu_button.pressed.emit()
-  await get_tree().process_frame
-  await get_tree().process_frame
-  assert(editor.file_bar.visible and editor.edit_bar.visible)
-  assert(toolbar.size.x > original_toolbar_size.x)
-  more.button_pressed = false
-  editor.block_area_button.pressed.emit()
-  assert(not editor.menu_open and editor.done_button.visible)
-  editor.done_button.pressed.emit()
-  editor.tools_button.pressed.emit()
-  assert(editor.palette.visible and editor.palette.list.columns == 2)
-  editor.tools_button.pressed.emit()
-  await get_tree().process_frame
-  await get_tree().process_frame
-  assert(toolbar.size.is_equal_approx(original_toolbar_size))
-  assert(editor.editor_panel.size.is_equal_approx(original_dock_size))
   editor.game.fit_board()
   var board_rect: Rect2 = editor.game.get_canvas_transform() * editor.game.level_bounds
-  assert(editor.game._board_view().encloses(board_rect), "The fitted board should sit between the closed docks.")
+  assert(editor.game._board_view().encloses(board_rect), "The fitted board should sit between the toolbars.")
+
+func _tap_cell(game, cell: Vector2i) -> void:
+  var at := _screen_cell(game, cell)
+  _touch(0, at, true)
+  _touch(0, at, false)
 
 func _check_camera(game) -> void:
   var camera: Camera2D = game.get_node("Camera2D")

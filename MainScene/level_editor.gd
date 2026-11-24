@@ -148,19 +148,19 @@ func _build_workspace() -> void:
   panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
   panel.offset_left = 16
   panel.offset_right = -306
-  panel.offset_top = -137
-  panel.offset_bottom = -16
+  panel.offset_top = -12
+  panel.offset_bottom = -12
   panel.theme = UI.theme()
   panel.resized.connect(_update_camera_inset)
   panel.minimum_size_changed.connect(_fit_editor_panel)
-  var margin := UI.margin(10)
+  var margin := UI.margin(6)
   panel.add_child(margin)
   var column := VBoxContainer.new()
-  column.add_theme_constant_override("separation", 8)
+  column.add_theme_constant_override("separation", 4)
   margin.add_child(column)
   var bar := HFlowContainer.new()
   file_bar = bar
-  bar.add_theme_constant_override("separation", 6)
+  bar.add_theme_constant_override("h_separation", 4)
   column.add_child(bar)
   UI.button(bar, "New", func() -> void: _request_action("new")).tooltip_text = UI.shortcut_label("N")
   UI.button(bar, "Open…", func() -> void: _request_action("open")).tooltip_text = UI.shortcut_label("O")
@@ -178,11 +178,14 @@ func _build_workspace() -> void:
   UI.muted(status)
   var controls := HFlowContainer.new()
   edit_bar = controls
+  controls.add_theme_constant_override("h_separation", 4)
   column.add_child(controls)
   controls.add_child(UI.label("Grid"))
   width_input = _spin(controls)
+  width_input.custom_minimum_size.x = 64
   controls.add_child(UI.label("x"))
   height_input = _spin(controls)
+  height_input.custom_minimum_size.x = 64
   width_input.value_changed.connect(_resize_board)
   height_input.value_changed.connect(_resize_board)
   block_area_button = UI.button(controls, "Block area", _toggle_area_tool.bind(AreaTool.BLOCK))
@@ -212,7 +215,7 @@ func _build_workspace() -> void:
   inspect_button = UI.button(quick_bar, "Inspect", _toggle_editor_inspector)
   inspect_button.toggle_mode = true
   done_button = UI.button(quick_bar, "Done", _select_move_tool)
-  playtest_button = UI.button(controls, "Playtest", _start_playtest)
+  playtest_button = UI.button(bar, "Playtest", _start_playtest)
   playtest_button.theme_type_variation = "PrimaryButton"
   column.add_child(status)
 
@@ -420,19 +423,20 @@ func _layout_workspace() -> void:
   file_bar.visible = not compact or menu_open
   edit_bar.visible = not compact or menu_open
   quick_bar.visible = compact
-  var playtest_parent := quick_bar if compact else edit_bar
+  var playtest_parent := quick_bar if compact else file_bar
   if playtest_button.get_parent() != playtest_parent: playtest_button.reparent(playtest_parent)
+  var status_parent := quick_bar.get_parent() if compact else file_bar
+  if status.get_parent() != status_parent: status.reparent(status_parent)
   _refresh_tool_panels()
 
 func _fit_editor_panel() -> void:
   if compact_layout:
     var width := get_viewport_rect().size.x
-    var dock_width := minf(width - 32.0, maxf(UI.flow_width(quick_bar) + 22.0, 240.0))
+    var dock_width := minf(width - 32.0, maxf(UI.flow_width(quick_bar) + 14.0, 240.0))
     editor_panel.offset_right = -16.0 if menu_open else 16.0 + dock_width - width
   else:
     editor_panel.offset_right = -306.0
-  var minimum := 0.0 if compact_layout else 121.0
-  editor_panel.offset_top = -16.0 - maxf(minimum, editor_panel.get_combined_minimum_size().y)
+  editor_panel.offset_top = editor_panel.offset_bottom - editor_panel.get_combined_minimum_size().y
   _update_camera_inset()
 
 func _position_tool_panels() -> void:
@@ -653,7 +657,7 @@ func _build_area_declaration(area: Rect2i) -> String:
   var ys := str(first.y) if first.y == last.y else "%d..%d" % [first.y, last.y]
   return "no_build: {x=%s, y=%s};" % [xs, ys]
 
-func _board_click(cell: Vector2i, button: int, target: Node = null, facing := "E") -> void:
+func _board_click(cell: Vector2i, button: int, target: Node = null, facing := "E", touch := false) -> void:
   if parsed.has("error"): return
   if area_tool == AreaTool.STAR and button == MOUSE_BUTTON_LEFT:
     game.drag_cell = Vector2i(-1, -1)
@@ -669,13 +673,14 @@ func _board_click(cell: Vector2i, button: int, target: Node = null, facing := "E
   if pasting:
     _paste_building(cell)
     return
-  if not palette.selected.is_empty() and game._building_at(cell, palette.selected, facing) == null:
+  if not (touch and target != null) and not palette.selected.is_empty() and game._building_at(cell, palette.selected, facing) == null:
     _place_editor_kind(palette.selected, cell, facing)
     return
   if target != null:
     palette.selected = ""
     palette.refresh()
     _select_building(target)
+    if touch: _rotate_block(-1)
     return
   if selected_block >= 0 and selected_cell != cell:
     _move_block(selected_cell, cell)
