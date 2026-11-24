@@ -2,6 +2,7 @@ extends Node
 
 const GAME = preload("res://MainScene/level_game.tscn")
 const PARSER = preload("res://Levels/level_parser.gd")
+const CATALOG = preload("res://Buildings/building_catalog.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 
 func _ready() -> void:
@@ -123,6 +124,7 @@ func _ready() -> void:
   _check_sparse_output()
   _check_one_off_output()
   _check_burst_output()
+  _check_stray_particles()
   _check_map_stars()
   _check_bundled_launch()
   print("Level syntax checks passed")
@@ -177,6 +179,43 @@ func _check_burst_output() -> void:
   assert(game.output_rows[0].meter.rate == 0.25 and game.output_rows[0].meter.sample_steps == 12.0,
     "Count three detections over the full twelve-step cycle, including silence.")
   assert(game.earned_medals == ["cost", "star"], "The burst should earn only the medals whose limits it meets.")
+  game.free()
+
+func _check_stray_particles() -> void:
+  var source := "5 x 2; rate_medal: {1}; cost_medal: {10}; star_medal: {any: 1}; inventory: {stray_particle=1}; detector: {x=4,y=1,[electron]}; stray_particle: {x=1,y=0,REST,[proton]};"
+  var parsed := PARSER.parse(source)
+  assert(not parsed.has("error"))
+  assert(PARSER.parse_building("stray_particle", "x=2,y=0,[electron,proton]", 5, 2).has("error"))
+  assert(PARSER.parse_building("wall", "x=2,y=0,REST", 5, 2).has("error"))
+  assert(CATALOG.next_stray_heading("N", 1, 4) == "REST" and CATALOG.next_stray_heading("REST", 1, 4) == "E")
+  var game: Node2D = GAME.instantiate()
+  game.editor_playtest = true
+  game.level_override = parsed
+  get_tree().root.add_child(game)
+  var start := Vector2i(0, 1)
+  assert(game._place_inventory_building("stray_particle", start))
+  game.selected_building = game._building_at(start)
+  game._rotate_selected(-1)
+  assert(game.selected_building.facing == "REST")
+  game.undo_build()
+  assert(game._building_at(start).facing == "E")
+  game.redo_build()
+  game.selected_building = game._building_at(start)
+  assert(game.selected_building.facing == "REST")
+  game._rotate_selected(1)
+  game.begin_run()
+  assert(game._particles().size() == 2 and not game._building_at(start).visible)
+  var proton: Particle = game._particles().filter(func(p: Particle) -> bool: return p.flavour == Particle.Flavour.PROTON).front()
+  assert(proton.speed == 0.0 and proton.direction == Vector2.ZERO)
+  var rest_position := proton.motion_position()
+  _run_steps(game, 3)
+  assert(game.total_counts.get("electron", 0) == 1 and proton.motion_position() == rest_position)
+  _advance_forecast(game)
+  assert(game.completed and "rate" not in game.earned_medals)
+  game.stop_to_build()
+  assert(game._particles().is_empty() and game._building_at(start).visible)
+  game.begin_run()
+  assert(game._particles().size() == 2, "Each new run should spawn one fresh particle per piece.")
   game.free()
 
 func _run_steps(game: Node2D, amount: float) -> void:

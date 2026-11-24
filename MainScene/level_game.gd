@@ -550,6 +550,9 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
   match entry.kind:
     "gate": building.starts_open = entry.get("open", "false") == "true"
     "filter": building.filter_colour = CATALOG.FILTER_COLOURS.find(entry.get("colour", "red"))
+    "stray_particle":
+      building.facing = entry.get("facing", CATALOG.default_facing(entry.kind))
+      building.particle_name = entry.get("particles", ["electron"])[0]
   if entry.kind != "edge_wall": building.z_index = 1
   if entry.kind == "emitter":
     building.start_on_ready = false
@@ -880,6 +883,9 @@ func _rotate_selected(turn: int = 1) -> void:
   match kind:
     "magnet": selected_building.polarity *= -1
     "filter": selected_building.filter_colour = posmod(selected_building.filter_colour + turn, CATALOG.FILTER_COLOURS.size())
+    "stray_particle":
+      var entry: Dictionary = selected_building.get_meta("entry")
+      selected_building.facing = CATALOG.next_stray_heading(selected_building.facing, turn, int(entry.get("rotation", level.rotation_steps)))
     _:
       var entry: Dictionary = selected_building.get_meta("entry")
       var steps := 4 if kind == "edge_wall" else int(entry.get("rotation", level.get("rotation_steps", 8)))
@@ -988,9 +994,11 @@ func begin_run() -> void:
   _clear_stats()
   reset_step_clock()
   for building in buildings:
-    if building.get_meta("kind") == "emitter":
-      if building.sequence.is_empty(): building.start_emitting()
-      else: building.start_sequence()
+    match building.get_meta("kind"):
+      "emitter":
+        if building.sequence.is_empty(): building.start_emitting()
+        else: building.start_sequence()
+      "stray_particle": building.spawn_in(self)
   _refresh_ui()
   queue_redraw()
 
@@ -1002,6 +1010,7 @@ func stop_to_build() -> void:
   for building in buildings:
     building.position = _cell_position(building.get_meta("cell"))
     if building.get_meta("kind") == "emitter": building.stop_sequence()
+    if building.get_meta("kind") == "stray_particle": building.show()
     if building.has_method("reset_device"): building.reset_device()
   _clear_particles()
   _clear_stats()
@@ -1203,6 +1212,7 @@ func _snapshot_build() -> Dictionary:
         entry.polarity = "+" if building.polarity > 0 else "-"
       "edge_wall", "gate": entry.facing = CATALOG.DIRECTIONS[building.orientation]
       "filter": entry.colour = CATALOG.FILTER_COLOURS[building.filter_colour]
+      "stray_particle": entry.facing = building.facing
     entries.append({"entry": entry, "inventory_piece": building.get_meta("from_inventory")})
   return {"entries": entries, "inventory": inventory.duplicate(true), "cost": cost}
 

@@ -11,6 +11,7 @@ const ICONS := {
   "wall": preload("res://Buildings/Wall/wall.png"),
   "detector": preload("res://Buildings/Detector/detector.png"),
   "magnet": preload("res://Buildings/MagneticField/plus_magnet.png"),
+  "stray_particle": preload("res://Particles/Electron/electron.png"),
 }
 var counts: Dictionary = {}
 var infinite := false

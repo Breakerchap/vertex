@@ -229,9 +229,31 @@ func _ready() -> void:
   editor._unhandled_key_input(escape)
   assert(not editor.game.simulating, "Escape should reset the running preview.")
   await _check_build_areas(editor, target)
+  await get_tree().process_frame
+  await _check_stray_particle_editor(editor)
   editor.free()
   print("Level editor checks passed")
   get_tree().quit()
+
+func _check_stray_particle_editor(editor) -> void:
+  editor._set_source(editor.NEW_LEVEL)
+  assert(editor.palette.buttons.has("stray_particle"))
+  var cell := Vector2i(3, 3)
+  editor._select_palette_kind("stray_particle")
+  editor._board_click(cell, MOUSE_BUTTON_LEFT)
+  assert(editor.selected_building.facing == "E")
+  await get_tree().process_frame
+  _tap_cell(editor.game, cell)
+  assert(editor.selected_building.facing == "REST" and editor.source.text.contains("REST"))
+  var particle: OptionButton = editor.visual_fields.particle
+  for index in range(particle.item_count):
+    if particle.get_item_metadata(index) == "proton": particle.select(index)
+  editor._apply_visual_properties()
+  assert(editor.selected_building.particle_name == "proton")
+  editor.game.begin_run()
+  assert(editor.game._particles().size() == 1 and editor.game._particles()[0].speed == 0.0)
+  editor._reset_preview()
+  assert(editor.game._particles().is_empty() and editor.game._building_at(cell).visible)
 
 func _check_adaptive_layout(editor: Control) -> void:
   var original_size := get_window().size

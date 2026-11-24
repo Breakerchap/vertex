@@ -61,5 +61,6 @@ Z bosons travel one tile per tick. They bounce off other particles, gluon trails
 | `holder: {x=2, y=1};` | Holds one particle at the cell centre, including neutrinos or antineutrinos. A particle interaction releases the holder’s contents or the reaction products. |
 | `pusher: {x=2, y=1};` | The facing direction sets the first one-tile push. The next push goes in the opposite direction. Each keeps its speed and heading. |
 | `magnet: {x=2, y=1, polarity=positive};` | Charged particles enter and exit through the edges along paths that turn them 90 degrees. A matching charge turns clockwise and an opposite charge turns counterclockwise. Neutral particles pass straight through. |
+| `stray_particle: {x=2, y=1, E, [electron]};` | Starts the run with one particle travelling in the direction of its arrow. Rotate with **Q** or **E**, or tap it on a touchscreen. The rotation cycle includes `REST`, which gives it zero initial momentum. Choose the type in the editor. It defaults to an electron. |
 
 Neutrinos and antineutrinos respond to Glass and Holders and pass freely through other buildings.

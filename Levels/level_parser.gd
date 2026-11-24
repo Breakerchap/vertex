@@ -311,7 +311,7 @@ static func parse_building(kind: String, body: String, width: int, height: int, 
     return {"error": "Invalid magnetic polarity: " + str(entry.polarity)}
   if not entry.has("x") or not entry.has("y"):
     return {"error": kind + " needs x and y coordinates."}
-  if entry.facing not in CATALOG.DIRECTIONS:
+  if entry.facing not in CATALOG.DIRECTIONS and not (kind == "stray_particle" and entry.facing == CATALOG.STRAY.AT_REST):
     return {"error": "Invalid direction: " + entry.facing}
   if entry.has("rotation"):
     if entry.rotation not in ["4", "8"]:
@@ -329,6 +329,10 @@ static func parse_building(kind: String, body: String, width: int, height: int, 
   for name in entry.particles:
     if not _valid_particle(name):
       return {"error": "Unknown particle: " + name}
+  if kind == "stray_particle":
+    if entry.particles.size() > 1:
+      return {"error": "A stray particle needs a single particle type."}
+    if entry.particles.is_empty(): entry.particles.append("electron")
   var xs := _range_values(str(entry.x))
   var ys := _range_values(str(entry.y))
   if xs.is_empty() or ys.is_empty():

@@ -5,6 +5,7 @@ const PALETTE = preload("res://MainScene/building_palette.gd")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 const GAME = preload("res://MainScene/level_game.tscn")
 const PARTICLE_PICKER = preload("res://MainScene/particle_picker.gd")
+const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
 const MEDALS = preload("res://MainScene/medal_display.gd")
 const NEW_LEVEL := "9 x 9;\n\nrate_medal: {1/step};\ncost_medal: {30};\nstar_medal: {any: 2/step};\n\n"
@@ -714,6 +715,7 @@ func _place_editor_kind(kind: String, cell: Vector2i, facing := "E") -> void:
   var extra := ""
   if kind == "emitter": extra = ", E, rate=1/step"
   elif kind == "detector": extra = ", [photon]"
+  elif kind == "stray_particle": extra = ", E, [electron]"
   elif kind == "edge_wall": extra = ", " + facing
   _set_source(source.text.trim_suffix("\n") + "\n%s: {x=%d, y=%d%s};\n" % [kind, cell.x, cell.y, extra])
   _select_at(cell, kind, facing)
@@ -830,9 +832,14 @@ func _rotate_block(turn: int = 1) -> void:
     var rotation := int(entry.get("rotation", parsed.rotation_steps))
     if visual_fields.has("rotation") and visual_fields.rotation.get_selected_id() != 0:
       rotation = visual_fields.rotation.get_selected_id()
-    var orientation := CATALOG.DIRECTIONS.find(field.get_item_text(field.selected))
-    var next := CATALOG.next_orientation(orientation, turn, 4 if entry.kind == "edge_wall" else rotation)
-    field.select(CATALOG.CARDINALS.find(CATALOG.DIRECTIONS[next]) if entry.kind == "edge_wall" else next)
+    var facing: String = field.get_item_metadata(field.selected)
+    if entry.kind == "stray_particle":
+      var next := CATALOG.next_stray_heading(facing, turn, rotation)
+      field.select(field.item_count - 1 if next == CATALOG.STRAY.AT_REST else CATALOG.DIRECTIONS.find(next))
+    else:
+      var orientation := CATALOG.DIRECTIONS.find(facing)
+      var next := CATALOG.next_orientation(orientation, turn, 4 if entry.kind == "edge_wall" else rotation)
+      field.select(CATALOG.CARDINALS.find(CATALOG.DIRECTIONS[next]) if entry.kind == "edge_wall" else next)
   else:
     return
   _apply_visual_properties()
@@ -880,14 +887,18 @@ func _build_visual_form() -> void:
   var last := Vector2i(last_entry.x, last_entry.y) if edit_range else selected_cell
   _coordinate_row("x", parsed.width - 1, first.x, last.x)
   _coordinate_row("y", parsed.height - 1, first.y, last.y)
-  if (entry.kind in CATALOG.FACING_KINDS or entry.kind == "edge_wall") or entry.facing != "E":
+  var stray: bool = entry.kind == "stray_particle"
+  if entry.kind in CATALOG.FACING_KINDS or entry.kind == "edge_wall" or stray or entry.facing != "E":
     var direction := OptionButton.new()
     var directions: Array = CATALOG.CARDINALS if entry.kind == "edge_wall" else CATALOG.DIRECTIONS
-    for name in directions: direction.add_item(name)
+    if stray: directions = directions + [CATALOG.STRAY.AT_REST]
+    for name in directions:
+      direction.add_item("At rest" if name == CATALOG.STRAY.AT_REST else name)
+      direction.set_item_metadata(direction.item_count - 1, name)
     direction.select(directions.find(entry.facing))
-    _visual_row("Direction", direction)
+    _visual_row("Momentum" if stray else "Direction", direction)
     visual_fields.facing = direction
-  if entry.kind in CATALOG.FACING_KINDS:
+  if entry.kind in CATALOG.FACING_KINDS or stray:
     var rotation := OptionButton.new()
     rotation.add_item("Level default", 0)
     rotation.add_item("8 directions", 8)
@@ -933,6 +944,16 @@ func _build_visual_form() -> void:
       particles.load_text(entry.get("particle_expression", ""))
     visual_form.add_child(particles)
     visual_fields.particles = particles
+  if stray:
+    var particle := OptionButton.new()
+    particle.fit_to_longest_item = false
+    for name in PARTICLES.TYPES:
+      particle.add_item(PARTICLES.label(name))
+      var index := particle.item_count - 1
+      particle.set_item_metadata(index, name)
+      if name == entry.particles[0]: particle.select(index)
+    _visual_row("Particle", particle)
+    visual_fields.particle = particle
   if entry.kind == "emitter":
     var rate := SpinBox.new()
     rate.min_value = 0.0
@@ -988,14 +1009,16 @@ func _apply_visual_properties() -> void:
   var parts: PackedStringArray = ["x=%d" % destination.x, "y=%d" % destination.y]
   if destination.x != end.x: parts[0] += "..%d" % end.x
   if destination.y != end.y: parts[1] += "..%d" % end.y
-  var facing: String = visual_fields.facing.get_item_text(visual_fields.facing.selected) if visual_fields.has("facing") else "E"
+  var facing: String = visual_fields.facing.get_item_metadata(visual_fields.facing.selected) if visual_fields.has("facing") else "E"
   if visual_fields.has("facing"): parts.append(facing)
   if visual_fields.has("rotation") and visual_fields.rotation.get_selected_id() != 0:
     parts.append("rotation=%d" % visual_fields.rotation.get_selected_id())
   if visual_fields.has("colour"): parts.append("colour=" + CATALOG.FILTER_COLOURS[visual_fields.colour.selected])
   if visual_fields.has("open"): parts.append("open=" + str(visual_fields.open.button_pressed))
   if visual_fields.has("polarity"): parts.append("-" if visual_fields.polarity.selected == 1 else "+")
-  if visual_fields.has("particles"):
+  if visual_fields.has("particle"):
+    parts.append("[%s]" % visual_fields.particle.get_item_metadata(visual_fields.particle.selected))
+  elif visual_fields.has("particles"):
     var expression: String = visual_fields.particles.source_text()
     if not expression.is_empty(): parts.append("[" + expression + "]")
   elif not entry.particles.is_empty():
@@ -1356,17 +1379,18 @@ func _level_warnings(data: Dictionary) -> PackedStringArray:
   var warnings := PackedStringArray()
   if data.buildings.is_empty():
     warnings.append("There are no buildings on the board.")
-  var has_emitter := false
+  var has_particle_source := false
   var has_detector := false
   var adjustable := false
   for entry in data.buildings:
-    if entry.kind == "emitter": has_emitter = true
+    if entry.kind in ["emitter", "stray_particle"]: has_particle_source = true
     if entry.kind == "detector": has_detector = true
     var flags := str(entry.get("fixed", ""))
     var lock_rotation := CATALOG.rotation_lock_flag(entry.kind)
     if "p" not in flags or (entry.kind in CATALOG.ROTATABLE_KINDS and lock_rotation not in flags):
       adjustable = true
-  if not has_emitter: warnings.append("The board has no particle emitters.")
+  if not has_particle_source and int(data.inventory.get("emitter", 0)) == 0 and int(data.inventory.get("stray_particle", 0)) == 0:
+    warnings.append("Add an emitter or stray particle to provide particles.")
   if not has_detector and int(data.inventory.get("detector", 0)) == 0:
     warnings.append("Add a detector or put one in the inventory so players can clear the level.")
   for kind in data.inventory:
