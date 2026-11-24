@@ -2,7 +2,7 @@
 
 The level selector reads the bundled `.level` files and files in the game's custom levels folder. Use **Custom levels folder** on the level screen to open it in Finder or your desktop file manager. The editor uses your system's Open and Save dialogs where available. You can work on files elsewhere, but save a copy in the custom levels folder to see it on the level screen. Bundled levels are read-only; use **Save as…** to keep an edited copy.
 
-Coordinates start at the bottom-left and ranges include both ends. Directions are `E`, `SE`, `S`, `SW`, `W`, `NW` and `N`. Optional `title` and `hint` declarations set the displayed name and objective hint.
+Coordinates start at the bottom-left and ranges include both ends. Directions are `E`, `SE`, `S`, `SW`, `W`, `NW` and `N`. An optional `title` declaration sets the displayed name.
 
 ## Editor and playtest
 
@@ -34,12 +34,12 @@ star: {x=5, y=3};
 ```
 
 - The Rate medal counts total detected particles per step.
-- The Cost medal requires a build cost strictly below the amount. Buildings already on the board cost nothing.
+- The Cost medal requires a build cost at or below the amount. Buildings already on the board cost nothing.
 - The Star medal supports total output (`any`), named particles or a detector-style particle expression, a build cost limit, excluded building types, and touching all placed stars during the run. Exclusions apply to every building on the board, including starting buildings. Conditions in one `star_medal` block are required together. Additional `star_medal` blocks offer alternative ways to earn the same medal.
 
-Output meters use the last eight completed steps for normal targets and look back farther for slower targets, up to 2,400 steps. From step 28 onward, the game forecasts sustained output for rate-based conditions. It checks six windows, normally 40 steps each, with longer windows for sparse targets. A single detection clears the level immediately; sustained output earns the Rate medal.
+The first detection clears the level and starts a background simulation of the build. Output meters and rate-based medals use the same forecast. It measures full cycles when the output repeats and averages a later window when the pattern is irregular. The display uses particles per second at normal playback speed.
 
-Existing `goal` blocks and `/s` rates still load. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Previous star totals carry forward as completion records.
+Existing `goal` blocks and `/s` rates still load. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Old hint declarations are ignored. Previous star totals carry forward as completion records.
 
 ## Gluons and Z bosons
 

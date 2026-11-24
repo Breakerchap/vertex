@@ -62,7 +62,6 @@ var declaration_error: Label
 var edit_range := false
 var settings_dialog: AcceptDialog
 var title_input: LineEdit
-var hint_input: LineEdit
 var rotation_input: OptionButton
 var rate_medal_input: LineEdit
 var cost_medal_input: LineEdit
@@ -322,10 +321,6 @@ func _build_settings_dialog() -> void:
   title_input = LineEdit.new()
   title_input.placeholder_text = "e.g. First Contact"
   settings_column.add_child(title_input)
-  settings_column.add_child(UI.label("Short objective hint (avoid spoilers)"))
-  hint_input = LineEdit.new()
-  hint_input.placeholder_text = "e.g. Guide a photon into the detector"
-  settings_column.add_child(hint_input)
   settings_column.add_child(UI.label("Player rotation"))
   rotation_input = OptionButton.new()
   rotation_input.add_item("8 directions (45 degrees)", 8)
@@ -334,7 +329,7 @@ func _build_settings_dialog() -> void:
   _medal_heading(settings_column, "rate")
   rate_medal_input = _medal_field(settings_column, "Minimum total output per step", "e.g. 1/step")
   _medal_heading(settings_column, "cost")
-  cost_medal_input = _medal_field(settings_column, "Build for less than this amount", "e.g. 30")
+  cost_medal_input = _medal_field(settings_column, "Build for this amount or less", "e.g. 30")
   _medal_heading(settings_column, "star")
   var star_help := UI.label("All conditions in any one set must be met.")
   UI.muted(star_help)
@@ -1121,7 +1116,7 @@ func _add_star_rule(rule: Dictionary = {}) -> void:
   UI.button(header, "Remove set", func() -> void: panel.queue_free())
   for key in rule.get("rates", {}):
     _add_star_output(output_rows, rule.targets.get(key, key), rule.rates[key])
-  var cost_field := _medal_field(column, "Build for less than this amount", "Optional")
+  var cost_field := _medal_field(column, "Maximum build cost", "Optional")
   if rule.has("cost"): cost_field.text = _medal_value(rule.cost)
   var excluded := _medal_field(column, "Excluded buildings (comma-separated)", "e.g. reflector, magnet")
   excluded.text = ", ".join(rule.get("no_buildings", []))
@@ -1176,7 +1171,6 @@ func _open_settings() -> void:
   _clear_children(star_rules)
   settings_error.text = ""
   title_input.text = str(parsed.get("title", ""))
-  hint_input.text = str(parsed.get("hint", ""))
   rotation_input.select(rotation_input.get_item_index(parsed.rotation_steps))
   rate_medal_input.text = _medal_value(parsed.medals.rate) + "/step"
   cost_medal_input.text = _medal_value(parsed.medals.cost)
@@ -1261,14 +1255,13 @@ func _apply_settings() -> void:
       additional.append(_medal_declaration(medal, new_medals[medal][index]))
   var prefix := ""
   var metadata: Array[RegExMatch] = PARSER.find_metadata(masked)
-  var settings := {"title": title_input.text.strip_edges(), "hint": hint_input.text.strip_edges(),
-    "rotation": str(rotation_input.get_selected_id())}
+  var settings := {"title": title_input.text.strip_edges(), "rotation": str(rotation_input.get_selected_id())}
   for key in settings:
     var value: String = settings[key]
     var previous: String = str(parsed.rotation_steps) if key == "rotation" else parsed[key]
     if value == previous: continue
     if ";" in value or "#" in value:
-      settings_error.text = "Titles and hints cannot contain a semicolon or #."
+      settings_error.text = "Titles cannot contain a semicolon or #."
       return
     var matching: Array[RegExMatch] = []
     for item in metadata:

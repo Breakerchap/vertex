@@ -1,15 +1,12 @@
 title: 05 - IDK;
-hint: idk man;
 11 x 11;
 
-rate_medal: {1/step};
-cost_medal: {121};
-star_medal: {photon: 2/step; cost: 121};
+rate_medal: {4/step};
+cost_medal: {20};
+star_medal: {photon: 4/step; cost: 120};
 
 emitter: {x=9, y=7, W, [positron, electron], rate=2/step, fixed=pr}
 emitter: {x=1, y=3, E, [electron, positron], rate=2/step, fixed=p}
-
-
 
 
 inventory: {mirror=8, magnet=12};

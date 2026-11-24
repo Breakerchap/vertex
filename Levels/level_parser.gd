@@ -40,7 +40,7 @@ static func parse(source: String) -> Dictionary:
   var size_match := find_dimensions(text)
   if size_match == null:
     return {"error": "Missing grid size (for example 15 x 7)."}
-  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "medals": {}, "stars": [], "buildings": [], "inventory": {}, "no_build_areas": [], "title": "", "hint": "", "rotation_steps": 8, "legacy_rates": false}
+  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "medals": {}, "stars": [], "buildings": [], "inventory": {}, "no_build_areas": [], "title": "", "rotation_steps": 8, "legacy_rates": false}
   if data.width <= 0 or data.height <= 0:
     return {"error": "Grid dimensions must be positive."}
   for item in find_metadata(text):
@@ -49,8 +49,8 @@ static func parse(source: String) -> Dictionary:
     if key == "rotation":
       if value not in ["4", "8"]: return {"error": "Rotation must be 4 or 8 directions."}
       data.rotation_steps = int(value)
-    else:
-      data[key] = value
+    elif key == "title":
+      data.title = value
   var blocks := find_blocks(text)
   var legacy_suffix := RegEx.new()
   legacy_suffix.compile("(?i)/s\\b")
@@ -71,7 +71,8 @@ static func parse(source: String) -> Dictionary:
         var medal := kind.trim_suffix("_medal")
         if data.medals.has(medal): return {"error": "Duplicate " + kind + " declaration."}
         var amount := _parse_rate(body) if medal == "rate" else _parse_cost_limit(body)
-        if amount <= 0.0: return {"error": "The %s needs a positive %s." % [kind, medal]}
+        if medal == "rate" and amount <= 0.0: return {"error": "The Rate medal needs a positive rate."}
+        if medal == "cost" and amount < 0.0: return {"error": "The Cost medal needs a nonnegative cost limit."}
         data.medals[medal] = amount
       "star_medal":
         var result := _parse_star_medal(body)
@@ -146,7 +147,7 @@ static func _parse_star_medal(body: String) -> Dictionary:
     match key:
       "cost":
         var cost_limit := _parse_cost_limit(value)
-        if cost_limit <= 0.0: return {"error": "The Star medal cost limit must be positive."}
+        if cost_limit < 0.0: return {"error": "The Star medal cost limit must be nonnegative."}
         rule.cost = cost_limit
       "no_buildings":
         for name in value.split(","):
@@ -183,14 +184,14 @@ static func _medals_from_goals(goals: Array[Dictionary]) -> Dictionary:
       if not possible: continue
       var rule := {"rates": rates, "targets": old.targets, "no_buildings": [], "hit_stars": false}
       if old.goal.has("cost") and is_finite(old.goal.cost[tier]):
-        rule.cost = floorf(old.goal.cost[tier]) + 1.0
+        rule.cost = floorf(old.goal.cost[tier])
         cost_limit = minf(cost_limit, rule.cost)
       if rates.is_empty() and not rule.has("cost"): rule.rates["any"] = 1.0
       alternatives.append(rule)
       break
   if alternatives.is_empty():
     alternatives.append({"rates": {"any": 1.0}, "targets": {}, "no_buildings": [], "hit_stars": false})
-  return {"rate": rate if is_finite(rate) else 1.0, "cost": cost_limit if is_finite(cost_limit) else 1.0, "star": alternatives}
+  return {"rate": rate if is_finite(rate) else 1.0, "cost": cost_limit if is_finite(cost_limit) else 0.0, "star": alternatives}
 
 static func building_kind(name: String) -> String:
   var kind := name.to_lower()

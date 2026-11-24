@@ -149,7 +149,7 @@ func _rails_and_forecast() -> void:
   sim.step_simulation(0.5)
   var buildings := rails.duplicate()
   buildings.append_array([rider, second])
-  var forecast := FORECAST.new(sim, buildings, 1.0)
+  var forecast := FORECAST.new(sim, buildings)
   forecast.shadow.step_simulation(0.5)
   var shadow_particle: Particle = forecast.shadow._particles()[0]
   sim.step_simulation(0.5)
@@ -356,7 +356,7 @@ func _perpendicular_products() -> void:
   var heading := (Vector2.RIGHT + diagonal).orthogonal().normalized()
   var holder_cell := Vector2(0.0, signf(heading.y))
   var holder = _device("holder", holder_cell)
-  var forecast := FORECAST.new(sim, [holder], 1.0)
+  var forecast := FORECAST.new(sim, [holder])
   sim.step_simulation(0.2)
   forecast.shadow.step_simulation(0.2)
   _check(_at(products[0], heading * 0.3) and _at(products[1], -heading * 0.3), "Perpendicular trajectories between grid headings should retain their angle and speed.")
@@ -496,7 +496,7 @@ func _gluon_blocks() -> void:
   sim.step_simulation(2.0)
   _check(a.blocked_by == b and b.blocked_by == a and a.caught.is_empty() and b.caught.is_empty(), "Head-on gluon tips should block each other without trapping each other.")
   _check(is_equal_approx(a.motion_position().distance_to(b.motion_position()), a.world_collision_radius() + b.world_collision_radius()), "A gluon tip should stop where its hitbox meets the other tip.")
-  var forecast := FORECAST.new(sim, [], 1.0)
+  var forecast := FORECAST.new(sim, [])
   forecast.shadow.step_simulation()
   var shadow_a := forecast.shadow._particles()[0] as BOSON
   _check(shadow_a.blocked_by == forecast.shadow._particles()[1] and shadow_a.motion_position().is_equal_approx(a.motion_position()), "Forecasts should preserve blocked tips.")
@@ -528,7 +528,7 @@ func _gluon_trap() -> void:
   var tip_position := gluon.motion_position()
   var prior_electron := electron.motion_position()
   var prior_positron := positron.motion_position()
-  var forecast := FORECAST.new(sim, [], 1.0)
+  var forecast := FORECAST.new(sim, [])
   sim.step_simulation(0.2)
   forecast.shadow.step_simulation(0.2)
   var shadow_trail := forecast.shadow._particles()[0] as BOSON

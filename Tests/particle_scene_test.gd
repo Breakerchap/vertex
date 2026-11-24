@@ -56,7 +56,7 @@ func _run() -> void:
   emitted.speed = 3.0
   emitted.size = 0.6
   emitted.charge = -4
-  var forecast := FORECAST.new(sim, [], 1.0)
+  var forecast := FORECAST.new(sim, [])
   var copy := forecast.shadow._particles()[0]
   _check(copy.mass == emitted.mass and copy.speed == emitted.speed and copy.size == emitted.size and copy.charge == emitted.charge, "Forecasts should preserve instance properties.")
   forecast.dispose()

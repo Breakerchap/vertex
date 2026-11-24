@@ -18,16 +18,9 @@ const STAR_RADIUS := CELL * 0.16
 const SIDEBAR_WIDTH := 288.0
 const POINTER_SLOP := 8.0
 const ZOOM_STEP := 1.2
-const MIN_METER_STEPS := 8
-const MAX_METER_STEPS := 2400
-const METER_TARGET_COUNT := 8.0
 const SPEED_RAMP_START := 12.0
 const SPEED_RAMP_END := 24.0
-const WATCH_STEPS := 28.0
-const FORECAST_WINDOW_STEPS := 40.0
-const FORECAST_WINDOWS := 6
-const FORECAST_TARGET_COUNT := 2.0
-const MAX_FORECAST_CHUNKS_PER_WINDOW := 30
+const FORECAST_REFRESH_STEPS := 16.0
 
 signal editor_cell_clicked(cell: Vector2i, button: int, target: Node, facing: String)
 signal editor_cell_dragged(from_cell: Vector2i, to_cell: Vector2i)
@@ -56,7 +49,6 @@ var editor_tool_panel: Control
 var diagnostic_overlay
 var undo_history: Array[Dictionary] = []
 var redo_history: Array[Dictionary] = []
-var last_hud_update := 0.0
 var editor_bottom_inset := 190.0
 var editor_sidebar_width := 256.0
 var hud_panel: PanelContainer
@@ -79,17 +71,12 @@ var selected_building: Node = null
 var cost: int = 0
 var simulating: bool = false
 var total_counts: Dictionary = {}
-var output_samples: Array[Dictionary] = []
-var sampled_counts: Dictionary = {}
-var sampled_step := 0
-var output_changed := false
 var elapsed: float = 0.0
 var automatic_speed := true
-var next_forecast_at := WATCH_STEPS
+var next_forecast_at := 0.0
 var forecast: FORECAST
-var forecast_candidates: Array[Dictionary] = []
 var forecast_counts: Dictionary = {}
-var forecast_chunks := 0
+var forecast_steps := 0.0
 var earned_medals: Array[String] = []
 var medal_icons := {}
 var star_hits := {}
@@ -98,6 +85,7 @@ var star_hits_changed := false
 var completed: bool = false
 var selection_label: Label
 var output_rows: Array[Dictionary] = []
+var cost_rows: Array[Dictionary] = []
 var rotate_button: Button
 var rotate_left_button: Button
 var remove_button: Button
@@ -260,7 +248,7 @@ func _create_hud() -> void:
   column.add_child(selection_label)
   var actions := HFlowContainer.new()
   column.add_child(actions)
-  sidebar_toggle = UI.button(actions, "Goals & inventory", _toggle_sidebar)
+  sidebar_toggle = UI.button(actions, "Medals & inventory", _toggle_sidebar)
   sidebar_toggle.toggle_mode = true
   sidebar_toggle.hide()
   rotate_left_button = UI.button(actions, "↶  Q", _rotate_selected.bind(-1))
@@ -386,68 +374,70 @@ func _layout_sidebar() -> void:
   game_sidebar.offset_bottom = bottom
 
 func _add_medals(rows: VBoxContainer) -> void:
-  var objective := UI.label("Detect any particle to clear the level.")
-  objective.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-  rows.add_child(objective)
-  _add_medal_heading(rows, "rate")
-  _add_output_meter(rows, "any", "Total output", level.medals.rate, "rate")
-  _add_medal_heading(rows, "cost")
-  rows.add_child(UI.label("Build for under $%s" % str(level.medals.cost).trim_suffix(".0")))
-  _add_medal_heading(rows, "star")
+  var overview := HBoxContainer.new()
+  rows.add_child(overview)
+  _add_output_meter(overview, "any", "", level.medals.rate, "rate")
+  var budget := HBoxContainer.new()
+  budget.size_flags_vertical = Control.SIZE_SHRINK_END
+  overview.add_child(budget)
+  _add_medal_icon(budget, "cost")
+  _add_cost_requirement(budget, level.medals.cost)
+  var star_row := HBoxContainer.new()
+  rows.add_child(star_row)
+  _add_medal_icon(star_row, "star")
+  var conditions := VBoxContainer.new()
+  conditions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  star_row.add_child(conditions)
   for index in range(level.medals.star.size()):
-    if index > 0: rows.add_child(UI.label("Or"))
+    if index > 0: conditions.add_child(UI.label("or"))
     var rule: Dictionary = level.medals.star[index]
     for key in rule.rates:
       var target: String = rule.targets.get(key, key)
-      var title := "Total output" if key == "any" else (PARTICLES.label(target) if PARTICLES.is_selector(target) else target)
-      _add_output_meter(rows, key, title, rule.rates[key], "star")
+      var title := "" if key == "any" else (PARTICLES.label(target) if PARTICLES.is_selector(target) else target)
+      _add_output_meter(conditions, key, title, rule.rates[key], "star")
     if rule.has("cost"):
-      rows.add_child(UI.label("Build for under $%s" % str(rule.cost).trim_suffix(".0")))
+      _add_cost_requirement(conditions, rule.cost)
     if not rule.no_buildings.is_empty():
       var names := PackedStringArray()
       for kind in rule.no_buildings: names.append(kind.capitalize())
-      var omitted := UI.label("Use no %s" % ", ".join(names))
+      var omitted := UI.label("No %s" % ", ".join(names))
       omitted.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-      rows.add_child(omitted)
+      conditions.add_child(omitted)
     if rule.hit_stars:
       var progress := UI.label("")
-      rows.add_child(progress)
+      conditions.add_child(progress)
       star_labels.append(progress)
-  var hint := str(level.get("hint", ""))
-  if not hint.is_empty():
-    var prompt := UI.label(hint)
-    UI.muted(prompt)
-    prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    rows.add_child(prompt)
 
-func _add_medal_heading(rows: VBoxContainer, kind: String) -> void:
-  var header := HBoxContainer.new()
-  rows.add_child(header)
+func _add_medal_icon(parent: Container, kind: String) -> void:
   var badge := MEDALS.icon(kind, 24, false)
-  header.add_child(badge)
+  badge.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+  parent.add_child(badge)
   medal_icons[kind] = badge
-  var label := UI.label("%s medal" % kind.capitalize())
-  UI.heading(label, 16)
-  header.add_child(label)
 
-func _add_output_meter(rows: VBoxContainer, key: String, title: String, target: float, medal: String) -> void:
-  var caption := UI.label("%s ≥ %s/step" % [title, OUTPUT_METER.format_rate(target)])
+func _add_cost_requirement(parent: Container, limit: float) -> void:
+  var label := UI.label("")
+  label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+  parent.add_child(label)
+  cost_rows.append({"label": label, "limit": limit})
+
+func _add_output_meter(parent: Container, key: String, title: String, target: float, medal: String) -> void:
+  var column := VBoxContainer.new()
+  column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  column.add_theme_constant_override("separation", 2)
+  parent.add_child(column)
+  var requirement := "%s/s" % OUTPUT_METER.format_rate(target)
+  var caption := UI.label(requirement if title.is_empty() else "%s · %s" % [title, requirement])
   caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-  rows.add_child(caption)
+  if medal == "rate": caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+  column.add_child(caption)
   var row := HBoxContainer.new()
-  rows.add_child(row)
-  var label := UI.label("0/step")
-  label.custom_minimum_size.x = 76
-  label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-  label.mouse_filter = Control.MOUSE_FILTER_STOP
-  row.add_child(label)
+  column.add_child(row)
   var meter := OUTPUT_METER.new()
   meter.target = target
-  meter.medal = medal
   meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   row.add_child(meter)
-  var window := ceili(clampf(METER_TARGET_COUNT / target, MIN_METER_STEPS, MAX_METER_STEPS))
-  output_rows.append({"key": key, "title": title, "meter": meter, "label": label, "window": window})
+  if medal == "rate": _add_medal_icon(row, medal)
+  output_rows.append({"key": key, "meter": meter})
 
 func _load_initial_board() -> void:
   running = false
@@ -864,6 +854,9 @@ func _select_inventory(kind: String) -> void:
 func _refresh_ui() -> void:
   if not is_instance_valid(palette): return
   _refresh_output()
+  for row in cost_rows:
+    row.label.text = "$%d / $%s" % [cost, str(row.limit).trim_suffix(".0")]
+    row.label.add_theme_color_override("font_color", UI.ACCENT if cost <= row.limit else UI.ERROR)
   var has_selection := is_instance_valid(selected_building)
   var kind: String = selected_building.get_meta("kind") if has_selection else ""
   var action := {"magnet": "Flip polarity", "filter": "Change colour"}.get(kind, "") as String
@@ -884,37 +877,16 @@ func _refresh_ui() -> void:
   restart_button.disabled = not simulating
   results_button.visible = completed
   palette.counts = inventory
-  palette.build_cost = cost
   palette.selected = selected_kind
   palette.locked = simulating
   palette.refresh()
 
 func _refresh_output() -> void:
   for row in output_rows:
-    var measured_steps := mini(sampled_step, row.window)
-    var rate := _recent_rate(row.key, measured_steps)
-    row.label.text = "%s/step" % OUTPUT_METER.format_rate(rate)
-    row.label.tooltip_text = row.title
-    if measured_steps > 0 and measured_steps < row.window:
-      row.label.tooltip_text += " · measuring (%d of %d steps)" % [measured_steps, row.window]
-    elif measured_steps > 0:
-      row.label.tooltip_text += " · last %d steps" % measured_steps
-    row.meter.set_rate(rate, simulating and measured_steps > 0, measured_steps)
+    row.meter.set_rate(_output_rate(row.key), forecast != null, forecast_steps)
 
-func _sample_at_or_before(step: int) -> int:
-  var lower := 0
-  var upper := output_samples.size()
-  while lower < upper:
-    var middle := (lower + upper) >> 1
-    if output_samples[middle].step <= step: lower = middle + 1
-    else: upper = middle
-  return lower - 1
-
-func _recent_rate(key: String, measured_steps: int) -> float:
-  if measured_steps <= 0: return 0.0
-  var previous := _sample_at_or_before(sampled_step - measured_steps)
-  var old_count := _goal_count(output_samples[previous].counts, key) if previous >= 0 else 0
-  return float(_goal_count(sampled_counts, key) - old_count) / measured_steps
+func _output_rate(key: String) -> float:
+  return _goal_count(forecast_counts, key) / forecast_steps if forecast_steps > 0.0 else 0.0
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
   if not is_board_pointer(screen_position): return
@@ -1000,13 +972,10 @@ func _clear_particles() -> void:
 
 func _clear_stats() -> void:
   _cancel_forecast()
-  next_forecast_at = WATCH_STEPS
-  last_hud_update = 0.0
+  next_forecast_at = 0.0
+  forecast_counts.clear()
+  forecast_steps = 0.0
   total_counts.clear()
-  output_samples.clear()
-  sampled_counts = {}
-  sampled_step = 0
-  output_changed = false
   elapsed = 0.0
   earned_medals.clear()
   star_hits.clear()
@@ -1018,100 +987,53 @@ func _clear_stats() -> void:
 
 func _on_particle_detected(name: String) -> void:
   PARTICLES.record_detection(total_counts, name)
-  output_changed = true
 
 func _on_simulation_stepped(delta: float) -> void:
   if not simulating: return
   elapsed += delta
-  var whole_step := floori(elapsed + 0.000001)
-  if whole_step > sampled_step:
-    sampled_step = whole_step
-    if output_changed:
-      sampled_counts = total_counts.duplicate()
-      output_samples.append({"step": sampled_step, "counts": sampled_counts})
-      output_changed = false
-      var cutoff := _sample_at_or_before(sampled_step - MAX_METER_STEPS)
-      if cutoff >= 64: output_samples = output_samples.slice(cutoff)
-  if elapsed - last_hud_update >= 0.6:
-    last_hud_update = elapsed
-    _refresh_output()
   var first_detection := not completed and not total_counts.is_empty()
   if first_detection or star_hits_changed:
     star_hits_changed = false
     if first_detection or completed: _update_clear(first_detection)
-  if not completed: return
-  if forecast != null or elapsed + 0.000001 < next_forecast_at: return
-  next_forecast_at = elapsed + 1.0
-  if "rate" not in earned_medals:
-    _add_forecast_candidate("rate", {"any": level.medals.rate})
-  if "star" not in earned_medals:
-    for rule in level.medals.star:
-      if not rule.rates.is_empty() and _meets_build_conditions(rule):
-        _add_forecast_candidate("star", rule.rates)
-  if not forecast_candidates.is_empty():
-    forecast = FORECAST.new(self, buildings, FORECAST_WINDOW_STEPS)
+  if completed and forecast == null and elapsed >= next_forecast_at:
+    forecast = FORECAST.new(self, buildings)
+    _refresh_output()
 
 func _update_clear(first_detection: bool) -> void:
   completed = true
   var previous_count := earned_medals.size()
-  if first_detection and cost < level.medals.cost: earned_medals.append("cost")
+  if first_detection and cost <= level.medals.cost: earned_medals.append("cost")
+  if "rate" not in earned_medals and _meets_output({"any": level.medals.rate}, forecast_counts, forecast_steps):
+    earned_medals.append("rate")
   if "star" not in earned_medals:
     for rule in level.medals.star:
-      if rule.rates.is_empty() and _meets_build_conditions(rule):
+      if _meets_build_conditions(rule) and _meets_output(rule.rates, forecast_counts, forecast_steps):
         earned_medals.append("star")
         break
   if first_detection or previous_count != earned_medals.size(): _save_run_progress()
 
 func _meets_build_conditions(rule: Dictionary) -> bool:
-  if cost >= rule.get("cost", INF): return false
+  if cost > rule.get("cost", INF): return false
   if rule.hit_stars and (level.stars.is_empty() or star_hits.size() < level.stars.size()): return false
   if not rule.no_buildings.is_empty():
     for building in buildings:
       if building.get_meta("kind") in rule.no_buildings: return false
   return true
 
-func _add_forecast_candidate(medal: String, rates: Dictionary) -> void:
-  var window_chunks := 1
-  for key in rates:
-    if _goal_count(total_counts, key) == 0: return
-    var chunks_needed := FORECAST_TARGET_COUNT / (float(rates[key]) * FORECAST_WINDOW_STEPS)
-    window_chunks = maxi(window_chunks, ceili(minf(chunks_needed, MAX_FORECAST_CHUNKS_PER_WINDOW)))
-  forecast_candidates.append({"medal": medal, "rates": rates, "window_chunks": window_chunks, "previous_counts": {}})
-
 func _process(_delta: float) -> void:
   if forecast == null or not forecast.advance(): return
-  for key in forecast.counts:
-    forecast_counts[key] = int(forecast_counts.get(key, 0)) + int(forecast.counts[key])
-  forecast_chunks += 1
-  var previous_count := earned_medals.size()
-  for i in range(forecast_candidates.size() - 1, -1, -1):
-    var candidate := forecast_candidates[i]
-    if candidate.medal in earned_medals:
-      forecast_candidates.remove_at(i)
-      continue
-    var chunks: int = candidate.window_chunks
-    if forecast_chunks % chunks != 0: continue
-    var window_steps := FORECAST_WINDOW_STEPS * chunks
-    if not _meets_output(candidate.rates, forecast_counts, window_steps, candidate.previous_counts):
-      forecast_candidates.remove_at(i)
-    elif forecast_chunks == chunks * FORECAST_WINDOWS:
-      if _meets_output(candidate.rates, forecast_counts, window_steps * FORECAST_WINDOWS):
-        earned_medals.append(candidate.medal)
-      forecast_candidates.remove_at(i)
-    else:
-      candidate.previous_counts = forecast_counts.duplicate()
-  if previous_count != earned_medals.size(): _save_run_progress()
-  if forecast_candidates.is_empty():
-    _cancel_forecast()
-    next_forecast_at = elapsed + 8.0
+  forecast_counts = forecast.measured_counts
+  forecast_steps = forecast.measured_steps
+  _cancel_forecast()
+  next_forecast_at = elapsed + FORECAST_REFRESH_STEPS
+  _refresh_output()
+  _update_clear(false)
+  if results.visible: _update_results()
 
 func _cancel_forecast() -> void:
   if forecast != null:
     forecast.dispose()
   forecast = null
-  forecast_candidates.clear()
-  forecast_counts.clear()
-  forecast_chunks = 0
 
 func _save_run_progress() -> void:
   if not editor_playtest: Global.record_level_progress(Global.selected_level, earned_medals)
@@ -1125,7 +1047,7 @@ func _refresh_medals() -> void:
 
 func _refresh_star_labels() -> void:
   for label in star_labels:
-    label.text = "Hit every star (%d/%d)" % [star_hits.size(), level.stars.size()]
+    label.text = "Stars hit %d / %d" % [star_hits.size(), level.stars.size()]
 
 func _show_results() -> void:
   running = false
@@ -1143,8 +1065,9 @@ func _update_results() -> void:
   var stats := ""
   for kind in total_counts:
     if kind == "any" or kind in PARTICLES.QUARK_FAMILIES: continue
-    var run_rate := float(total_counts[kind]) / elapsed if elapsed > 0.0 else 0.0
-    stats += "\n%s · %d detected · %s/step average" % [PARTICLES.label(kind), int(total_counts[kind]), OUTPUT_METER.format_rate(run_rate)]
+    stats += "\n%s · %d detected" % [PARTICLES.label(kind), int(total_counts[kind])]
+    var rate := _output_rate(kind)
+    if rate > 0.0: stats += " · %s/s" % OUTPUT_METER.format_rate(rate)
   results_text.text = "%d of 3 medals earned\nBuild cost $%d\n%s" % [earned_medals.size(), cost, stats]
 
 func _report_particle_path(particle: Particle, path: Array[Dictionary], until: float) -> void:
@@ -1179,11 +1102,11 @@ func _goal_count(counts: Dictionary, key: String) -> int:
     total += int(counts.get(name, 0))
   return total
 
-func _meets_output(rates: Dictionary, counts: Dictionary, steps: float, previous_counts := {}) -> bool:
+func _meets_output(rates: Dictionary, counts: Dictionary, steps: float) -> bool:
   for key in rates:
-    var threshold: float = rates[key]
-    var required := maxf(1.0, floorf(threshold * steps + 0.000001))
-    if _goal_count(counts, key) - _goal_count(previous_counts, key) < required: return false
+    if steps <= 0.0: return false
+    var actual := _goal_count(counts, key) / steps
+    if actual < rates[key] and absf(actual / rates[key] - 1.0) > 0.000001: return false
   return true
 
 func _on_particle_event(kind: String, at: Vector2) -> void:

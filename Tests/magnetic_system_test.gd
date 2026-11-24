@@ -52,7 +52,7 @@ func _perpendicular_entries(polarity: int) -> void:
   sim.add_child(positron)
 
   sim.step_simulation(0.65)
-  var forecast := FORECAST.new(sim, [field], 1.0)
+  var forecast := FORECAST.new(sim, [field])
   sim.step_simulation(1.35)
   forecast.shadow.step_simulation(1.35)
   if polarity > 0:

@@ -93,7 +93,6 @@ func _ready() -> void:
   assert("r" in editor.game._building_at(Vector2i(3, 2)).get_meta("entry").fixed)
   editor._open_settings()
   editor.title_input.text = "Test puzzle"
-  editor.hint_input.text = "Redirect the beam"
   editor.rate_medal_input.text = "1/4"
   editor.cost_medal_input.text = "20"
   editor.star_rules.get_child(0).get_meta("rule").cost.text = "10"
@@ -115,7 +114,7 @@ func _ready() -> void:
   _choose_particle(particles.picker, "up_r")
   editor._apply_settings()
   assert(editor.parsed.medals.star.size() == 2, "Star medal alternatives must be separate condition sets")
-  assert(editor.parsed.title == "Test puzzle" and editor.parsed.hint == "Redirect the beam")
+  assert(editor.parsed.title == "Test puzzle")
   assert(editor.parsed.medals.rate == 0.25 and editor.parsed.medals.cost == 20.0)
   assert(editor.parsed.medals.star[0].cost == 10.0)
   assert(editor.parsed.medals.star[1].rates.has("[up_r]"))

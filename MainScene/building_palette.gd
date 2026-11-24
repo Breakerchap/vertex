@@ -16,7 +16,6 @@ var counts: Dictionary = {}
 var infinite := false
 var locked := false
 var selected := ""
-var build_cost := 0
 var height_limit := INF:
   set(value):
     height_limit = value
@@ -26,7 +25,6 @@ var contents: VBoxContainer
 var list: Container
 var buttons := {}
 var empty: Label
-var cost_label: Label
 var drag_kind := ""
 var drag_start := Vector2.ZERO
 var ghost: TextureRect
@@ -44,18 +42,12 @@ func _ready() -> void:
   var column := VBoxContainer.new()
   column.add_theme_constant_override("separation", 8)
   margin.add_child(column)
-  var header := HBoxContainer.new()
-  column.add_child(header)
   var title := Label.new()
   title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
   title.text = "Building tools" if infinite else "Inventory"
   title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   UI.heading(title)
-  header.add_child(title)
-  if not infinite:
-    cost_label = Label.new()
-    UI.muted(cost_label)
-    header.add_child(cost_label)
+  column.add_child(title)
   scroll = ScrollContainer.new()
   scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
   scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -96,7 +88,6 @@ func _fit_list() -> void:
 
 func refresh() -> void:
   if not is_instance_valid(list): return
-  if not infinite: cost_label.text = "Cost $%d" % build_cost
   var kinds: Array = CATALOG.SCENES.keys() if infinite else counts.keys()
   kinds.sort()
   for kind in buttons.keys():

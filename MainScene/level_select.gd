@@ -89,7 +89,6 @@ func _refresh_levels() -> void:
       levels.add_child(section)
     var progress := Global.level_progress(path)
     button.text = name
-    button.tooltip_text = str(parsed.get("hint", ""))
     if parsed.has("error"):
       button.text = path.get_file() + "  (invalid)"
       button.tooltip_text = str(parsed.error)

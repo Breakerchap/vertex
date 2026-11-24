@@ -31,7 +31,7 @@ func _ready() -> void:
   assert(not bosons.has("error") and bosons.buildings[0].particles == ["gluon", "z_boson"])
   assert(overlap.has("error"), "Overlapping buildings must be rejected")
   var metadata := PARSER.parse("3 x 3;\ntitle: A small test;\nhint: Try the mirror;\ngoal: {photon: 1, 1, 1};")
-  assert(metadata.title == "A small test" and metadata.hint == "Try the mirror")
+  assert(metadata.title == "A small test" and not metadata.has("hint"), "Existing hints should be ignored.")
   var migrated := PARSER.parse("4 x 4; goal: {[photon_b]: 1, 2, 3}; emitter: {x=0,y=0,[photon_r,up]}; rail: {x=1,y=0}; inventory: {rail=2,gate=1};")
   assert(migrated.medals.star[0].rates.has("[photon]") and migrated.medals.star[0].targets["[photon]"] == "[photon]")
   assert(migrated.buildings.size() == 1 and migrated.buildings[0].particles == ["photon", "up_r"])
@@ -47,9 +47,8 @@ func _ready() -> void:
   assert(game._meets_output(candidate, {"electron": 6, "positron": 4}, 10.0))
   assert(not game._meets_output(candidate, {"electron": 9, "positron": 0}, 10.0))
   var slow_candidate := {"electron": 1.0 / 300.0}
-  assert(game._meets_output(slow_candidate, {"electron": 6}, 1920.0), "A partial cycle at the edge may round down.")
-  assert(not game._meets_output(slow_candidate, {"electron": 5}, 1920.0), "Only the fractional part may round down.")
-  assert(not game._meets_output(slow_candidate, {"electron": 6}, 320.0, {"electron": 6}), "Earlier detections cannot cover a silent window.")
+  assert(game._meets_output(slow_candidate, {"electron": 6}, 1800.0))
+  assert(not game._meets_output(slow_candidate, {"electron": 6}, 1920.0), "The forecast should use the measured rate.")
   assert(game._goal_count({"up": 4, "up_r": 2}, "[up,up_r]") == 4)
   var counts := {}
   PARTICLES.record_detection(counts, "up_r")
@@ -86,8 +85,8 @@ func _ready() -> void:
   assert(game.selected_building.orientation == mirror_orientation)
   assert(not game.has_method("_open_config"))
   assert(game.buildings[3].accepted == ["electron", "positron"])
-  assert(game.output_rows[0].meter.target == 1.0 and game.output_rows[0].meter.medal == "rate")
-  assert(game.output_rows[1].meter.target == 2.0 and game.output_rows[1].meter.medal == "star")
+  assert(game.output_rows[0].meter.target == 1.0 and game.output_rows[0].key == "any")
+  assert(game.output_rows[1].meter.target == 2.0)
   # Turn the positron beam towards the detector.
   game.selected_building = game.buildings[2]
   game._rotate_selected()
@@ -100,16 +99,12 @@ func _ready() -> void:
   assert(not game.simulating and game._building_at(Vector2i(0, 0)) == placed_mirror, "Escape should retain the player's build.")
   game.editor_playtest = true
   game.begin_run()
-  for tick in range(roundi(SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP * game.WATCH_STEPS)):
-    assert(game.forecast == null, "The player should see the machine run before a forecast starts")
-    game.step_simulation(SimulationGrid.TICK)
-    if tick == SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP * 16:
-      assert(game.get_playback_speed() > 1.0 and game.get_playback_speed() < 2.0)
-    for child in game.get_children():
-      if child is Particle and child.is_queued_for_deletion(): child.free()
+  assert(game.forecast == null, "The forecast should wait for the first live detection.")
+  _run_steps(game, 16)
   assert(game.forecast != null)
+  assert(game.get_playback_speed() > 1.0 and game.get_playback_speed() < 2.0)
+  _run_steps(game, 12)
   assert(game.get_playback_speed() == 2.0)
-  assert(game._recent_rate("positron", 8) > 0.0)
   var live_counts: Dictionary = game.total_counts.duplicate()
   _advance_forecast(game)
   assert(game.completed and "rate" in game.earned_medals and "star" not in game.earned_medals)
@@ -122,11 +117,12 @@ func _ready() -> void:
   game.begin_run()
   assert(game.get_playback_speed() == 1.0)
   game.set_playback_speed(0.5)
-  game.elapsed = game.WATCH_STEPS
+  game.elapsed = 28.0
   assert(game.get_playback_speed() == 0.5, "A manual speed should override the automatic ramp")
   game.free()
   _check_sparse_output()
   _check_one_off_output()
+  _check_burst_output()
   _check_map_stars()
   _check_bundled_launch()
   print("Level syntax checks passed")
@@ -146,17 +142,16 @@ func _run_sparse_level(repeating: bool) -> Node2D:
   assert(game._place_inventory_building("wall", Vector2i(0, 1)))
   game.begin_run()
   game.buildings[0].repeat_sequence = repeating
-  _run_steps(game, game.WATCH_STEPS)
+  _run_steps(game, 3)
   assert(game.total_counts.get("electron", 0) == 1 and game.forecast != null)
   return game
 
 func _check_sparse_output() -> void:
   var game := _run_sparse_level(true)
-  game._refresh_output()
-  assert(game.output_rows[0].meter.sample_steps == game.WATCH_STEPS)
-  assert(game.output_rows[0].meter.rate > 0.0, "The live meter should not forget a sparse stream after eight steps.")
   _advance_forecast(game)
-  assert(game.completed and game.earned_medals == ["rate"], "The sparse stream meets the rate, while a build at the cost limit misses the Cost medal.")
+  assert(is_equal_approx(game.output_rows[0].meter.rate, 1.0 / 300.0), "The sparse stream should measure one detection every 300 steps.")
+  assert(game.completed and game.earned_medals == ["cost", "rate"], "A build at the cost limit should earn the Cost medal.")
+  assert(game.cost_rows[0].label.text == "$5 / $5")
   assert(game.total_counts.get("electron", 0) == 1, "Forecast counts must never enter live totals.")
   game.stop_to_build()
   assert(game.output_rows[0].meter.rate == 0.0 and game.output_rows[0].meter.sample_steps == 0.0)
@@ -165,12 +160,23 @@ func _check_sparse_output() -> void:
 func _check_one_off_output() -> void:
   var game := _run_sparse_level(false)
   _advance_forecast(game)
-  assert(game.completed and game.earned_medals.is_empty() and game.results_button.visible,
-    "A single detection clears the level without a medal when no medal condition is met.")
-  game.next_forecast_at = INF
-  game._on_simulation_stepped(game.MAX_METER_STEPS)
-  game._refresh_output()
-  assert(game.output_rows[0].meter.rate == 0.0, "Old detections must expire from the adaptive meter.")
+  assert(game.completed and game.earned_medals == ["cost"] and game.results_button.visible)
+  assert(game.output_rows[0].meter.rate == 0.0, "A single detection should not count as sustained output.")
+  game.free()
+
+func _check_burst_output() -> void:
+  var source := "3 x 2; rate_medal: {0.5}; cost_medal: {0}; star_medal: {photon: 0.25; cost: 0}; emitter: {x=0,y=0,E,[photon,photon,photon,electron,electron,electron,electron,electron,electron,electron,electron,electron],rate=1/step}; detector: {x=2,y=0,[photon]};"
+  var game: Node2D = GAME.instantiate()
+  game.editor_playtest = true
+  game.level_override = PARSER.parse(source)
+  get_tree().root.add_child(game)
+  game.begin_run()
+  _run_steps(game, 2)
+  assert(game.forecast != null, "The first burst should start a forecast.")
+  _advance_forecast(game)
+  assert(game.output_rows[0].meter.rate == 0.25 and game.output_rows[0].meter.sample_steps == 12.0,
+    "Count three detections over the full twelve-step cycle, including silence.")
+  assert(game.earned_medals == ["cost", "star"], "The burst should earn only the medals whose limits it meets.")
   game.free()
 
 func _run_steps(game: Node2D, amount: float) -> void:
@@ -218,7 +224,9 @@ func _check_bundled_launch() -> void:
   game.selected_building = game._building_at(Vector2i(5, 2))
   game._move_selected_to(Vector2i(5, 3))
   game.begin_run()
-  _run_steps(game, game.WATCH_STEPS)
+  _run_steps(game, 8)
   _advance_forecast(game)
+  assert(game.output_rows[0].meter.rate == 1.0 and game.output_rows[0].meter.sample_steps == 1.0,
+    "First Contact should measure exactly one photon per second from a repeating cycle.")
   assert(game.completed and game.earned_medals.size() == 3, "First Contact should have a route to all three medals.")
   game.free()

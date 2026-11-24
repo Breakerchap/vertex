@@ -1,11 +1,12 @@
 title: 02 - Re-route;
-hint: Green outline: move, Yellow: change state, Red: fixed;
 
 15 x 8;
 
-rate_medal: {1/step};
-cost_medal: {31};
-star_medal: {photon: 1/step; cost: 16};
+rate_medal: {2/step};
+cost_medal: {15};
+star_medal: { hit_stars: true };
+star: { x = 4, y = 2 };
+star: { x = 4, y = 3 };
 
 emitter: {x=1, y=4, E, [electron], rate=1/step, fixed=rp};
 emitter: {x=13, y=4, W, [positron], rate=1/step, fixed=rp};

@@ -1,8 +1,8 @@
 11 x 9;
 
-rate_medal: {1/step};
-cost_medal: {121};
-star_medal: {photon: 2/step};
+rate_medal: {2/step};
+cost_medal: {80};
+star_medal: {photon: 2/step; cost: 120};
 
 
 wall: {x=5, y=1, fixed=p}
