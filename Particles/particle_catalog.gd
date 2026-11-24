@@ -10,6 +10,8 @@ const SCENES := {
   "photon": preload("res://Particles/Types/photon.tscn"),
   "gluon": preload("res://Particles/Types/gluon.tscn"),
   "z_boson": preload("res://Particles/Types/z_boson.tscn"),
+  "w_plus": preload("res://Particles/Types/w_plus.tscn"),
+  "w_minus": preload("res://Particles/Types/w_minus.tscn"),
   "up_r": preload("res://Particles/Types/up_r.tscn"),
   "up_g": preload("res://Particles/Types/up_g.tscn"),
   "up_b": preload("res://Particles/Types/up_b.tscn"),
@@ -43,6 +45,8 @@ const TYPES := {
   "photon": [Particle.Flavour.PHOTON, false, Particle.ColourCharge.NONE, ""],
   "gluon": [Particle.Flavour.GLUON, false, Particle.ColourCharge.NONE, ""],
   "z_boson": [Particle.Flavour.Z_BOSON, false, Particle.ColourCharge.NONE, ""],
+  "w_plus": [Particle.Flavour.W_PLUS, false, Particle.ColourCharge.NONE, ""],
+  "w_minus": [Particle.Flavour.W_MINUS, false, Particle.ColourCharge.NONE, ""],
   "up_r": [Particle.Flavour.UP, false, Particle.ColourCharge.RED, "up"],
   "up_g": [Particle.Flavour.UP, false, Particle.ColourCharge.GREEN, "up"],
   "up_b": [Particle.Flavour.UP, false, Particle.ColourCharge.BLUE, "up"],
@@ -58,7 +62,8 @@ const TYPES := {
   "delta_plus": [Particle.Flavour.DELTA_PLUS, false, Particle.ColourCharge.NONE, ""],
 }
 
-const SYMBOLS := {"pion_plus": "π⁺", "pion_minus": "π⁻", "pion_zero": "π⁰", "delta_minus": "Δ⁻", "delta_plus": "Δ⁺"}
+const SYMBOLS := {"pion_plus": "π⁺", "pion_minus": "π⁻", "pion_zero": "π⁰", "delta_minus": "Δ⁻", "delta_plus": "Δ⁺",
+  "w_plus": "W⁺ boson", "w_minus": "W⁻ boson"}
 
 const QUARK_FAMILIES := ["up", "down"]
 

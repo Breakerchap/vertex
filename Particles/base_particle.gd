@@ -2,7 +2,7 @@ class_name Particle
 extends Node2D
 
 enum ColourCharge { NONE, RED, GREEN, BLUE, ANTIRED, ANTIGREEN, ANTIBLUE }
-enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO, GLUON = 14, Z_BOSON = 15 }
+enum Flavour { UP, DOWN, ELECTRON, PHOTON, PION_PLUS, PION_MINUS, PION_ZERO, PROTON, NEUTRON, DELTA_MINUS, DELTA_PLUS, MUON, NEUTRINO, GLUON = 14, Z_BOSON = 15, W_PLUS = 16, W_MINUS = 17 }
 
 const COLOUR_TINTS := {
   ColourCharge.RED: Color(1.0, 0.35, 0.35),
@@ -116,6 +116,9 @@ func is_quark() -> bool:
 func is_pion() -> bool:
   return flavour in [Flavour.PION_PLUS, Flavour.PION_MINUS, Flavour.PION_ZERO]
 
+func is_w_boson() -> bool:
+  return flavour == Flavour.W_PLUS or flavour == Flavour.W_MINUS
+
 func passes_glass() -> bool:
   return flavour in [Flavour.ELECTRON, Flavour.MUON, Flavour.NEUTRINO, Flavour.PHOTON, Flavour.GLUON]
 
@@ -142,4 +145,6 @@ func level_particle_name() -> String:
     Flavour.DELTA_PLUS: return "delta_plus"
     Flavour.GLUON: return "gluon"
     Flavour.Z_BOSON: return "z_boson"
+    Flavour.W_PLUS: return "w_plus"
+    Flavour.W_MINUS: return "w_minus"
   return "unknown"

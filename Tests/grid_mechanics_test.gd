@@ -441,6 +441,53 @@ func _z_boson_bounces() -> void:
     sim.step_simulation(2.0)
     _check(sim._particles().size() == 2 and z.direction == Vector2.RIGHT and incoming.direction == Vector2.LEFT and z.speed == 1.0, "A Z boson and %s should bounce off each other while the Z boson keeps its speed." % name)
 
+func _w_boson_fields() -> void:
+  for name in ["w_plus", "w_minus"]:
+    var sign := -1.0 if name == "w_plus" else 1.0
+    _new_board()
+    var boson := _particle(name, Vector2.ZERO, Vector2.ZERO, 0.0)
+    var photon := _particle("photon", Vector2(-1, 1))
+    var outside := _particle("proton", Vector2(0, 2))
+    var idle := _particle("electron", Vector2.UP, Vector2.ZERO, 0.0)
+    var forecast := FORECAST.new(sim, [])
+    sim.step_simulation(0.5)
+    forecast.shadow.step_simulation(0.5)
+    _check(sign * (photon.motion_position().y - CELL) > 0.0, name + " should bend a neutral particle's path.")
+    _check(is_equal_approx(outside.motion_position().y, 2.0 * CELL), name + " should have no effect beyond 1.5 tiles.")
+    _check(sign * (idle.motion_position().y + CELL) < 0.0, name + " should also move a particle that started at rest.")
+    _check(_at(boson, Vector2.ZERO), name + " should never accelerate itself.")
+    _check(forecast.shadow._particles()[1].motion_position().is_equal_approx(photon.motion_position()),
+      "The forecast should apply the same W fields as the live board.")
+    forecast.dispose()
+
+    for other_name in ["electron", "z_boson", "w_plus"]:
+      _new_board()
+      boson = _particle(name, Vector2.ZERO, Vector2.ZERO, 0.0)
+      var incoming := _particle(other_name, Vector2.LEFT, Vector2.RIGHT, 4.0)
+      sim.step_simulation(0.5)
+      _check(sim._particles().size() == 2 and incoming.motion_position().x > 0.0,
+        "%s and %s should pass through each other." % [name, other_name])
+    _new_board()
+    _particle("gluon", Vector2.ZERO, Vector2.ZERO, 0.0)
+    boson = _particle(name, Vector2.LEFT, Vector2.RIGHT, 4.0)
+    sim.step_simulation(0.5)
+    _check(sim._particles().size() == 2 and boson.motion_position().x > 0.0 and not is_instance_valid(boson.trapped_by),
+      name + " should pass through a gluon tip without getting caught.")
+
+    for neutrino_name in ["neutrino", "anti_neutrino"]:
+      _new_board()
+      _particle(name, Vector2.ZERO)
+      _particle(neutrino_name, Vector2.RIGHT, Vector2.LEFT)
+      sim.step_simulation()
+      var products := sim._particles()
+      var flipped := "w_minus" if name == "w_plus" else "w_plus"
+      var expected := flipped if neutrino_name == "neutrino" else "z_boson"
+      _check(products.size() == 1 and products[0].level_particle_name() == expected,
+        "%s should convert %s to %s." % [neutrino_name, name, expected])
+      if products.size() == 1:
+        _check(products[0].direction == Vector2.RIGHT and is_equal_approx(products[0].speed, 1.0) and _at(products[0], Vector2.RIGHT),
+          "A converted W should keep its direction and speed and continue through the tick.")
+
 func _gluon_buildings() -> void:
   for kind in ["wall", "edge_wall", "filter", "gate", "detector", "emitter"]:
     _new_board()
@@ -583,6 +630,7 @@ func _run() -> void:
   _reflectors_and_neutrino_holders()
   _muon_reaction_directions()
   _z_boson_bounces()
+  _w_boson_fields()
   _gluon_buildings()
   _gluon_blocks()
   _gluon_trap()

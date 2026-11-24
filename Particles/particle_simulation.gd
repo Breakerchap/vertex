@@ -7,8 +7,10 @@ signal particle_event(kind: String, at: Vector2)
 
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const BOSON = preload("res://Particles/Boson/boson.gd")
+const W_BOSON = preload("res://Particles/Boson/w_boson.gd")
 const RAILS = preload("res://Buildings/GridDevices/rail_network.gd")
 const EPSILON := 0.000001
+const W_FIELD_ACCELERATION := 2.0
 const QUARK_COLOURS := [Particle.ColourCharge.RED, Particle.ColourCharge.GREEN, Particle.ColourCharge.BLUE]
 
 @export var running := true
@@ -88,6 +90,7 @@ func _simulate_tick(time: float) -> void:
   for emitter in _active_descendants("particle_emitters"):
     emitter.step_emission(time / SimulationGrid.GRID_TICKS_PER_STEP)
   var particles := _particles()
+  _apply_w_fields(particles, time)
   var paths := {}
   var terminal_hits := {}
   var pulled_contacts := _advance_gluons(particles, time, obstacles, tiles)
@@ -127,6 +130,34 @@ func _simulate_tick(time: float) -> void:
           if particle.flavour == Particle.Flavour.GLUON:
             (particle as BOSON).record_path([], 0.0)
   simulation_stepped.emit(time / SimulationGrid.GRID_TICKS_PER_STEP)
+
+func _apply_w_fields(particles: Array[Particle], time: float) -> void:
+  var centers: Dictionary[Particle, Vector2] = {}
+  for particle in particles:
+    if particle.is_w_boson(): centers[particle] = particle.motion_position()
+  if centers.is_empty(): return
+
+  var radius := W_BOSON.FIELD_RADIUS
+  for particle in particles:
+    if is_instance_valid(particle.held_by) or is_instance_valid(particle.trapped_by) or particle.glass_wait > EPSILON:
+      continue
+    var at := particle.motion_position()
+    var acceleration := Vector2.ZERO
+    for field in centers:
+      if field == particle: continue
+      var offset := centers[field] - at
+      var distance_squared := offset.length_squared()
+      if distance_squared <= EPSILON or distance_squared >= radius * radius: continue
+      var distance := sqrt(distance_squared)
+      var strength := W_FIELD_ACCELERATION if field.flavour == Particle.Flavour.W_PLUS else -W_FIELD_ACCELERATION
+      acceleration += offset * (strength * (1.0 - distance / radius) / distance)
+    if acceleration.is_zero_approx(): continue
+    var velocity := particle.travel_vector().normalized() * particle.speed + acceleration * time
+    var was_free := particle.free_flight
+    var flight_cell := particle.flight_cell
+    particle.speed = velocity.length()
+    _redirect_particle(particle, at, velocity)
+    if was_free and particle.free_flight: particle.flight_cell = flight_cell
 
 func _advance_gluons(particles: Array[Particle], time: float, obstacles: Array[Node], tiles: Dictionary) -> Array[Dictionary]:
   var gluons: Array[BOSON] = []
@@ -357,7 +388,7 @@ func _world_impact(particle: Particle, from: Vector2, motion: Vector2, obstacles
       if obstacle == particle or obstacle == particle.source_building or obstacle.is_queued_for_deletion(): continue
       var candidate: Dictionary
       if obstacle is BOSON:
-        if gluon and motion.is_zero_approx(): continue
+        if particle.is_w_boson() or (gluon and motion.is_zero_approx()): continue
         candidate = obstacle.sweep_trail(particle, from, motion)
       elif not hits_buildings:
         continue
@@ -550,6 +581,8 @@ func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, t
   return redirected
 
 func _passes_through(a: Particle, b: Particle) -> bool:
+  if a.is_w_boson(): return b.flavour != Particle.Flavour.NEUTRINO
+  if b.is_w_boson(): return a.flavour != Particle.Flavour.NEUTRINO
   if a.is_quark() and b.is_quark(): return a.colour == b.colour
   if a.flavour == Particle.Flavour.PHOTON:
     return b.flavour in [Particle.Flavour.PHOTON, Particle.Flavour.NEUTRINO]
@@ -709,6 +742,12 @@ func _neutrino_reaction(a: Particle, b: Particle, contact: Dictionary, redirecte
   var neutrino := a if a.flavour == Particle.Flavour.NEUTRINO else b
   if neutrino.flavour != Particle.Flavour.NEUTRINO: return false
   var other := b if neutrino == a else a
+  if other.is_w_boson():
+    var at: Vector2 = contact.at_b if other == b else contact.at_a
+    var velocity: Vector2 = contact.velocity_b if other == b else contact.velocity_a
+    var product := _convert_w_boson(neutrino, other, at, velocity)
+    redirected[product] = contact.time
+    return true
   if other.flavour == Particle.Flavour.NEUTRINO:
     if a.isAnti and b.isAnti: return false
     var product := Particle.Flavour.PHOTON if a.isAnti != b.isAnti else Particle.Flavour.NEUTRINO
@@ -772,6 +811,21 @@ func _neutrino_reaction(a: Particle, b: Particle, contact: Dictionary, redirecte
     _keep_separating(result, lepton)
   particle_event.emit("fusion", origin)
   return true
+
+func _convert_w_boson(neutrino: Particle, boson: Particle, at: Vector2, velocity: Vector2) -> Particle:
+  var flavour := Particle.Flavour.Z_BOSON
+  if not neutrino.isAnti:
+    flavour = Particle.Flavour.W_MINUS if boson.flavour == Particle.Flavour.W_PLUS else Particle.Flavour.W_PLUS
+  _consume(neutrino)
+  _consume(boson)
+  var product := PARTICLES.instantiate(flavour)
+  product.free_flight = not at.is_equal_approx(SimulationGrid.center(at)) or not _is_grid_heading(velocity)
+  product.direction = velocity
+  product.speed = velocity.length()
+  product.position = to_local(at)
+  add_child(product)
+  particle_event.emit("fusion", at)
+  return product
 
 func _muon_reaction(a: Particle, b: Particle, contact: Dictionary) -> bool:
   var muon := a if a.flavour == Particle.Flavour.MUON else b

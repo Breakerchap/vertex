@@ -41,13 +41,15 @@ The first detection clears the level and starts a background simulation of the b
 
 Existing `goal` blocks and `/s` rates still load. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Old hint declarations are ignored. Previous star totals carry forward as completion records.
 
-## Gluons and Z bosons
+## Gluons, Z bosons and W bosons
 
 Use `gluon` and `z_boson` in emitter sequences. Gluons have mass zero and travel two tiles per tick. Glass slows them, reflectors bounce them, pushers shift them, and walls and filters block them. The trail follows the tip's route. Two gluon tips stop when they meet, and a tip also stops if it hits another gluon's trail.
 
 The first particle to touch a trail stays in place. When a second touches it, the tip stops moving and both particles are pulled together at three tiles per tick. They interact on contact and the trail disappears. A trail stays active when its tip reaches the edge of the board. If a building absorbs the tip, the trail disappears and releases its captive.
 
 Z bosons travel one tile per tick. They bounce off other particles, gluon trails, and buildings that would otherwise absorb them. They still pass through an open gate.
+
+W bosons use `w_plus` and `w_minus`. Both have a field three tiles across. W⁺ pulls nearby particles inward and W⁻ pushes them outward. The force fades toward the field's edge. W bosons pass through other particles and gluon trails. A neutrino is absorbed on contact and flips the W boson's sign. An antineutrino is absorbed and converts the W into a Z boson. The converted boson keeps its motion.
 
 ## Devices
 

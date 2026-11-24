@@ -11,8 +11,12 @@ const ARROW_COLOUR := Color("263d56")
     queue_redraw()
 
 func _ready() -> void:
-  var names: Array[String] = [particle_name]
-  $ParticlePreview.show_particles(names)
+  var preview := _make_particle()
+  preview.name = "ParticlePreview"
+  preview.show_behind_parent = true
+  # Only the particle added directly to the simulation can move or collide.
+  add_child(preview, false, Node.INTERNAL_MODE_BACK)
+  preview.z_index = 0
 
 func _draw() -> void:
   if facing == AT_REST: return
@@ -24,13 +28,17 @@ func _draw() -> void:
   draw_colored_polygon(PackedVector2Array([tip, base + side * 6.0, base - side * 6.0]), ARROW_COLOUR)
 
 func spawn_in(simulation: ParticleSimulation) -> void:
-  var emission := PARTICLES.emission(particle_name)
-  var particle := PARTICLES.instantiate(emission.flavour, emission.is_anti, emission.colour)
+  var particle := _make_particle()
   particle.position = simulation.to_local(global_position)
-  particle.direction = _launch_direction()
-  if facing == AT_REST: particle.speed = 0.0
   simulation.add_child(particle)
   hide()
+
+func _make_particle() -> Particle:
+  var emission := PARTICLES.emission(particle_name)
+  var particle := PARTICLES.instantiate(emission.flavour, emission.is_anti, emission.colour)
+  particle.direction = _launch_direction()
+  if facing == AT_REST: particle.speed = 0.0
+  return particle
 
 func _launch_direction() -> Vector2:
   if facing == AT_REST: return Vector2.ZERO
