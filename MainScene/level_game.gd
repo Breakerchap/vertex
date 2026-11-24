@@ -9,9 +9,12 @@ const PREVIEW = preload("res://Buildings/particle_preview.gd")
 const OVERLAY = preload("res://MainScene/placement_overlay.gd")
 const PALETTE = preload("res://MainScene/building_palette.gd")
 const OUTPUT_METER = preload("res://MainScene/output_meter.gd")
+const MEDALS = preload("res://MainScene/medal_display.gd")
+const STAR_MARKER = preload("res://filled_star.png")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 const BUILDING = preload("res://Buildings/building.gd")
 const CELL := BUILDING.GRID_SIZE
+const STAR_RADIUS := CELL * 0.16
 const SIDEBAR_WIDTH := 288.0
 const POINTER_SLOP := 8.0
 const ZOOM_STEP := 1.2
@@ -66,6 +69,8 @@ var sidebar_toggle: Button
 var compact_layout := false
 var sidebar_open := false
 var results_text: RichTextLabel
+var results_medals: HBoxContainer
+var results_button: Button
 var level: Dictionary = {}
 var buildings: Array[Node] = []
 var inventory: Dictionary = {}
@@ -85,7 +90,11 @@ var forecast: FORECAST
 var forecast_candidates: Array[Dictionary] = []
 var forecast_counts: Dictionary = {}
 var forecast_chunks := 0
-var forecast_best_stars := 0
+var earned_medals: Array[String] = []
+var medal_icons := {}
+var star_hits := {}
+var star_labels: Array[Label] = []
+var star_hits_changed := false
 var completed: bool = false
 var selection_label: Label
 var output_rows: Array[Dictionary] = []
@@ -143,6 +152,10 @@ func _draw() -> void:
     var rect := _area_rect(area)
     draw_rect(rect, Color("e39662", 0.24))
     draw_rect(rect.grow(-1.0), Color("e39662", 0.85), false, 2.0)
+  for cell in level.stars:
+    var at := _cell_position(cell)
+    var tint := Color.WHITE if not star_hits.has(cell) else Color(1, 1, 1, 0.3)
+    draw_texture_rect(STAR_MARKER, Rect2(at - Vector2.ONE * STAR_RADIUS, Vector2.ONE * STAR_RADIUS * 2.0), false, tint)
 
 func get_playback_speed() -> float:
   if editor_preview or not automatic_speed or not simulating:
@@ -259,17 +272,26 @@ func _create_hud() -> void:
   restart_button = UI.button(actions, "Restart", restart_run)
   UI.button(actions, "Reset  X", reset_level)
   UI.button(actions, "Back to editor" if editor_playtest else "Levels", _return_to_select)
+  results_button = UI.button(actions, "Level cleared", _show_results)
+  results_button.theme_type_variation = "PrimaryButton"
+  results_button.tooltip_text = "View results and continue to the next level"
+  results_button.hide()
   results = AcceptDialog.new()
   UI.setup_dialog(results, layer, "Level complete")
   results.about_to_popup.connect(cancel_board_gesture)
   results.ok_button_text = "Back to build"
   results.confirmed.connect(stop_to_build)
-  results.canceled.connect(stop_to_build)
   results.custom_action.connect(_result_action)
+  results.add_button("Keep running", true, "continue")
   var next_level_button := results.add_button("Next level", true, "next")
   next_level_button.visible = not editor_playtest and not Global.next_level_path(Global.selected_level).is_empty()
+  var summary := VBoxContainer.new()
+  results.add_child(summary)
+  results_medals = MEDALS.strip([], 38)
+  summary.add_child(results_medals)
   results_text = RichTextLabel.new()
-  results.add_child(results_text)
+  results_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+  summary.add_child(results_text)
   get_viewport().size_changed.connect(_layout_hud)
   panel.resized.connect(_layout_hud)
   _layout_hud()
@@ -335,7 +357,7 @@ func _add_sidebar(layer: CanvasLayer) -> void:
   var rows := VBoxContainer.new()
   rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   scroll.add_child(rows)
-  _add_goals(rows)
+  _add_medals(rows)
   palette = PALETTE.new()
   sidebar.add_child(palette)
   palette.kind_selected.connect(_select_inventory)
@@ -363,51 +385,34 @@ func _layout_sidebar() -> void:
   game_sidebar.offset_top = top
   game_sidebar.offset_bottom = bottom
 
-func _add_goals(rows: VBoxContainer) -> void:
-  var targets: Array = level.get("goal_targets", [])
-  for index in range(level.goals.size()):
-    if index > 0:
-      var divider := UI.label("OR")
-      UI.muted(divider, 11)
-      rows.add_child(divider)
-    var goal: Dictionary = level.goals[index]
-    var table := GridContainer.new()
-    table.columns = 4
-    table.add_theme_constant_override("h_separation", 5)
-    table.add_theme_constant_override("v_separation", 3)
-    rows.add_child(table)
-    _add_goal_cells(table, "Stars", ["★", "★★", "★★★"], true)
-    var output_count := goal.size() - int(goal.has("cost"))
-    for key in goal:
-      var target: String = targets[index].get(key, key) if index < targets.size() else key
-      var title: String = "Cost" if key == "cost" else (PARTICLES.label(target) if PARTICLES.is_selector(target) else target)
-      var thresholds: Array[String] = []
-      for value in goal[key]:
-        var amount := str(value).trim_suffix(".0")
-        thresholds.append("∞" if is_inf(value) else amount + ("" if key == "cost" else "/step"))
-      _add_goal_cells(table, title, thresholds)
-      if key == "cost": continue
-      var row := HBoxContainer.new()
-      rows.add_child(row)
-      var details := VBoxContainer.new()
-      details.custom_minimum_size.x = 85 if output_count > 1 else 59
-      details.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-      details.add_theme_constant_override("separation", 0)
-      row.add_child(details)
-      if output_count > 1:
-        var name_label := UI.label(title)
-        UI.muted(name_label, 12)
-        name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-        details.add_child(name_label)
-      var rate_label := UI.label("")
-      rate_label.add_theme_color_override("font_color", UI.ACCENT)
-      rate_label.mouse_filter = Control.MOUSE_FILTER_STOP
-      details.add_child(rate_label)
-      var meter := OUTPUT_METER.new()
-      meter.set_thresholds(goal[key])
-      meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-      row.add_child(meter)
-      output_rows.append({"key": key, "title": title, "meter": meter, "label": rate_label, "window": _meter_window(goal[key])})
+func _add_medals(rows: VBoxContainer) -> void:
+  var objective := UI.label("Detect any particle to clear the level.")
+  objective.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+  rows.add_child(objective)
+  _add_medal_heading(rows, "rate")
+  _add_output_meter(rows, "any", "Total output", level.medals.rate, "rate")
+  _add_medal_heading(rows, "cost")
+  rows.add_child(UI.label("Build for under $%s" % str(level.medals.cost).trim_suffix(".0")))
+  _add_medal_heading(rows, "star")
+  for index in range(level.medals.star.size()):
+    if index > 0: rows.add_child(UI.label("Or"))
+    var rule: Dictionary = level.medals.star[index]
+    for key in rule.rates:
+      var target: String = rule.targets.get(key, key)
+      var title := "Total output" if key == "any" else (PARTICLES.label(target) if PARTICLES.is_selector(target) else target)
+      _add_output_meter(rows, key, title, rule.rates[key], "star")
+    if rule.has("cost"):
+      rows.add_child(UI.label("Build for under $%s" % str(rule.cost).trim_suffix(".0")))
+    if not rule.no_buildings.is_empty():
+      var names := PackedStringArray()
+      for kind in rule.no_buildings: names.append(kind.capitalize())
+      var omitted := UI.label("Use no %s" % ", ".join(names))
+      omitted.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+      rows.add_child(omitted)
+    if rule.hit_stars:
+      var progress := UI.label("")
+      rows.add_child(progress)
+      star_labels.append(progress)
   var hint := str(level.get("hint", ""))
   if not hint.is_empty():
     var prompt := UI.label(hint)
@@ -415,23 +420,34 @@ func _add_goals(rows: VBoxContainer) -> void:
     prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(prompt)
 
-func _add_goal_cells(table: GridContainer, title: String, values: Array, heading := false) -> void:
-  var label := UI.label(title)
-  label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+func _add_medal_heading(rows: VBoxContainer, kind: String) -> void:
+  var header := HBoxContainer.new()
+  rows.add_child(header)
+  var badge := MEDALS.icon(kind, 24, false)
+  header.add_child(badge)
+  medal_icons[kind] = badge
+  var label := UI.label("%s medal" % kind.capitalize())
+  UI.heading(label, 16)
+  header.add_child(label)
+
+func _add_output_meter(rows: VBoxContainer, key: String, title: String, target: float, medal: String) -> void:
+  var caption := UI.label("%s ≥ %s/step" % [title, OUTPUT_METER.format_rate(target)])
+  caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+  rows.add_child(caption)
+  var row := HBoxContainer.new()
+  rows.add_child(row)
+  var label := UI.label("0/step")
+  label.custom_minimum_size.x = 76
   label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-  label.tooltip_text = title
   label.mouse_filter = Control.MOUSE_FILTER_STOP
-  if heading: UI.heading(label, 15)
-  table.add_child(label)
-  for value in values:
-    var cell := UI.label(value)
-    cell.custom_minimum_size.x = 43
-    cell.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    cell.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    cell.tooltip_text = value
-    cell.mouse_filter = Control.MOUSE_FILTER_STOP
-    if heading: cell.add_theme_color_override("font_color", UI.GOLD)
-    table.add_child(cell)
+  row.add_child(label)
+  var meter := OUTPUT_METER.new()
+  meter.target = target
+  meter.medal = medal
+  meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  row.add_child(meter)
+  var window := ceili(clampf(METER_TARGET_COUNT / target, MIN_METER_STEPS, MAX_METER_STEPS))
+  output_rows.append({"key": key, "title": title, "meter": meter, "label": label, "window": window})
 
 func _load_initial_board() -> void:
   running = false
@@ -441,6 +457,7 @@ func _load_initial_board() -> void:
   _clear_particles()
   _clear_buildings()
   inventory = level.inventory.duplicate(true)
+  track_particle_paths = not level.stars.is_empty()
   inventory.erase("rail")
   cost = 0
   undo_history.clear()
@@ -865,6 +882,7 @@ func _refresh_ui() -> void:
       selection_label.text += "  %s" % ("+" if selected_building.polarity > 0 else "−")
   stop_button.disabled = not simulating
   restart_button.disabled = not simulating
+  results_button.visible = completed
   palette.counts = inventory
   palette.build_cost = cost
   palette.selected = selected_kind
@@ -882,12 +900,6 @@ func _refresh_output() -> void:
     elif measured_steps > 0:
       row.label.tooltip_text += " · last %d steps" % measured_steps
     row.meter.set_rate(rate, simulating and measured_steps > 0, measured_steps)
-
-func _meter_window(thresholds: Array) -> int:
-  var slowest := INF
-  for threshold in thresholds:
-    if threshold > 0.0: slowest = minf(slowest, threshold)
-  return ceili(clampf(METER_TARGET_COUNT / slowest, MIN_METER_STEPS, MAX_METER_STEPS))
 
 func _sample_at_or_before(step: int) -> int:
   var lower := 0
@@ -971,6 +983,10 @@ func _return_to_select() -> void:
     get_tree().change_scene_to_file("res://MainScene/level_select.tscn")
 
 func _result_action(action: StringName) -> void:
+  if action == &"continue":
+    results.hide()
+    running = true
+    return
   if action != &"next" or editor_playtest: return
   var path := Global.next_level_path(Global.selected_level)
   if path.is_empty(): return
@@ -992,15 +1008,20 @@ func _clear_stats() -> void:
   sampled_step = 0
   output_changed = false
   elapsed = 0.0
+  earned_medals.clear()
+  star_hits.clear()
+  star_hits_changed = false
+  _refresh_medals()
+  _refresh_star_labels()
+  queue_redraw()
   if is_instance_valid(diagnostic_overlay): diagnostic_overlay.clear_events()
 
 func _on_particle_detected(name: String) -> void:
-  for key in PARTICLES.detection_keys(name):
-    total_counts[key] = int(total_counts.get(key, 0)) + 1
+  PARTICLES.record_detection(total_counts, name)
   output_changed = true
 
 func _on_simulation_stepped(delta: float) -> void:
-  if not simulating or completed: return
+  if not simulating: return
   elapsed += delta
   var whole_step := floori(elapsed + 0.000001)
   if whole_step > sampled_step:
@@ -1014,78 +1035,138 @@ func _on_simulation_stepped(delta: float) -> void:
   if elapsed - last_hud_update >= 0.6:
     last_hud_update = elapsed
     _refresh_output()
+  var first_detection := not completed and not total_counts.is_empty()
+  if first_detection or star_hits_changed:
+    star_hits_changed = false
+    if first_detection or completed: _update_clear(first_detection)
+  if not completed: return
   if forecast != null or elapsed + 0.000001 < next_forecast_at: return
   next_forecast_at = elapsed + 1.0
-  for goal in level.goals:
-    for tier in range(3):
-      var eligible := true
-      var window_chunks := 1
-      for key in goal:
-        var threshold: float = goal[key][tier]
-        if key == "cost":
-          if cost > threshold: eligible = false
-        elif is_inf(threshold) or (threshold > 0.0 and _goal_count(total_counts, key) == 0):
-          eligible = false
-        elif threshold > 0.0:
-          var chunks_needed := FORECAST_TARGET_COUNT / (threshold * FORECAST_WINDOW_STEPS)
-          window_chunks = maxi(window_chunks, ceili(minf(chunks_needed, MAX_FORECAST_CHUNKS_PER_WINDOW)))
-      if eligible:
-        forecast_candidates.append({"goal": goal, "tier": tier, "window_chunks": window_chunks, "previous_counts": {}})
+  if "rate" not in earned_medals:
+    _add_forecast_candidate("rate", {"any": level.medals.rate})
+  if "star" not in earned_medals:
+    for rule in level.medals.star:
+      if not rule.rates.is_empty() and _meets_build_conditions(rule):
+        _add_forecast_candidate("star", rule.rates)
   if not forecast_candidates.is_empty():
     forecast = FORECAST.new(self, buildings, FORECAST_WINDOW_STEPS)
+
+func _update_clear(first_detection: bool) -> void:
+  completed = true
+  var previous_count := earned_medals.size()
+  if first_detection and cost < level.medals.cost: earned_medals.append("cost")
+  if "star" not in earned_medals:
+    for rule in level.medals.star:
+      if rule.rates.is_empty() and _meets_build_conditions(rule):
+        earned_medals.append("star")
+        break
+  if first_detection or previous_count != earned_medals.size(): _save_run_progress()
+
+func _meets_build_conditions(rule: Dictionary) -> bool:
+  if cost >= rule.get("cost", INF): return false
+  if rule.hit_stars and (level.stars.is_empty() or star_hits.size() < level.stars.size()): return false
+  if not rule.no_buildings.is_empty():
+    for building in buildings:
+      if building.get_meta("kind") in rule.no_buildings: return false
+  return true
+
+func _add_forecast_candidate(medal: String, rates: Dictionary) -> void:
+  var window_chunks := 1
+  for key in rates:
+    if _goal_count(total_counts, key) == 0: return
+    var chunks_needed := FORECAST_TARGET_COUNT / (float(rates[key]) * FORECAST_WINDOW_STEPS)
+    window_chunks = maxi(window_chunks, ceili(minf(chunks_needed, MAX_FORECAST_CHUNKS_PER_WINDOW)))
+  forecast_candidates.append({"medal": medal, "rates": rates, "window_chunks": window_chunks, "previous_counts": {}})
 
 func _process(_delta: float) -> void:
   if forecast == null or not forecast.advance(): return
   for key in forecast.counts:
     forecast_counts[key] = int(forecast_counts.get(key, 0)) + int(forecast.counts[key])
   forecast_chunks += 1
+  var previous_count := earned_medals.size()
   for i in range(forecast_candidates.size() - 1, -1, -1):
     var candidate := forecast_candidates[i]
-    var stars: int = candidate.tier + 1
-    if stars <= forecast_best_stars:
+    if candidate.medal in earned_medals:
       forecast_candidates.remove_at(i)
       continue
     var chunks: int = candidate.window_chunks
     if forecast_chunks % chunks != 0: continue
     var window_steps := FORECAST_WINDOW_STEPS * chunks
-    if not _meets_output(candidate, forecast_counts, window_steps, candidate.previous_counts):
+    if not _meets_output(candidate.rates, forecast_counts, window_steps, candidate.previous_counts):
       forecast_candidates.remove_at(i)
     elif forecast_chunks == chunks * FORECAST_WINDOWS:
-      if _meets_output(candidate, forecast_counts, window_steps * FORECAST_WINDOWS):
-        forecast_best_stars = stars
+      if _meets_output(candidate.rates, forecast_counts, window_steps * FORECAST_WINDOWS):
+        earned_medals.append(candidate.medal)
       forecast_candidates.remove_at(i)
     else:
       candidate.previous_counts = forecast_counts.duplicate()
-  if forecast_candidates.is_empty() or forecast_best_stars == 3:
-    var stars := forecast_best_stars
+  if previous_count != earned_medals.size(): _save_run_progress()
+  if forecast_candidates.is_empty():
     _cancel_forecast()
     next_forecast_at = elapsed + 8.0
-    if stars > 0: _finish_run(stars)
 
 func _cancel_forecast() -> void:
   if forecast != null:
     forecast.dispose()
-    forecast = null
+  forecast = null
   forecast_candidates.clear()
   forecast_counts.clear()
   forecast_chunks = 0
-  forecast_best_stars = 0
 
-func _finish_run(stars: int) -> void:
-  completed = true
+func _save_run_progress() -> void:
+  if not editor_playtest: Global.record_level_progress(Global.selected_level, earned_medals)
+  results_button.show()
+  _refresh_medals()
+  if results.visible: _update_results()
+
+func _refresh_medals() -> void:
+  for kind in medal_icons:
+    MEDALS.set_earned(medal_icons[kind], kind, kind in earned_medals)
+
+func _refresh_star_labels() -> void:
+  for label in star_labels:
+    label.text = "Hit every star (%d/%d)" % [star_hits.size(), level.stars.size()]
+
+func _show_results() -> void:
   running = false
   cancel_pending_steps()
-  if not editor_playtest: Global.record_best_stars(Global.selected_level, stars)
-  _refresh_ui()
+  _update_results()
+  results_text.scroll_to_line(0)
+  var height := clampi(190 + total_counts.size() * 25, 235, 520)
+  results.popup_centered_clamped(Vector2i(480, height), 0.88)
+
+func _update_results() -> void:
+  var index := 0
+  for kind in MEDALS.ICONS:
+    MEDALS.set_earned(results_medals.get_child(index), kind, kind in earned_medals)
+    index += 1
   var stats := ""
   for kind in total_counts:
+    if kind == "any" or kind in PARTICLES.QUARK_FAMILIES: continue
     var run_rate := float(total_counts[kind]) / elapsed if elapsed > 0.0 else 0.0
-    stats += "\n%s: %d total · %s/step live avg" % [PARTICLES.label(kind), int(total_counts[kind]), OUTPUT_METER.format_rate(run_rate)]
-  if stats.is_empty(): stats = "\nNo particles detected"
-  results_text.text = "%d star(s) earned\nBuild cost: $%d\n\nDetected%s" % [stars, cost, stats]
-  results_text.scroll_to_line(0)
-  var height := clampi(132 + stats.count("\n") * 25, 210, 520)
-  results.popup_centered_clamped(Vector2i(480, height), 0.88)
+    stats += "\n%s · %d detected · %s/step average" % [PARTICLES.label(kind), int(total_counts[kind]), OUTPUT_METER.format_rate(run_rate)]
+  results_text.text = "%d of 3 medals earned\nBuild cost $%d\n%s" % [earned_medals.size(), cost, stats]
+
+func _report_particle_path(particle: Particle, path: Array[Dictionary], until: float) -> void:
+  if star_hits.size() == level.stars.size(): return
+  var radius := STAR_RADIUS + particle.world_collision_radius()
+  for leg in path:
+    if leg.start > until: break
+    _check_star_segment(to_local(leg.from), to_local(_position_on_leg(leg, until)), radius)
+    if leg.has("push") and leg.end <= until:
+      _check_star_segment(to_local(leg.push.from), to_local(leg.push.to), radius)
+
+func _check_star_segment(from: Vector2, to: Vector2, radius: float) -> void:
+  var previous := star_hits.size()
+  for cell in level.stars:
+    if star_hits.has(cell): continue
+    var at := _cell_position(cell)
+    var nearest := Geometry2D.get_closest_point_to_segment(at, from, to) if from != to else from
+    if at.distance_squared_to(nearest) <= radius * radius: star_hits[cell] = true
+  if previous != star_hits.size():
+    star_hits_changed = true
+    _refresh_star_labels()
+    queue_redraw()
 
 func _goal_count(counts: Dictionary, key: String) -> int:
   if not (key.begins_with("[") and key.ends_with("]")):
@@ -1098,12 +1179,9 @@ func _goal_count(counts: Dictionary, key: String) -> int:
     total += int(counts.get(name, 0))
   return total
 
-func _meets_output(candidate: Dictionary, counts: Dictionary, steps: float, previous_counts := {}) -> bool:
-  for key in candidate.goal:
-    if key == "cost": continue
-    var threshold: float = candidate.goal[key][candidate.tier]
-    if is_inf(threshold): return false
-    if threshold <= 0.0: continue
+func _meets_output(rates: Dictionary, counts: Dictionary, steps: float, previous_counts := {}) -> bool:
+  for key in rates:
+    var threshold: float = rates[key]
     var required := maxf(1.0, floorf(threshold * steps + 0.000001))
     if _goal_count(counts, key) - _goal_count(previous_counts, key) < required: return false
   return true

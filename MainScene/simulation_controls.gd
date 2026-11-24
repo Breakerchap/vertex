@@ -28,8 +28,6 @@ func enable_build(action: Callable) -> Button:
   return build_button
 
 func _toggle_running() -> void:
-  if simulation.has_method("begin_run") and simulation.completed:
-    return
   if simulation.has_method("begin_run") and not simulation.simulating:
     simulation.begin_run()
   if simulation.running:
@@ -40,8 +38,6 @@ func _toggle_running() -> void:
   _update_controls()
 
 func _step_once() -> void:
-  if simulation.has_method("begin_run") and simulation.completed:
-    return
   if simulation.has_method("begin_run") and not simulation.simulating:
     simulation.begin_run()
   simulation.request_steps(1)

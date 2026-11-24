@@ -1,7 +1,9 @@
 title: Something;
 6 x 7;
 
-goal: {electron: 1/step, 2/step, 2/step};
+rate_medal: {1/step};
+cost_medal: {61};
+star_medal: {photon: 2/step; cost: 61};
 
 emitter: {x=0, y=2, SE, [electron], rate=2/step, fixed=pr}
 emitter: {x=0, y=4, NE, [positron], rate=2/step, fixed=pr}

@@ -6,9 +6,10 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const GAME = preload("res://MainScene/level_game.tscn")
 const PARTICLE_PICKER = preload("res://MainScene/particle_picker.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
-const NEW_LEVEL := "9 x 9;\n\ngoal: {electron: 1/step, 2/step, 3/step};\n\n"
+const MEDALS = preload("res://MainScene/medal_display.gd")
+const NEW_LEVEL := "9 x 9;\n\nrate_medal: {1/step};\ncost_medal: {30};\nstar_medal: {any: 2/step};\n\n"
 
-enum AreaTool { NONE, BLOCK, UNBLOCK }
+enum AreaTool { NONE, BLOCK, UNBLOCK, STAR }
 
 var source: CodeEdit
 var game
@@ -35,6 +36,7 @@ var property_suffix := ""
 var palette: PanelContainer
 var block_area_button: Button
 var unblock_area_button: Button
+var star_tool_button: Button
 var area_tool := AreaTool.NONE
 var width_input: SpinBox
 var height_input: SpinBox
@@ -62,7 +64,9 @@ var settings_dialog: AcceptDialog
 var title_input: LineEdit
 var hint_input: LineEdit
 var rotation_input: OptionButton
-var goal_rows: VBoxContainer
+var rate_medal_input: LineEdit
+var cost_medal_input: LineEdit
+var star_rules: VBoxContainer
 var inventory_fields := {}
 var updating := false
 var source_snapshot := ""
@@ -190,6 +194,9 @@ func _build_workspace() -> void:
   unblock_area_button = UI.button(controls, "Unblock area", _toggle_area_tool.bind(AreaTool.UNBLOCK))
   unblock_area_button.toggle_mode = true
   unblock_area_button.tooltip_text = "Drag across cells to allow player building placement. Esc exits the tool."
+  star_tool_button = UI.button(controls, "Place stars", _toggle_area_tool.bind(AreaTool.STAR))
+  star_tool_button.toggle_mode = true
+  star_tool_button.tooltip_text = "Click a cell to place or remove a star. Esc exits the tool."
   palette = PALETTE.new()
   palette.infinite = true
   hud.add_child(palette)
@@ -273,7 +280,7 @@ func _build_source_dialog() -> void:
   highlighter.number_color = Color("e6b66c")
   highlighter.symbol_color = Color("a6c8e8")
   highlighter.add_color_region("#", "", Color("8192a4"), true)
-  for word in CATALOG.SCENES.keys() + ["goal", "inventory", "no_build", "magnetic_field", "mirror", "rotation"]:
+  for word in CATALOG.SCENES.keys() + PARSER.MEDAL_BLOCKS + ["star", "goal", "inventory", "no_build", "magnetic_field", "mirror", "rotation"]:
     highlighter.add_keyword_color(word, Color("7bd9bd"))
   for word in ["x", "y", "fixed", "rate", "AND", "OR"]:
     highlighter.add_keyword_color(word, Color("b5a6f1"))
@@ -324,17 +331,18 @@ func _build_settings_dialog() -> void:
   rotation_input.add_item("8 directions (45 degrees)", 8)
   rotation_input.add_item("4 directions (90 degrees)", 4)
   settings_column.add_child(rotation_input)
-  var goal_title := UI.label("Goals")
-  UI.heading(goal_title)
-  settings_column.add_child(goal_title)
-  var goal_help := UI.label("Meet every condition in any one solution to earn stars.")
-  UI.muted(goal_help)
-  goal_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-  settings_column.add_child(goal_help)
-  goal_rows = VBoxContainer.new()
-  goal_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  settings_column.add_child(goal_rows)
-  UI.button(settings_column, "+ Add alternative solution", func() -> void: _add_goal_group())
+  _medal_heading(settings_column, "rate")
+  rate_medal_input = _medal_field(settings_column, "Minimum total output per step", "e.g. 1/step")
+  _medal_heading(settings_column, "cost")
+  cost_medal_input = _medal_field(settings_column, "Build for less than this amount", "e.g. 30")
+  _medal_heading(settings_column, "star")
+  var star_help := UI.label("All conditions in any one set must be met.")
+  UI.muted(star_help)
+  star_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+  settings_column.add_child(star_help)
+  star_rules = VBoxContainer.new()
+  settings_column.add_child(star_rules)
+  UI.button(settings_column, "+ Add alternative", func() -> void: _add_star_rule())
   var inventory_title := UI.label("Starting inventory")
   UI.heading(inventory_title)
   settings_column.add_child(inventory_title)
@@ -491,6 +499,7 @@ func _source_changed() -> void:
   blocks.clear()
   block_area_button.disabled = parsed.has("error")
   unblock_area_button.disabled = block_area_button.disabled
+  star_tool_button.disabled = block_area_button.disabled
   if parsed.has("error"):
     _set_area_tool(AreaTool.NONE)
     source_error.text = "Source error: " + str(parsed.error)
@@ -514,7 +523,9 @@ func _source_changed() -> void:
 func _update_level_status() -> void:
   var warnings := _level_warnings(parsed)
   status.text = (path.get_file() if not path.is_empty() else "Untitled") + ("  • unsaved" if source.text != saved_text else "")
-  if area_tool != AreaTool.NONE:
+  if area_tool == AreaTool.STAR:
+    status.text += "  • Click a cell to toggle a star. Esc exits."
+  elif area_tool != AreaTool.NONE:
     var action := "block" if area_tool == AreaTool.BLOCK else "unblock"
     status.text += "  • Drag to %s an area. Esc exits." % action
   elif not warnings.is_empty():
@@ -557,6 +568,7 @@ func _toggle_area_tool(tool: AreaTool) -> void:
   if game.simulating:
     block_area_button.set_pressed_no_signal(area_tool == AreaTool.BLOCK)
     unblock_area_button.set_pressed_no_signal(area_tool == AreaTool.UNBLOCK)
+    star_tool_button.set_pressed_no_signal(area_tool == AreaTool.STAR)
     return
   var next := AreaTool.NONE if area_tool == tool else tool
   _select_move_tool()
@@ -566,7 +578,8 @@ func _set_area_tool(tool: AreaTool) -> void:
   area_tool = tool
   block_area_button.set_pressed_no_signal(tool == AreaTool.BLOCK)
   unblock_area_button.set_pressed_no_signal(tool == AreaTool.UNBLOCK)
-  game.area_selection_enabled = tool != AreaTool.NONE
+  star_tool_button.set_pressed_no_signal(tool == AreaTool.STAR)
+  game.area_selection_enabled = tool in [AreaTool.BLOCK, AreaTool.UNBLOCK]
   game.area_origin = Vector2i(-1, -1)
   game.drag_cell = Vector2i(-1, -1)
   if not parsed.has("error"): _update_level_status()
@@ -612,6 +625,10 @@ func _build_area_declaration(area: Rect2i) -> String:
 
 func _board_click(cell: Vector2i, button: int, target: Node = null, facing := "E") -> void:
   if parsed.has("error"): return
+  if area_tool == AreaTool.STAR and button == MOUSE_BUTTON_LEFT:
+    game.drag_cell = Vector2i(-1, -1)
+    _toggle_star(cell)
+    return
   if target == null: target = game._building_at(cell)
   if button == MOUSE_BUTTON_RIGHT:
     pasting = false
@@ -1062,147 +1079,154 @@ func _delete_selected() -> void:
   if selected_block < 0: return
   _replace_selected_cell("")
 
-# Goal panels express OR between alternatives and AND within each one.
-func _add_goal_group(conditions: Dictionary = {}, targets: Dictionary = {}, source_index: int = -1) -> void:
-  var group := PanelContainer.new()
-  goal_rows.add_child(group)
-  group.set_meta("source_index", source_index)
+func _toggle_star(cell: Vector2i) -> void:
+  if not game.is_cell_on_board(cell): return
+  var index: int = parsed.stars.find(cell)
+  if index < 0:
+    _set_source(source.text.trim_suffix("\n") + "\nstar: {x=%d, y=%d};\n" % [cell.x, cell.y])
+    return
+  var spans := PARSER.find_blocks(PARSER.mask_comments(source.text)).filter(
+    func(span: RegExMatch) -> bool: return span.get_string(1).to_lower() == "star"
+  )
+  var span: RegExMatch = spans[index]
+  _set_source(source.text.left(span.get_start()) + source.text.substr(span.get_end()))
+
+func _medal_heading(parent: VBoxContainer, kind: String) -> void:
+  var heading := HBoxContainer.new()
+  parent.add_child(heading)
+  heading.add_child(MEDALS.icon(kind, 26))
+  var title := UI.label("%s medal" % kind.capitalize())
+  UI.heading(title)
+  heading.add_child(title)
+
+func _medal_field(parent: VBoxContainer, title: String, placeholder: String) -> LineEdit:
+  parent.add_child(UI.label(title))
+  var field := LineEdit.new()
+  field.placeholder_text = placeholder
+  parent.add_child(field)
+  return field
+
+func _add_star_rule(rule: Dictionary = {}) -> void:
+  var panel := PanelContainer.new()
+  star_rules.add_child(panel)
   var margin := UI.margin()
-  group.add_child(margin)
+  panel.add_child(margin)
   var column := VBoxContainer.new()
   margin.add_child(column)
   var header := HFlowContainer.new()
   column.add_child(header)
-  var title := UI.label("Solution")
-  UI.heading(title, 16)
-  title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  header.add_child(title)
-  var rows := VBoxContainer.new()
-  column.add_child(rows)
-  group.set_meta("rows", rows)
-  UI.button(header, "+ Output", func() -> void: _add_goal_row(rows))
-  UI.button(header, "+ Cost limit", func() -> void: _add_goal_row(rows, "cost", [INF, INF, INF]))
-  UI.button(header, "Remove", func() -> void: group.queue_free()).tooltip_text = "Remove this solution"
-  if conditions.is_empty():
-    _add_goal_row(rows)
-  else:
-    for key in conditions:
-      _add_goal_row(rows, targets.get(key, key), conditions[key])
+  var output_rows := VBoxContainer.new()
+  column.add_child(output_rows)
+  UI.button(header, "+ Output condition", func() -> void: _add_star_output(output_rows))
+  UI.button(header, "Remove set", func() -> void: panel.queue_free())
+  for key in rule.get("rates", {}):
+    _add_star_output(output_rows, rule.targets.get(key, key), rule.rates[key])
+  var cost_field := _medal_field(column, "Build for less than this amount", "Optional")
+  if rule.has("cost"): cost_field.text = _medal_value(rule.cost)
+  var excluded := _medal_field(column, "Excluded buildings (comma-separated)", "e.g. reflector, magnet")
+  excluded.text = ", ".join(rule.get("no_buildings", []))
+  var hit_stars := CheckBox.new()
+  hit_stars.text = "Hit every placed star"
+  hit_stars.button_pressed = rule.get("hit_stars", false)
+  column.add_child(hit_stars)
+  panel.set_meta("rule", {"rates": output_rows, "cost": cost_field, "excluded": excluded, "hit_stars": hit_stars})
 
-func _add_goal_row(parent: VBoxContainer, target: String = "electron", values: Array = [1.0, 2.0, 3.0]) -> void:
-  if parent.get_child_count() > 0: parent.add_child(HSeparator.new())
+func _add_star_output(parent: VBoxContainer, target := "any", rate := 1.0) -> void:
   var row := VBoxContainer.new()
   parent.add_child(row)
-  var header := HFlowContainer.new()
-  row.add_child(header)
-  var type := OptionButton.new()
-  type.add_item("Particle output")
-  type.add_item("Build cost limit")
-  type.select(1 if target == "cost" else 0)
-  type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  header.add_child(type)
-  UI.button(header, "Remove condition", func() -> void:
-    var previous := row.get_index() - 1
-    var next := row.get_index() + 1
-    if previous >= 0: parent.get_child(previous).queue_free()
-    elif next < parent.get_child_count(): parent.get_child(next).queue_free()
-    row.queue_free()
-  )
+  var controls := HFlowContainer.new()
+  row.add_child(controls)
+  var selection := OptionButton.new()
+  selection.add_item("Total output")
+  selection.add_item("Specific particles")
+  selection.select(0 if target == "any" else 1)
+  controls.add_child(selection)
+  var amount := LineEdit.new()
+  amount.text = _medal_value(rate) + "/step"
+  amount.placeholder_text = "Minimum per step"
+  amount.custom_minimum_size.x = 120
+  controls.add_child(amount)
+  UI.button(controls, "Remove output", func() -> void: row.queue_free())
   var expression := PARTICLE_PICKER.new()
-  var bracketed := target.begins_with("[") and target.ends_with("]")
-  if target != "cost":
-    expression.load_text(target.substr(1, target.length() - 2) if bracketed else target)
   row.add_child(expression)
-  var thresholds := HBoxContainer.new()
-  row.add_child(thresholds)
-  var fields: Array[LineEdit] = []
-  for i in range(3):
-    var tier := VBoxContainer.new()
-    tier.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    thresholds.add_child(tier)
-    var caption := UI.label("★".repeat(i + 1))
-    caption.add_theme_color_override("font_color", UI.GOLD)
-    tier.add_child(caption)
-    var field := LineEdit.new()
-    field.text = _threshold_text(values[i])
-    tier.add_child(field)
-    fields.append(field)
-  var help := UI.label("")
-  UI.muted(help)
-  help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-  row.add_child(help)
-  var show_type := func(index: int) -> void:
-    expression.visible = index == 0
-    help.text = "Minimum particles per step" if index == 0 else "Maximum cost per tier. Leave blank for no limit."
-    for field in fields:
-      field.placeholder_text = "per step" if index == 0 else "No limit"
-  show_type.call(type.selected)
-  type.item_selected.connect(show_type)
-  row.set_meta("condition", {"type": type, "expression": expression, "bracketed": bracketed, "thresholds": fields})
+  var bracketed := target.begins_with("[") and target.ends_with("]")
+  if target != "any":
+    expression.load_text(target.substr(1, target.length() - 2) if bracketed else target)
+  expression.visible = selection.selected == 1
+  selection.item_selected.connect(func(index: int) -> void: expression.visible = index == 1)
+  row.set_meta("output", {"selection": selection, "amount": amount, "expression": expression, "bracketed": bracketed})
 
-func _threshold_text(value: float) -> String:
-  return "inf" if is_inf(value) else String.num_scientific(value)
+func _medal_value(value: float) -> String:
+  return String.num_scientific(value)
 
-func _goal_declaration(clauses: PackedStringArray) -> String:
-  return "goal: {" + "; ".join(clauses) + "};"
+func _medal_declaration(kind: String, body: String) -> String:
+  return "%s_medal: {%s};" % [kind, body]
 
-func _goal_clause(target: String, values: PackedStringArray) -> String:
-  if target != "cost":
-    for index in range(values.size()):
-      if values[index].to_lower() != "inf": values[index] = values[index].trim_suffix("/step") + "/step"
-  return target + ": " + ", ".join(values)
+func _star_body(rule: Dictionary) -> String:
+  var conditions := PackedStringArray()
+  for key in rule.rates:
+    conditions.append("%s: %s/step" % [rule.targets.get(key, key), _medal_value(rule.rates[key])])
+  if rule.has("cost"): conditions.append("cost: " + _medal_value(rule.cost))
+  if not rule.no_buildings.is_empty(): conditions.append("no_buildings: " + ", ".join(rule.no_buildings))
+  if rule.hit_stars: conditions.append("hit_stars: true")
+  return "; ".join(conditions)
 
 func _open_settings() -> void:
   if parsed.has("error") or parsed.is_empty(): return
-  _clear_children(goal_rows)
+  _clear_children(star_rules)
   settings_error.text = ""
   title_input.text = str(parsed.get("title", ""))
   hint_input.text = str(parsed.get("hint", ""))
   rotation_input.select(rotation_input.get_item_index(parsed.rotation_steps))
-  for i in range(parsed.goals.size()):
-    _add_goal_group(parsed.goals[i], parsed.goal_targets[i], i)
+  rate_medal_input.text = _medal_value(parsed.medals.rate) + "/step"
+  cost_medal_input.text = _medal_value(parsed.medals.cost)
+  for rule in parsed.medals.star: _add_star_rule(rule)
   for kind in inventory_fields:
     inventory_fields[kind].value = int(parsed.inventory.get(kind, 0))
   settings_dialog.popup_centered_clamped(Vector2i(620, 660), 0.88)
 
 func _apply_settings() -> void:
-  var old_goals := {}
-  var additional := PackedStringArray()
-  var group_count := 0
-  for group in goal_rows.get_children():
-    if group.is_queued_for_deletion(): continue
-    var clauses := PackedStringArray()
-    for row in group.get_meta("rows").get_children():
-      if row.is_queued_for_deletion() or not row.has_meta("condition"): continue
-      var condition: Dictionary = row.get_meta("condition")
-      var cost_goal: bool = condition.type.selected == 1
-      var target := "cost"
-      if not cost_goal:
-        var expression: String = condition.expression.source_text()
-        if expression.is_empty():
-          settings_error.text = "Choose a particle for every output condition."
+  var new_star_bodies := PackedStringArray()
+  var old_star_bodies := PackedStringArray()
+  for rule in parsed.medals.star: old_star_bodies.append(_star_body(rule))
+  for panel in star_rules.get_children():
+    if panel.is_queued_for_deletion(): continue
+    var fields: Dictionary = panel.get_meta("rule")
+    var conditions := PackedStringArray()
+    for row in fields.rates.get_children():
+      if row.is_queued_for_deletion(): continue
+      var output: Dictionary = row.get_meta("output")
+      var target := "any"
+      if output.selection.selected == 1:
+        target = output.expression.source_text()
+        if target.is_empty():
+          settings_error.text = "Choose a particle expression for each specific output."
           return
-        target = expression
-        if condition.bracketed or not PARSER._valid_particle(expression):
-          target = "[" + expression + "]"
-      var values := PackedStringArray()
-      for field in condition.thresholds:
-        var value: String = field.text.strip_edges()
-        if value.is_empty() and cost_goal: value = "inf"
-        values.append(value)
-      clauses.append(_goal_clause(target, values))
-    if clauses.is_empty():
-      settings_error.text = "Add a condition to each solution, or remove the empty solution."
+        if output.bracketed or not PARSER._valid_particle(target): target = "[" + target + "]"
+      conditions.append("%s: %s" % [target, output.amount.text.strip_edges()])
+    var cost: String = fields.cost.text.strip_edges()
+    if not cost.is_empty(): conditions.append("cost: " + cost)
+    var excluded: String = fields.excluded.text.strip_edges()
+    if not excluded.is_empty(): conditions.append("no_buildings: " + excluded)
+    if fields.hit_stars.button_pressed: conditions.append("hit_stars: true")
+    if conditions.is_empty():
+      settings_error.text = "Add at least one condition to each Star medal set."
       return
-    var index: int = group.get_meta("source_index")
-    if index >= 0:
-      old_goals[index] = _goal_declaration(clauses)
-    else:
-      additional.append(_goal_declaration(clauses))
-    group_count += 1
-  if group_count == 0:
-    settings_error.text = "Add at least one solution."
+    new_star_bodies.append("; ".join(conditions))
+  if new_star_bodies.is_empty():
+    settings_error.text = "Add a condition set for the Star medal."
     return
+  var new_medals := {
+    "rate": PackedStringArray([rate_medal_input.text.strip_edges()]),
+    "cost": PackedStringArray([cost_medal_input.text.strip_edges()]),
+    "star": new_star_bodies,
+  }
+  var old_medals := {
+    "rate": PackedStringArray([_medal_value(parsed.medals.rate) + "/step"]),
+    "cost": PackedStringArray([_medal_value(parsed.medals.cost)]),
+    "star": old_star_bodies,
+  }
+  var additional := PackedStringArray()
 
   var inventory := {}
   var inventory_parts := PackedStringArray()
@@ -1216,21 +1240,25 @@ func _apply_settings() -> void:
 
   var masked: String = PARSER.mask_comments(source.text)
   var edits: Array[Dictionary] = []
-  var original_goal := 0
+  var medal_indices := {"rate": 0, "cost": 0, "star": 0}
   for item in PARSER.find_blocks(masked):
     var kind := item.get_string(1).to_lower()
     if kind == "inventory" and inventory != parsed.inventory:
       edits.append({"span": item, "text": ""})
     elif kind == "goal":
-      var replacement: String = old_goals.get(original_goal, "")
-      var original_clauses := PackedStringArray()
-      for key in parsed.goals[original_goal]:
-        var values := PackedStringArray()
-        for value in parsed.goals[original_goal][key]: values.append(_threshold_text(value))
-        original_clauses.append(_goal_clause(parsed.goal_targets[original_goal].get(key, key), values))
-      if replacement != _goal_declaration(original_clauses):
-        edits.append({"span": item, "text": replacement})
-      original_goal += 1
+      edits.append({"span": item, "text": ""})
+    elif kind in PARSER.MEDAL_BLOCKS:
+      var medal := kind.trim_suffix("_medal")
+      var index: int = medal_indices[medal]
+      var next: PackedStringArray = new_medals[medal]
+      if index >= next.size():
+        edits.append({"span": item, "text": ""})
+      elif next[index] != old_medals[medal][index]:
+        edits.append({"span": item, "text": _medal_declaration(medal, next[index])})
+      medal_indices[medal] += 1
+  for medal in new_medals:
+    for index in range(medal_indices[medal], new_medals[medal].size()):
+      additional.append(_medal_declaration(medal, new_medals[medal][index]))
   var prefix := ""
   var metadata: Array[RegExMatch] = PARSER.find_metadata(masked)
   var settings := {"title": title_input.text.strip_edges(), "hint": hint_input.text.strip_edges(),
@@ -1303,18 +1331,15 @@ func _level_warnings(data: Dictionary) -> PackedStringArray:
     if "p" not in flags or (entry.kind in CATALOG.ROTATABLE_KINDS and lock_rotation not in flags):
       adjustable = true
   if not has_emitter: warnings.append("The board has no particle emitters.")
-  if not has_detector: warnings.append("The board has no detector for output goals.")
+  if not has_detector and int(data.inventory.get("detector", 0)) == 0:
+    warnings.append("Add a detector or put one in the inventory so players can clear the level.")
   for kind in data.inventory:
     if int(data.inventory[kind]) > 0: adjustable = true
   if not adjustable: warnings.append("The player cannot change any building and has no inventory.")
-  for goal in data.goals:
-    for key in goal:
-      var values: Array = goal[key]
-      if key == "cost":
-        if float(values[1]) > float(values[0]) or float(values[2]) > float(values[1]):
-          warnings.append("Higher star tiers should have equal or lower cost limits.")
-      elif float(values[1]) < float(values[0]) or float(values[2]) < float(values[1]):
-        warnings.append("Higher star tiers should have equal or higher output targets.")
+  for rule in data.medals.star:
+    if rule.hit_stars and data.stars.is_empty():
+      warnings.append("Place stars on the board for the Star medal's hit-every-star condition.")
+      break
   return warnings
 
 func _request_action(action: String) -> void:

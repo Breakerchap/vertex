@@ -94,11 +94,16 @@ func _ready() -> void:
   editor._open_settings()
   editor.title_input.text = "Test puzzle"
   editor.hint_input.text = "Redirect the beam"
-  var first_solution: VBoxContainer = editor.goal_rows.get_child(0).get_meta("rows")
-  editor._add_goal_row(first_solution, "cost", [INF, 20.0, 10.0])
-  editor._add_goal_group()
-  var output_row: VBoxContainer = editor.goal_rows.get_child(1).get_meta("rows").get_child(0)
-  var particles: Control = output_row.get_meta("condition").expression
+  editor.rate_medal_input.text = "1/4"
+  editor.cost_medal_input.text = "20"
+  editor.star_rules.get_child(0).get_meta("rule").cost.text = "10"
+  editor._add_star_rule()
+  var fields: Dictionary = editor.star_rules.get_child(1).get_meta("rule")
+  fields.hit_stars.button_pressed = true
+  fields.excluded.text = "mirror, magnet"
+  editor._add_star_output(fields.rates, "electron")
+  var output_row: VBoxContainer = fields.rates.get_child(0)
+  var particles: Control = output_row.get_meta("output").expression
   assert(particles.picker.item_count == PARTICLES.TYPES.size() + PARTICLES.QUARK_FAMILIES.size() + 1)
   particles.clear_button.pressed.emit()
   particles.buttons["("].pressed.emit()
@@ -109,16 +114,25 @@ func _ready() -> void:
   particles.buttons["AND"].pressed.emit()
   _choose_particle(particles.picker, "up_r")
   editor._apply_settings()
-  assert(editor.parsed.goals.size() == 2, "Goal alternatives must be separate groups")
+  assert(editor.parsed.medals.star.size() == 2, "Star medal alternatives must be separate condition sets")
   assert(editor.parsed.title == "Test puzzle" and editor.parsed.hint == "Redirect the beam")
-  assert(editor.parsed.goals[0].cost == [INF, 20.0, 10.0])
-  assert(editor.parsed.goals[1].has("[up_r]"))
-  assert(editor.parsed.goal_targets[1]["[up_r]"] == "[(electron OR up) AND up_r]")
+  assert(editor.parsed.medals.rate == 0.25 and editor.parsed.medals.cost == 20.0)
+  assert(editor.parsed.medals.star[0].cost == 10.0)
+  assert(editor.parsed.medals.star[1].rates.has("[up_r]"))
+  assert(editor.parsed.medals.star[1].targets["[up_r]"] == "[(electron OR up) AND up_r]")
+  assert(editor.parsed.medals.star[1].no_buildings == ["reflector", "magnet"])
+  assert(editor.parsed.medals.star[1].hit_stars)
   assert(editor.source.text.contains("[(electron OR up) AND up_r]"))
-  assert(editor.game.level.goals.size() == 2)
+  editor.star_tool_button.pressed.emit()
+  editor._board_click(Vector2i(4, 1), MOUSE_BUTTON_LEFT)
+  editor._board_click(Vector2i(4, 2), MOUSE_BUTTON_LEFT)
+  editor._board_click(Vector2i(4, 1), MOUSE_BUTTON_LEFT)
+  editor._select_move_tool()
+  assert(editor.game.level.stars == [Vector2i(4, 2)])
   editor._start_playtest()
   assert(is_instance_valid(editor.test_game), "Playtest must create an isolated game")
-  assert(editor.test_game.editor_playtest and editor.test_game.level.goals.size() == 2)
+  assert(editor.test_game.editor_playtest and editor.test_game.level.medals.star.size() == 2)
+  assert(editor.test_game.level.stars == [Vector2i(4, 2)])
   editor._end_playtest()
   assert(editor.test_game == null)
   var target := ProjectSettings.globalize_path("user://éditeur roundtrip %d.level" % OS.get_process_id())
@@ -275,7 +289,7 @@ func _check_adaptive_layout(editor: Control) -> void:
       assert(game.palette.is_visible_in_tree() and workspace.encloses(game.game_sidebar.get_global_rect()))
       game.sidebar_toggle.pressed.emit()
       _check_camera(game)
-    game._finish_run(1)
+    game._show_results()
     assert(game.results.visible and workspace.encloses(Rect2(game.results.position, game.results.size)))
     editor._end_playtest()
     await get_tree().process_frame

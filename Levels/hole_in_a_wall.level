@@ -1,6 +1,8 @@
 11 x 9;
 
-goal: {electron: 1/step, 2/step, 3/step};
+rate_medal: {1/step};
+cost_medal: {121};
+star_medal: {photon: 2/step};
 
 
 wall: {x=5, y=1, fixed=p}

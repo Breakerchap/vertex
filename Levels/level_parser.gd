@@ -4,6 +4,7 @@ extends RefCounted
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const PARTICLE_TOKEN := "[a-zA-Z_][a-zA-Z_0-9]*|[(),]"
+const MEDAL_BLOCKS := ["rate_medal", "cost_medal", "star_medal"]
 
 static func mask_comments(source: String) -> String:
   var lines := PackedStringArray()
@@ -30,7 +31,7 @@ static func find_dimensions(text: String) -> RegExMatch:
 static func find_blocks(text: String) -> Array[RegExMatch]:
   var blocks := RegEx.new()
   var names: Array = CATALOG.SCENES.keys()
-  names.append_array(["goal", "inventory", "no_build", "magnetic_field", "mirror"])
+  names.append_array(MEDAL_BLOCKS + ["star", "goal", "inventory", "no_build", "magnetic_field", "mirror"])
   blocks.compile("(?is)\\b(" + "|".join(names) + ")\\s*:\\s*\\{([^}]*)\\}[ \\t]*;?")
   return blocks.search_all(_without_metadata(text))
 
@@ -39,7 +40,7 @@ static func parse(source: String) -> Dictionary:
   var size_match := find_dimensions(text)
   if size_match == null:
     return {"error": "Missing grid size (for example 15 x 7)."}
-  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "goals": [], "goal_targets": [], "buildings": [], "inventory": {}, "no_build_areas": [], "title": "", "hint": "", "rotation_steps": 8, "legacy_rates": false}
+  var data := {"width": int(size_match.get_string(1)), "height": int(size_match.get_string(2)), "medals": {}, "stars": [], "buildings": [], "inventory": {}, "no_build_areas": [], "title": "", "hint": "", "rotation_steps": 8, "legacy_rates": false}
   if data.width <= 0 or data.height <= 0:
     return {"error": "Grid dimensions must be positive."}
   for item in find_metadata(text):
@@ -54,8 +55,9 @@ static func parse(source: String) -> Dictionary:
   var legacy_suffix := RegEx.new()
   legacy_suffix.compile("(?i)/s\\b")
   for block in blocks:
-    if block.get_string(1).to_lower() == "goal" and legacy_suffix.search(block.get_string(2)) != null:
+    if block.get_string(1).to_lower() in ["goal", "rate_medal", "star_medal"] and legacy_suffix.search(block.get_string(2)) != null:
       data.legacy_rates = true
+  var old_goals: Array[Dictionary] = []
   for block in blocks:
     var kind := building_kind(block.get_string(1))
     var body := block.get_string(2)
@@ -64,8 +66,24 @@ static func parse(source: String) -> Dictionary:
         var result := _parse_goal(body)
         if result.has("error"):
           return result
-        data.goals.append(result.goal)
-        data.goal_targets.append(result.targets)
+        old_goals.append(result)
+      "rate_medal", "cost_medal":
+        var medal := kind.trim_suffix("_medal")
+        if data.medals.has(medal): return {"error": "Duplicate " + kind + " declaration."}
+        var amount := _parse_rate(body) if medal == "rate" else _parse_cost_limit(body)
+        if amount <= 0.0: return {"error": "The %s needs a positive %s." % [kind, medal]}
+        data.medals[medal] = amount
+      "star_medal":
+        var result := _parse_star_medal(body)
+        if result.has("error"): return result
+        if not data.medals.has("star"): data.medals.star = []
+        data.medals.star.append(result)
+      "star":
+        var result := _parse_no_build(body, data.width, data.height)
+        if result.has("error") or result.area.size != Vector2i.ONE:
+          return {"error": "A star needs a single x and y coordinate inside the grid."}
+        if result.area.position in data.stars: return {"error": "A cell can only contain one star."}
+        data.stars.append(result.area.position)
       "inventory":
         var result := _parse_inventory(body, data.inventory)
         if result.has("error"):
@@ -80,8 +98,10 @@ static func parse(source: String) -> Dictionary:
         if result.has("error"):
           return result
         data.buildings.append_array(result.entries)
-  if data.goals.is_empty():
-    return {"error": "The level needs at least one goal."}
+  if data.medals.is_empty() and not old_goals.is_empty():
+    data.medals = _medals_from_goals(old_goals)
+  elif data.medals.size() != MEDAL_BLOCKS.size() or not old_goals.is_empty():
+    return {"error": "Define a rate_medal, cost_medal and star_medal together."}
   var occupied := {}
   for building in data.buildings:
     var cell := Vector2i(building.x, building.y)
@@ -90,6 +110,87 @@ static func parse(source: String) -> Dictionary:
       return {"error": "Overlapping buildings at (%d, %d)." % [cell.x, cell.y]}
     occupied[key] = true
   return data
+
+static func _parse_cost_limit(text: String) -> float:
+  var value := text.strip_edges()
+  if not value.is_valid_float() or not is_finite(float(value)): return -1.0
+  return float(value)
+
+static func _parse_output_target(target: String) -> Dictionary:
+  if target.begins_with("[") and target.ends_with("]"):
+    var expression := particle_expression(target.substr(1, target.length() - 2))
+    if expression.has("error"): return expression
+    if expression.accepted.is_empty(): return {"error": "Output expression matches no particle: " + target}
+    return {"key": "[" + ",".join(expression.accepted) + "]", "target": PARTICLES.current_expression(target)}
+  var name := PARTICLES.current_name(target.to_lower())
+  if not _valid_particle(name): return {"error": "Unknown output target: " + target}
+  return {"key": name, "target": name}
+
+static func _parse_star_medal(body: String) -> Dictionary:
+  var rule := {"rates": {}, "targets": {}, "no_buildings": [], "hit_stars": false}
+  var seen := {}
+  for clause in body.strip_edges().split(";", false):
+    if clause.strip_edges().is_empty(): continue
+    var parts := clause.split(":", true, 1)
+    if parts.size() != 2: return {"error": "Invalid Star medal condition: " + clause}
+    var target := parts[0].strip_edges()
+    var value := parts[1].strip_edges()
+    var key := target.to_lower()
+    if key not in ["cost", "no_buildings", "hit_stars", "any"]:
+      var output := _parse_output_target(target)
+      if output.has("error"): return output
+      key = output.key
+      rule.targets[key] = output.target
+    if seen.has(key): return {"error": "Duplicate Star medal condition: " + target}
+    seen[key] = true
+    match key:
+      "cost":
+        var cost_limit := _parse_cost_limit(value)
+        if cost_limit <= 0.0: return {"error": "The Star medal cost limit must be positive."}
+        rule.cost = cost_limit
+      "no_buildings":
+        for name in value.split(","):
+          var kind := building_kind(name.strip_edges())
+          if not CATALOG.SCENES.has(kind): return {"error": "Unknown excluded building: " + name.strip_edges()}
+          if kind not in rule.no_buildings: rule.no_buildings.append(kind)
+      "hit_stars":
+        if value.to_lower() != "true": return {"error": "Use hit_stars: true to require every placed star."}
+        rule.hit_stars = true
+      _:
+        var rate := _parse_rate(value)
+        if rate <= 0.0: return {"error": "Output rates must be positive: " + value}
+        rule.rates[key] = rate
+  if seen.is_empty(): return {"error": "The Star medal needs at least one condition."}
+  return rule
+
+static func _medals_from_goals(goals: Array[Dictionary]) -> Dictionary:
+  var rate := INF
+  var cost_limit := INF
+  var alternatives: Array[Dictionary] = []
+  for old in goals:
+    var lowest := 0.0
+    for key in old.goal:
+      if key != "cost" and is_finite(old.goal[key][0]): lowest += float(old.goal[key][0])
+    if lowest > 0.0: rate = minf(rate, lowest)
+    for tier in [2, 1, 0]:
+      var rates := {}
+      var possible := true
+      for key in old.goal:
+        if key == "cost": continue
+        var amount: float = old.goal[key][tier]
+        if is_inf(amount): possible = false
+        elif amount > 0.0: rates[key] = amount
+      if not possible: continue
+      var rule := {"rates": rates, "targets": old.targets, "no_buildings": [], "hit_stars": false}
+      if old.goal.has("cost") and is_finite(old.goal.cost[tier]):
+        rule.cost = floorf(old.goal.cost[tier]) + 1.0
+        cost_limit = minf(cost_limit, rule.cost)
+      if rates.is_empty() and not rule.has("cost"): rule.rates["any"] = 1.0
+      alternatives.append(rule)
+      break
+  if alternatives.is_empty():
+    alternatives.append({"rates": {"any": 1.0}, "targets": {}, "no_buildings": [], "hit_stars": false})
+  return {"rate": rate if is_finite(rate) else 1.0, "cost": cost_limit if is_finite(cost_limit) else 1.0, "star": alternatives}
 
 static func building_kind(name: String) -> String:
   var kind := name.to_lower()
@@ -117,20 +218,13 @@ static func _parse_goal(body: String) -> Dictionary:
     if values.size() != 3:
       return {"error": "Each goal needs three values (one per star)."}
     var target := parts[0].strip_edges()
-    if target.begins_with("[") and target.ends_with("]"):
-      var expression := particle_expression(target.substr(1, target.length() - 2))
-      if expression.has("error"):
-        return expression
-      if expression.accepted.is_empty():
-        return {"error": "Goal expression matches no particle: " + target}
-      var key := "[" + ",".join(expression.accepted) + "]"
-      goal[key] = values
-      targets[key] = PARTICLES.current_expression(target)
-    else:
-      target = PARTICLES.current_name(target.to_lower())
-      if target != "cost" and not _valid_particle(target):
-        return {"error": "Unknown goal target: " + target}
-      goal[target] = values
+    if target.to_lower() == "cost":
+      goal["cost"] = values
+      continue
+    var output := _parse_output_target(target)
+    if output.has("error"): return output
+    goal[output.key] = values
+    targets[output.key] = output.target
   if goal.is_empty():
     return {"error": "Empty goal."}
   return {"goal": goal, "targets": targets}

@@ -82,8 +82,7 @@ func _init(source: ParticleSimulation, buildings: Array[Node], steps: float) -> 
   shadow.particle_detected.connect(_on_detected)
 
 func _on_detected(particle_name: String) -> void:
-  for key in PARTICLES.detection_keys(particle_name):
-    counts[key] = int(counts.get(key, 0)) + 1
+  PARTICLES.record_detection(counts, particle_name)
 
 ## Advance one measurement window over as many rendered frames as needed.
 func advance() -> bool:
