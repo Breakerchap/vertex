@@ -2,7 +2,9 @@ title: 04 - To Get to the Other Side;
 hint: Loopdy-loop;
 9 x 9;
 
-goal: {electron: 1/step, 2/step, 2/step};
+rate_medal: {1/step};
+cost_medal: {61};
+star_medal: {electron: 1/step; no_buildings: reflector};
 
 
 emitter: {x=1, y=5, NE, [electron, positron], rate=1/step, fixed=pr}

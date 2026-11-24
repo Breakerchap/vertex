@@ -15,15 +15,31 @@ Coordinates start at the bottom-left and ranges include both ends. Directions ar
 
 **Space** plays or pauses, **.** requests one step, **B** returns to build mode, and **X** resets the level. A grid tick contains 15 simulation ticks, and a step contains four grid ticks. The step button advances one grid tick. Pausing finishes the current step. **Esc** clears the current selection and resets the level editor preview if it is running.
 
-## Emitters, detectors and goals
+## Emitters, detectors and medals
 
 Photons, neutrinos and antineutrinos travel 1.5 tiles per grid tick. Baryons start at half a tile per grid tick. Other particles start at one tile per grid tick. An elastic collision can redistribute speed between equal-mass particles with nonzero mass. The sprite and its hitbox move together during transit. Emitters repeat their particle list and emit electrons when the list is empty. Rates use particles per step and accept decimals or fractions, as in `rate=0.5/step` and `rate=1/2`. Quark colours use `_r`, `_g` or `_b` on `up` and `down`. Use `anti_neutrino` for an antineutrino.
 
 Detectors absorb particles and count those that match their expression. For example, `[electron OR positron]` matches either type, while `[(up OR down) AND up_r]` matches a red up quark. `AND` binds more tightly than `OR`, and commas mean `OR`. Use a broad name such as `up` to match every colour of that quark.
 
-Each goal has three thresholds, one for each star. Conditions in one goal are required together, and separate goal blocks offer alternative solutions. For example, `goal: {[electron OR positron]: 0.25/step, 0.5/step, 0.75/step; cost: inf, 30, 20};` combines the counts of electrons and positrons and adds a cost limit for the higher tiers. Old `/s` values still load and are converted to per-step rates.
+A level clears as soon as a detector accepts any particle. You can keep running to earn medals, and open the results or advance using **Level cleared**. Completion and each medal are saved independently across attempts.
 
-Output meters use the last eight completed steps for normal targets and look back farther for slower targets (up to 2,400 steps). Hover over a rate to see how much time it covers. From step 28 onward, the game can run a separate forecast before awarding stars. Each tier is checked across six windows, normally 40 steps each; windows can grow to 1,200 steps for sparse targets. The forecast allows for discrete particles at window boundaries, but a single detection or a burst followed by silence does not earn stars for a positive rate. Best results are kept across launches.
+Set all three medals in **Level settings**. Use **Place stars** to toggle a marker on any board cell. Example level source:
+
+```text
+rate_medal: {2/step};
+cost_medal: {30};
+star_medal: {[electron OR positron]: 1/step; cost: 20; no_buildings: reflector, magnet; hit_stars: true};
+star: {x=2, y=3};
+star: {x=5, y=3};
+```
+
+- The Rate medal counts total detected particles per step.
+- The Cost medal requires a build cost strictly below the amount. Buildings already on the board cost nothing.
+- The Star medal supports total output (`any`), named particles or a detector-style particle expression, a build cost limit, excluded building types, and touching all placed stars during the run. Exclusions apply to every building on the board, including starting buildings. Conditions in one `star_medal` block are required together. Additional `star_medal` blocks offer alternative ways to earn the same medal.
+
+Output meters use the last eight completed steps for normal targets and look back farther for slower targets, up to 2,400 steps. From step 28 onward, the game forecasts sustained output for rate-based conditions. It checks six windows, normally 40 steps each, with longer windows for sparse targets. A single detection clears the level immediately; sustained output earns the Rate medal.
+
+Existing `goal` blocks and `/s` rates still load. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Previous star totals carry forward as completion records.
 
 ## Gluons and Z bosons
 

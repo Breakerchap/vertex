@@ -2,7 +2,11 @@ title: 01 - First Contact;
 hint: Walls block particles;
 9 x 6;
 
-goal: {photon: 1/step, 1/step, 1/step};
+rate_medal: {1/step};
+cost_medal: {1};
+star_medal: {hit_stars: true};
+star: {x=2, y=2};
+star: {x=4, y=3};
 
 emitter: {x=1, y=2, E, [electron], rate=1/step, fixed=pr}
 emitter: {x=7, y=2, W, [positron], rate=1/step, fixed=pr}

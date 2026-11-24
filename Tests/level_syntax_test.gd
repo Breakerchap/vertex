@@ -2,14 +2,15 @@ extends Node
 
 const GAME = preload("res://MainScene/level_game.tscn")
 const PARSER = preload("res://Levels/level_parser.gd")
+const PARTICLES = preload("res://Particles/particle_catalog.gd")
 
 func _ready() -> void:
   var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Tests/magnet_fixture.level"))
   assert(not level.has("error"))
   assert(level.buildings[3].accepted == ["electron", "positron"])
-  assert(level.goals[0].has("[electron,positron]"))
+  assert(level.medals.star[0].rates.has("[electron,positron]"))
   var goal_expression: Dictionary = PARSER.parse("2 x 2; goal: {[(electron OR up) AND up_r]: 1, 2, 3};")
-  assert(goal_expression.goals[0].has("[up_r]"))
+  assert(goal_expression.medals.star[0].rates.has("[up_r]"))
   goal_expression = PARSER.parse("2 x 2; goal: {[electron OR (positron]: 1, 2, 3};")
   assert(goal_expression.has("error"))
   var expression: Dictionary = PARSER.parse("2 x 2; goal: {electron: 1, 2, 3}; detector: {x=0,y=0,[electron OR up AND up_r]};")
@@ -32,7 +33,7 @@ func _ready() -> void:
   var metadata := PARSER.parse("3 x 3;\ntitle: A small test;\nhint: Try the mirror;\ngoal: {photon: 1, 1, 1};")
   assert(metadata.title == "A small test" and metadata.hint == "Try the mirror")
   var migrated := PARSER.parse("4 x 4; goal: {[photon_b]: 1, 2, 3}; emitter: {x=0,y=0,[photon_r,up]}; rail: {x=1,y=0}; inventory: {rail=2,gate=1};")
-  assert(migrated.goals[0].has("[photon]") and migrated.goal_targets[0]["[photon]"] == "[photon]")
+  assert(migrated.medals.star[0].rates.has("[photon]") and migrated.medals.star[0].targets["[photon]"] == "[photon]")
   assert(migrated.buildings.size() == 1 and migrated.buildings[0].particles == ["photon", "up_r"])
   assert(migrated.inventory == {"gate": 1}, "Saved rails should stay unavailable.")
   var game = GAME.instantiate()
@@ -41,15 +42,18 @@ func _ready() -> void:
   assert(game.buildings[0].accepted == ["electron", "positron"])
   game.buildings[0].free()
   game.buildings.clear()
-  var candidate := {"goal": level.goals[0], "tier": 0}
+  var candidate := {"[electron,positron]": 1.0}
   assert(game._meets_output(candidate, {"electron": 10, "positron": 0}, 10.0))
   assert(game._meets_output(candidate, {"electron": 6, "positron": 4}, 10.0))
   assert(not game._meets_output(candidate, {"electron": 9, "positron": 0}, 10.0))
-  var slow_candidate := {"goal": {"electron": [1.0 / 300.0]}, "tier": 0}
+  var slow_candidate := {"electron": 1.0 / 300.0}
   assert(game._meets_output(slow_candidate, {"electron": 6}, 1920.0), "A partial cycle at the edge may round down.")
   assert(not game._meets_output(slow_candidate, {"electron": 5}, 1920.0), "Only the fractional part may round down.")
   assert(not game._meets_output(slow_candidate, {"electron": 6}, 320.0, {"electron": 6}), "Earlier detections cannot cover a silent window.")
   assert(game._goal_count({"up": 4, "up_r": 2}, "[up,up_r]") == 4)
+  var counts := {}
+  PARTICLES.record_detection(counts, "up_r")
+  assert(counts == {"any": 1, "up_r": 1, "up": 1})
   game._place_building(level.buildings[2], false)
   game.selected_building = game.buildings[0]
   assert(game.selected_building.polarity == -1)
@@ -82,8 +86,8 @@ func _ready() -> void:
   assert(game.selected_building.orientation == mirror_orientation)
   assert(not game.has_method("_open_config"))
   assert(game.buildings[3].accepted == ["electron", "positron"])
-  assert(game.output_rows[0].meter.markers.size() == 2)
-  assert(game.output_rows[0].meter.markers[1].tiers == PackedStringArray(["2", "3"]))
+  assert(game.output_rows[0].meter.target == 1.0 and game.output_rows[0].meter.medal == "rate")
+  assert(game.output_rows[1].meter.target == 2.0 and game.output_rows[1].meter.medal == "star")
   # Turn the positron beam towards the detector.
   game.selected_building = game.buildings[2]
   game._rotate_selected()
@@ -108,8 +112,11 @@ func _ready() -> void:
   assert(game._recent_rate("positron", 8) > 0.0)
   var live_counts: Dictionary = game.total_counts.duplicate()
   _advance_forecast(game)
-  assert(game.completed, "A positron beam meeting the grouped goal should complete the level (live=%s, chunks=%d, forecast=%s)" % [live_counts, game.forecast_chunks, game.forecast_counts])
-  assert(game.results_text.text.begins_with("1 star(s) earned"))
+  assert(game.completed and "rate" in game.earned_medals and "star" not in game.earned_medals)
+  game._show_results()
+  assert(game.results_text.text.begins_with("2 of 3 medals earned"))
+  game._result_action(&"continue")
+  assert(game.running and not game.results.visible)
   assert(game.total_counts == live_counts, "The forecast must leave the live simulation alone")
   game.stop_to_build()
   game.begin_run()
@@ -120,6 +127,8 @@ func _ready() -> void:
   game.free()
   _check_sparse_output()
   _check_one_off_output()
+  _check_map_stars()
+  _check_bundled_launch()
   print("Level syntax checks passed")
   get_tree().quit()
 
@@ -129,38 +138,87 @@ func _advance_forecast(game: Node2D) -> void:
     game._process(0.0)
   assert(game.forecast == null, "The forecast did not finish within the test budget.")
 
-func _run_sparse_level(goal: String, repeating: bool) -> Node2D:
+func _run_sparse_level(repeating: bool) -> Node2D:
   var game: Node2D = GAME.instantiate()
   game.editor_playtest = true
-  game.level_override = PARSER.parse("3 x 2; goal: {electron: %s}; emitter: {x=0,y=0,E,[electron],rate=1/300}; detector: {x=2,y=0,[electron]};" % goal)
+  game.level_override = PARSER.parse("3 x 2; rate_medal: {1/300}; cost_medal: {5}; star_medal: {photon: 1/300}; emitter: {x=0,y=0,E,[electron],rate=1/300}; detector: {x=2,y=0,[electron]}; inventory: {wall=1};")
   get_tree().root.add_child(game)
+  assert(game._place_inventory_building("wall", Vector2i(0, 1)))
   game.begin_run()
   game.buildings[0].repeat_sequence = repeating
-  for tick in range(roundi(SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP * game.WATCH_STEPS)):
-    game.step_simulation(SimulationGrid.TICK)
-    for child in game.get_children():
-      if child is Particle and child.is_queued_for_deletion(): child.free()
+  _run_steps(game, game.WATCH_STEPS)
   assert(game.total_counts.get("electron", 0) == 1 and game.forecast != null)
   return game
 
 func _check_sparse_output() -> void:
-  var game := _run_sparse_level("1/300, 1/200, 1/100", true)
+  var game := _run_sparse_level(true)
   game._refresh_output()
   assert(game.output_rows[0].meter.sample_steps == game.WATCH_STEPS)
   assert(game.output_rows[0].meter.rate > 0.0, "The live meter should not forget a sparse stream after eight steps.")
   _advance_forecast(game)
-  assert(game.completed and game.results_text.text.begins_with("1 star(s) earned"), "A sustained particle every 300 steps should meet only the lowest tier.")
+  assert(game.completed and game.earned_medals == ["rate"], "The sparse stream meets the rate, while a build at the cost limit misses the Cost medal.")
   assert(game.total_counts.get("electron", 0) == 1, "Forecast counts must never enter live totals.")
   game.stop_to_build()
   assert(game.output_rows[0].meter.rate == 0.0 and game.output_rows[0].meter.sample_steps == 0.0)
   game.free()
 
 func _check_one_off_output() -> void:
-  var game := _run_sparse_level("1/300, inf, inf", false)
+  var game := _run_sparse_level(false)
   _advance_forecast(game)
-  assert(not game.completed, "One detection followed by silence must not earn stars.")
+  assert(game.completed and game.earned_medals.is_empty() and game.results_button.visible,
+    "A single detection clears the level without a medal when no medal condition is met.")
   game.next_forecast_at = INF
   game._on_simulation_stepped(game.MAX_METER_STEPS)
   game._refresh_output()
   assert(game.output_rows[0].meter.rate == 0.0, "Old detections must expire from the adaptive meter.")
+  game.free()
+
+func _run_steps(game: Node2D, amount: float) -> void:
+  for tick in range(roundi(SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP * amount)):
+    game.step_simulation(SimulationGrid.TICK)
+    for child in game.get_children():
+      if child is Particle and child.is_queued_for_deletion(): child.free()
+
+func _check_map_stars() -> void:
+  var source := "5 x 2; rate_medal: {2}; cost_medal: {20}; star_medal: {hit_stars: true; no_buildings: mirror, magnet; cost: 20}; star: {x=1,y=0}; star: {x=3,y=0}; emitter: {x=0,y=0,E,[photon]}; detector: {x=2,y=0,[photon]}; inventory: {mirror=1};"
+  var parsed := PARSER.parse(source)
+  assert(parsed.medals.star[0].no_buildings == ["reflector", "magnet"])
+  assert(PARSER.parse(source + " star: {x=1,y=0};").has("error"))
+  assert(PARSER.parse(source + " star: {x=5,y=0};").has("error"))
+  var game: Node2D = GAME.instantiate()
+  game.editor_playtest = true
+  game.level_override = parsed
+  get_tree().root.add_child(game)
+  game.begin_run()
+  _run_steps(game, 3)
+  assert(game.completed and game.earned_medals == ["cost"] and game.star_hits.size() == 1,
+    "A detector stops the particle before the star behind it.")
+  game.stop_to_build()
+  assert(game.star_hits.is_empty())
+  game.selected_building = game.buildings[1]
+  game._move_selected_to(Vector2i(4, 0))
+  assert(game._place_inventory_building("reflector", Vector2i(0, 1)))
+  game.begin_run()
+  _run_steps(game, 3)
+  assert(game.star_hits.size() == 2 and game.earned_medals == ["cost"], "An excluded building blocks only the Star medal.")
+  game.stop_to_build()
+  game.selected_building = game._building_at(Vector2i(0, 1))
+  game._remove_selected()
+  game.begin_run()
+  _run_steps(game, 3)
+  assert(game.star_hits.size() == 2 and game.earned_medals == ["cost", "star"])
+  game.free()
+
+func _check_bundled_launch() -> void:
+  Global.selected_level = "res://Levels/01 - First Contact.level"
+  var game: Node2D = GAME.instantiate()
+  game.editor_playtest = true
+  get_tree().root.add_child(game)
+  assert(game.buildings.size() == 4 and game.level.stars.size() == 2)
+  game.selected_building = game._building_at(Vector2i(5, 2))
+  game._move_selected_to(Vector2i(5, 3))
+  game.begin_run()
+  _run_steps(game, game.WATCH_STEPS)
+  _advance_forecast(game)
+  assert(game.completed and game.earned_medals.size() == 3, "First Contact should have a route to all three medals.")
   game.free()

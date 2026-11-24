@@ -118,7 +118,7 @@ func _run() -> void:
   var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Tests/magnet_fixture.level"))
   _check(not level.has("error"), "Magnet Stuff should parse: " + str(level.get("error", "")))
   if not level.has("error"):
-    _check(level.goals[0].has("[electron,positron]"), "Grouped goals should preserve their particle list.")
+    _check(level.medals.star[0].rates.has("[electron,positron]"), "Legacy grouped goals should preserve their particle list in the Star medal.")
     _check(level.buildings[2].polarity == "-", "Bare minus should set negative polarity.")
   var negative: Dictionary = PARSER.parse("2 x 2; goal: {electron: 1, 2, 3}; magnet: {x=0,y=0,-};")
   _check(not negative.has("error") and negative.buildings[0].polarity == "-", "Bare minus should set negative polarity.")

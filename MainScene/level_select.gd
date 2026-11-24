@@ -2,6 +2,7 @@ extends Control
 
 const PARSER = preload("res://Levels/level_parser.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
+const MEDALS = preload("res://MainScene/medal_display.gd")
 
 var levels: VBoxContainer
 var known_paths: Array[String] = []
@@ -86,7 +87,7 @@ func _refresh_levels() -> void:
       section.text = "Custom levels"
       UI.heading(section, 17)
       levels.add_child(section)
-    var stars: int = Global.best_stars(path)
+    var progress := Global.level_progress(path)
     button.text = name
     button.tooltip_text = str(parsed.get("hint", ""))
     if parsed.has("error"):
@@ -99,12 +100,13 @@ func _refresh_levels() -> void:
     levels.add_child(row)
     button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(button)
-    var progress := Label.new()
-    progress.text = "★".repeat(stars) + "☆".repeat(3 - stars)
-    progress.add_theme_color_override("font_color", UI.GOLD)
-    progress.tooltip_text = "%d of 3 stars earned" % stars
-    progress.mouse_filter = Control.MOUSE_FILTER_STOP
-    row.add_child(progress)
+    if not parsed.has("error"):
+      var clear_mark := UI.label("✓" if progress.completed else "")
+      clear_mark.custom_minimum_size.x = 18
+      clear_mark.tooltip_text = "Level cleared" if progress.completed else "Level uncleared"
+      clear_mark.mouse_filter = Control.MOUSE_FILTER_STOP
+      row.add_child(clear_mark)
+      row.add_child(MEDALS.strip(progress.medals, 28))
   if paths.is_empty():
     var empty := Label.new()
     empty.text = "No levels"

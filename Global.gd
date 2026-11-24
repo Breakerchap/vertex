@@ -26,22 +26,28 @@ func _ready() -> void:
 func ensure_custom_levels() -> Error:
   return DirAccess.make_dir_recursive_absolute(CUSTOM_LEVELS)
 
-func best_stars(level_path: String) -> int:
+func level_progress(level_path: String) -> Dictionary:
   var progress := ConfigFile.new()
-  if progress.load(PROGRESS_FILE) != OK: return 0
-  return _stored_stars(progress, level_path)
+  progress.load(PROGRESS_FILE)
+  return _stored_progress(progress, level_path)
 
-func record_best_stars(level_path: String, stars: int) -> void:
+func record_level_progress(level_path: String, medals: Array[String]) -> void:
+  if level_path.is_empty(): return
   var progress := ConfigFile.new()
-  var loaded := progress.load(PROGRESS_FILE) == OK
-  var previous := _stored_stars(progress, level_path) if loaded else 0
-  if stars > previous:
-    progress.set_value("stars", level_path, clampi(stars, 0, 3))
-    var error := progress.save(PROGRESS_FILE)
-    if error != OK: push_warning("Could not save level progress: " + error_string(error))
+  progress.load(PROGRESS_FILE)
+  var previous := _stored_progress(progress, level_path)
+  var earned: Array = previous.medals
+  var count := earned.size()
+  for medal in medals:
+    if medal not in earned: earned.append(medal)
+  if previous.completed and count == earned.size(): return
+  progress.set_value("levels", level_path, {"completed": true, "medals": earned})
+  var error := progress.save(PROGRESS_FILE)
+  if error != OK: push_warning("Could not save level progress: " + error_string(error))
 
-func _stored_stars(progress: ConfigFile, level_path: String) -> int:
-  return clampi(int(progress.get_value("stars", level_path, 0)), 0, 3)
+func _stored_progress(progress: ConfigFile, level_path: String) -> Dictionary:
+  if progress.has_section_key("levels", level_path): return progress.get_value("levels", level_path)
+  return {"completed": int(progress.get_value("stars", level_path, 0)) > 0, "medals": []}
 
 func level_paths() -> Array[String]:
   var result: Array[String] = []
