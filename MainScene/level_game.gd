@@ -77,6 +77,7 @@ var total_counts: Dictionary = {}
 var elapsed: float = 0.0
 var automatic_speed := true
 var next_forecast_at := 0.0
+var forecast_refresh_steps := FORECAST_REFRESH_STEPS
 var forecast: FORECAST
 var forecast_counts: Dictionary = {}
 var forecast_steps := 0.0
@@ -1104,7 +1105,7 @@ func _process(_delta: float) -> void:
   forecast_counts = forecast.measured_counts
   forecast_steps = forecast.measured_steps
   _cancel_forecast()
-  next_forecast_at = elapsed + FORECAST_REFRESH_STEPS
+  next_forecast_at = elapsed + forecast_refresh_steps
   _refresh_output()
   _update_clear(false)
   if results.visible: _update_results()
