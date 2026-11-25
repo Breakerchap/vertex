@@ -80,15 +80,8 @@ func _devices() -> void:
   sim.step_simulation(2)
   _check(_at(through, Vector2.DOWN) and not rotated_gate.gate_open, "The gate should toggle only along its rotated axis.")
 
-  _new_board()
-  _device("glass", Vector2.ZERO)
-  var electron := _particle("positron", Vector2.LEFT)
-  var quark := _particle("up_r", Vector2.RIGHT, Vector2.LEFT)
-  sim.step_simulation(2)
-  _check(quark.is_queued_for_deletion() and _at(electron, Vector2.ZERO), "Glass should block quarks and delay small particles at its centre.")
-  sim.step_simulation(2)
-  _check(_at(electron, Vector2(2, 0)), "Particles should regain speed after leaving glass.")
-  for name in ["photon", "electron", "positron", "muon", "anti_muon", "neutrino", "anti_neutrino"]:
+  for name in ["photon", "electron", "positron", "muon", "anti_muon", "neutrino", "anti_neutrino",
+      "up_r", "down_b", "w_plus", "w_minus"]:
     _new_board()
     _device("glass", Vector2.ZERO)
     var particle := _particle(name, Vector2.LEFT)
@@ -96,6 +89,11 @@ func _devices() -> void:
     _check(not particle.is_queued_for_deletion() and _at(particle, Vector2.ZERO), name + " should pass the glass and wait at its centre.")
     sim.step_simulation(1.0 / particle.speed)
     _check(_at(particle, Vector2.RIGHT), name + " should carry on at full speed after passing glass.")
+  _new_board()
+  _device("glass", Vector2.ZERO)
+  var proton := _particle("proton", Vector2.LEFT)
+  sim.step_simulation()
+  _check(proton.is_queued_for_deletion(), "Glass should still stop hadrons.")
 
   _new_board()
   _device("filter", Vector2.ZERO, {"filter_colour": 2})
@@ -137,6 +135,41 @@ func _devices() -> void:
   var shifted := _particle("electron", Vector2.DOWN, Vector2.UP)
   sim.step_simulation(2)
   _check(_at(shifted, Vector2(1, -1)) and shifted.direction == Vector2.UP, "Turning a pusher should rotate the offset without turning the particle.")
+
+func _pusher_contacts() -> void:
+  for pushed_first in [false, true]:
+    _new_board()
+    _device("pusher", Vector2.ZERO)
+    if pushed_first: _particle("up_r", Vector2.LEFT)
+    _particle("down_b", Vector2.UP, Vector2.ZERO)
+    if not pushed_first: _particle("up_r", Vector2.LEFT)
+    sim.step_simulation()
+    var particles := sim._particles()
+    _check(particles.size() == 1 and particles[0].flavour == Particle.Flavour.PION_ZERO
+      and particles[0].direction == Vector2.RIGHT,
+      "A push at the end of a tick should react with the resting quark while retaining the incoming momentum.")
+
+  _new_board()
+  var pusher := _device("pusher", Vector2.ZERO)
+  _particle("photon", Vector2.LEFT)
+  _particle("electron", Vector2(0, -2), Vector2.DOWN, 1.5)
+  var forecast := FORECAST.new(sim, [pusher])
+  sim.step_simulation(0.67)
+  forecast.shadow.step_simulation(0.67)
+  for simulation in [sim, forecast.shadow]:
+    var particles: Array[Particle] = simulation._particles()
+    _check(particles.size() == 1 and particles[0].flavour == Particle.Flavour.ELECTRON,
+      "The pushed photon should collide with a moving electron in both the live simulation and forecast.")
+  forecast.dispose()
+
+  _new_board()
+  _device("pusher", Vector2.ZERO)
+  _device("pusher", Vector2.UP)
+  var up := _particle("up_r", Vector2.LEFT)
+  var down := _particle("down_b", Vector2(-1, -1))
+  sim.step_simulation()
+  _check(sim._particles().size() == 2 and _at(up, Vector2.UP) and _at(down, Vector2.UP * 2.0),
+    "Particles pushed in parallel should stay separated.")
 
 func _rails_and_forecast() -> void:
   _new_board()
@@ -620,6 +653,7 @@ func _run() -> void:
   _check(sim._ticks_into_step == 1 and not sim.running, "The step control should advance one grid tick.")
   _movement_and_hitboxes()
   _devices()
+  _pusher_contacts()
   _rails_and_forecast()
   _reactions()
   _mass_and_split()

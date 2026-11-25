@@ -1155,8 +1155,6 @@ func _report_particle_path(particle: Particle, path: Array[Dictionary], until: f
   for leg in path:
     if leg.start > until: break
     _check_star_segment(to_local(leg.from), to_local(_position_on_leg(leg, until)), radius)
-    if leg.has("push") and leg.end <= until:
-      _check_star_segment(to_local(leg.push.from), to_local(leg.push.to), radius)
 
 func _check_star_segment(from: Vector2, to: Vector2, radius: float) -> void:
   var previous := star_hits.size()

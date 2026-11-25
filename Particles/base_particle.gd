@@ -120,7 +120,7 @@ func is_w_boson() -> bool:
   return flavour == Flavour.W_PLUS or flavour == Flavour.W_MINUS
 
 func passes_glass() -> bool:
-  return flavour in [Flavour.ELECTRON, Flavour.MUON, Flavour.NEUTRINO, Flavour.PHOTON, Flavour.GLUON]
+  return is_quark() or is_w_boson() or flavour in [Flavour.ELECTRON, Flavour.MUON, Flavour.NEUTRINO, Flavour.PHOTON, Flavour.GLUON]
 
 ## Name used by level goals and detectors.
 func level_particle_name() -> String:

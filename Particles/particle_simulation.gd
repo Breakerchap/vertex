@@ -10,6 +10,8 @@ const BOSON = preload("res://Particles/Boson/boson.gd")
 const W_BOSON = preload("res://Particles/Boson/w_boson.gd")
 const RAILS = preload("res://Buildings/GridDevices/rail_network.gd")
 const EPSILON := 0.000001
+# Round Z reflections to a subpixel grid so repeated bounces don't amplify float error.
+const REFLECTION_QUANTUM := 1.0 / 2048.0
 const W_FIELD_ACCELERATION := 2.0
 const QUARK_COLOURS := [Particle.ColourCharge.RED, Particle.ColourCharge.GREEN, Particle.ColourCharge.BLUE]
 
@@ -229,7 +231,7 @@ func _block_gluon_tips(gluons: Array[BOSON], paths: Dictionary, hits: Dictionary
         contact.a = a
         contact.b = b
         contacts.append(contact)
-  contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.time < b.time)
+  contacts.sort_custom(_contact_precedes)
   var stopped := {}
   for contact in contacts:
     var a: BOSON = contact.a
@@ -237,6 +239,8 @@ func _block_gluon_tips(gluons: Array[BOSON], paths: Dictionary, hits: Dictionary
     if stopped.has(a) or stopped.has(b): continue
     _stop_gluon(a, b, contact.at_a, contact.velocity_a)
     _stop_gluon(b, a, contact.at_b, contact.velocity_b)
+    _truncate_push(paths[a], contact.get("push_a", {}), contact.at_a)
+    _truncate_push(paths[b], contact.get("push_b", {}), contact.at_b)
     stopped[a] = contact.time
     stopped[b] = contact.time
     hits.erase(a)
@@ -305,6 +309,7 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
 
     var travel := particle.travel_vector()
     var progress_per_tick := pace * SimulationGrid.CELL / travel.length()
+    var velocity := travel.normalized() * pace
     var duration := minf(time - used, (segment_end - particle.progress) / progress_per_tick)
     var flight_edges := Vector2.INF
     var flight_boundary := INF
@@ -316,8 +321,13 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
     var hit := _world_impact(particle, from, motion, obstacles)
     if not hit.is_empty():
       var hit_time: float = duration * hit.fraction
-      var point := from + motion * float(hit.fraction)
-      path.append({"from": from, "to": point, "start": used, "end": used + hit_time})
+      var travelled := motion * float(hit.fraction)
+      var point := from + travelled
+      if hit.reflective and particle.flavour == Particle.Flavour.Z_BOSON:
+        hit_time = clampf(snappedf(used + hit_time, REFLECTION_QUANTUM) - used,
+          minf(hit_time, EPSILON), time - used)
+      path.append({"from": from, "to": point, "motion": travelled,
+        "start": used, "end": used + hit_time, "velocity": velocity})
       if not hit.reflective:
         hit.time = used + hit_time
         terminal_hits[particle] = hit
@@ -326,7 +336,8 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
       used += hit_time
       continue
 
-    path.append({"from": from, "to": from + motion, "start": used, "end": used + duration})
+    path.append({"from": from, "to": from + motion, "motion": motion,
+      "start": used, "end": used + duration, "velocity": velocity})
     used += duration
     if particle.free_flight:
       particle.global_position = from + motion
@@ -449,7 +460,11 @@ func _settle_impact(particle: Particle, hit: Dictionary, time: float, obstacles:
   return {}
 
 func _reflect_particle(particle: Particle, at: Vector2, hit: Dictionary, incoming: Vector2) -> void:
-  _redirect_particle(particle, at, incoming.bounce(hit.normal))
+  var heading := incoming.bounce(hit.normal)
+  if particle.flavour == Particle.Flavour.Z_BOSON:
+    _redirect_reflection(particle, at, heading)
+  else:
+    _redirect_particle(particle, at, heading)
   particle.source_building = hit.target
   particle.passed_gates.clear()
 
@@ -482,10 +497,12 @@ func _enter_tile(particle: Particle, tiles: Dictionary, obstacles: Array[Node], 
     "pusher":
       if pushed: return {}
       var shift: Vector2 = tile.next_push()
-      var hit := _world_impact(particle, particle.global_position, shift, obstacles)
-      if track_particle_paths:
-        var from := particle.global_position
-        path.back()["push"] = {"from": from, "to": hit.get("at", from + shift), "start": time, "end": time}
+      var from := particle.global_position
+      var hit := _world_impact(particle, from, shift, obstacles)
+      var motion := shift * float(hit.get("fraction", 1.0))
+      # Sweep the push at the entry time while keeping the incoming momentum.
+      path.append({"from": from, "to": from + motion, "motion": motion, "start": time, "end": time,
+        "velocity": particle.direction.normalized() * particle.speed, "push": true})
       if not hit.is_empty():
         if not hit.reflective: return hit
         _reflect_particle(particle, hit.at, hit, shift)
@@ -509,13 +526,16 @@ func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, t
         contact.a = a
         contact.b = b
         contacts.append(contact)
-  contacts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.time < b.time)
+  contacts.sort_custom(_contact_precedes)
   var redirected := {}
+  var push_contacts: Array[Dictionary] = []
   for contact in contacts:
     var a: Particle = contact.a
     var b: Particle = contact.b
     if a.is_queued_for_deletion() or b.is_queued_for_deletion() or redirected.has(a) or redirected.has(b):
       continue
+    if track_particle_paths and contact.has("push_fraction"):
+      push_contacts.append(contact)
     var pulled := contact.has("gluon")
     if pulled:
       contact.gluon.release_captives()
@@ -526,8 +546,9 @@ func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, t
       if _passes_through(a, b): continue
     if a.flavour == Particle.Flavour.Z_BOSON or b.flavour == Particle.Flavour.Z_BOSON:
       _bounce(a, b, contact, pulled)
-      redirected[a] = contact.time
-      redirected[b] = contact.time
+      var reflection_time: float = contact.get("reflection_time", contact.time)
+      redirected[a] = reflection_time
+      redirected[b] = reflection_time
       terminal_hits.erase(a)
       terminal_hits.erase(b)
       continue
@@ -578,6 +599,11 @@ func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, t
     lighter.queue_free()
     redirected[lighter] = contact.time
     particle_event.emit("absorption", contact.at)
+  for contact in push_contacts:
+    if redirected.get(contact.a, -1.0) == contact.time:
+      _truncate_push(paths[contact.a], contact.get("push_a", {}), contact.at_a)
+    if redirected.get(contact.b, -1.0) == contact.time:
+      _truncate_push(paths[contact.b], contact.get("push_b", {}), contact.at_b)
   return redirected
 
 func _passes_through(a: Particle, b: Particle) -> bool:
@@ -602,10 +628,11 @@ func _circles_overlap(a: Particle, b: Particle) -> bool:
   return a.motion_position().distance_squared_to(b.motion_position()) <= radius * radius
 
 func _leg_velocity(leg: Dictionary) -> Vector2:
-  var duration: float = leg.end - leg.start
-  if duration <= EPSILON: return Vector2.ZERO
-  var travel: Vector2 = leg.to - leg.from
-  return travel / (SimulationGrid.CELL * duration)
+  return leg.get("velocity", Vector2.ZERO)
+
+func _contact_precedes(a: Dictionary, b: Dictionary) -> bool:
+  if a.time != b.time: return a.time < b.time
+  return a.get("push_fraction", -1.0) < b.get("push_fraction", -1.0)
 
 func _first_contact(a: Particle, b: Particle, a_path: Array, b_path: Array) -> Dictionary:
   var radius := a.world_collision_radius() + b.world_collision_radius()
@@ -614,26 +641,54 @@ func _first_contact(a: Particle, b: Particle, a_path: Array, b_path: Array) -> D
       var start := maxf(leg_a.start, leg_b.start)
       var end := minf(leg_a.end, leg_b.end)
       if end < start: continue
-      var a_start := _position_on_leg(leg_a, start)
-      var b_start := _position_on_leg(leg_b, start)
-      var relative := a_start - b_start
-      var motion := _position_on_leg(leg_a, end) - _position_on_leg(leg_b, end) - relative
-      if motion.length_squared() <= EPSILON or relative.dot(motion) > EPSILON: continue
+      var push_a: bool = leg_a.has("push")
+      var push_b: bool = leg_b.has("push")
+      # If both particles are pushed together, sweep their displacements together.
+      if push_a != push_b and _push_at_time(b_path if push_a else a_path, start): continue
+      var a_start: Vector2 = leg_a.from
+      var b_start: Vector2 = leg_b.from
+      var offset_a := _leg_offset(leg_a, start)
+      var offset_b := _leg_offset(leg_b, start)
+      var relative := (a_start - b_start) + (offset_a - offset_b)
+      var motion_a: Vector2 = leg_a.motion if push_a else _leg_offset(leg_a, end) - offset_a
+      var motion_b: Vector2 = leg_b.motion if push_b else _leg_offset(leg_b, end) - offset_b
+      var motion := motion_a - motion_b
+      var squared := motion.length_squared()
+      var projection := relative.dot(motion)
+      if squared <= EPSILON or projection > EPSILON: continue
       var c := relative.length_squared() - radius * radius
       var fraction := 0.0
       if c > EPSILON:
-        var squared := motion.length_squared()
-        var projection := relative.dot(motion)
         var discriminant := projection * projection - squared * c
-        if squared <= EPSILON or discriminant < 0.0: continue
+        if discriminant < 0.0: continue
         fraction = (-projection - sqrt(discriminant)) / squared
         if fraction < 0.0 or fraction > 1.0: continue
       var time := lerpf(start, end, fraction)
-      var at_a := _position_on_leg(leg_a, time)
-      var at_b := _position_on_leg(leg_b, time)
-      return {"time": time, "at": (at_a + at_b) * 0.5, "at_a": at_a, "at_b": at_b,
-        "velocity_a": _leg_velocity(leg_a), "velocity_b": _leg_velocity(leg_b)}
+      var at_a := a_start + (offset_a + motion_a * fraction)
+      var at_b := b_start + (offset_b + motion_b * fraction)
+      var contact := {"time": time, "at": (at_a + at_b) * 0.5, "at_a": at_a, "at_b": at_b,
+        "velocity_a": _leg_velocity(leg_a), "velocity_b": _leg_velocity(leg_b),
+        "separation": relative + motion * fraction}
+      if a.flavour == Particle.Flavour.Z_BOSON or b.flavour == Particle.Flavour.Z_BOSON:
+        contact.reflection_time = clampf(snappedf(time, REFLECTION_QUANTUM), start, end)
+      if push_a: contact.push_a = leg_a
+      if push_b: contact.push_b = leg_b
+      if push_a or push_b: contact.push_fraction = fraction
+      return contact
   return {}
+
+func _push_at_time(path: Array, time: float) -> bool:
+  return path.any(func(leg: Dictionary) -> bool: return leg.start == time and leg.has("push"))
+
+func _leg_offset(leg: Dictionary, time: float) -> Vector2:
+  var duration: float = leg.end - leg.start
+  if duration <= 0.0: return Vector2.ZERO
+  return leg.get("motion", Vector2.ZERO) * ((time - float(leg.start)) / duration)
+
+func _truncate_push(path: Array, push: Dictionary, at: Vector2) -> void:
+  if push.is_empty(): return
+  push.to = at
+  path.resize(path.find(push) + 1)
 
 func _position_on_leg(leg: Dictionary, time: float) -> Vector2:
   if leg.end <= leg.start: return leg.to
@@ -676,11 +731,16 @@ func _keep_separating(a: Particle, b: Particle) -> void:
   a.separating_from.append(b)
   b.separating_from.append(a)
 
+func _redirect_reflection(particle: Particle, at: Vector2, heading: Vector2) -> void:
+  var point := at.snapped(Vector2.ONE * (SimulationGrid.CELL * REFLECTION_QUANTUM))
+  var direction := heading.normalized().snapped(Vector2.ONE * REFLECTION_QUANTUM)
+  _redirect_particle(particle, point, direction)
+
 func _bounce(a: Particle, b: Particle, contact: Dictionary, pulled := false) -> void:
   var velocity_a: Vector2 = contact.velocity_a
   var velocity_b: Vector2 = contact.velocity_b
   var relative := velocity_a - velocity_b
-  var separation: Vector2 = contact.at_a - contact.at_b
+  var separation: Vector2 = contact.get("separation", contact.at_a - contact.at_b)
   var normal := (relative if separation.is_zero_approx() else separation).normalized()
   var z_bounce := a.flavour == Particle.Flavour.Z_BOSON or b.flavour == Particle.Flavour.Z_BOSON
   if z_bounce:
@@ -699,8 +759,15 @@ func _bounce(a: Particle, b: Particle, contact: Dictionary, pulled := false) -> 
     if velocity_b.is_zero_approx(): velocity_b = -normal
   elif not pulled:
     b.speed = velocity_b.length()
-  _redirect_particle(a, contact.at_a, velocity_a)
-  _redirect_particle(b, contact.at_b, velocity_b)
+  if z_bounce:
+    _redirect_reflection(a, contact.at_a, velocity_a)
+    _redirect_reflection(b, contact.at_b, velocity_b)
+    # A particle bounce can send either particle back toward its last blocker.
+    a.source_building = null
+    b.source_building = null
+  else:
+    _redirect_particle(a, contact.at_a, velocity_a)
+    _redirect_particle(b, contact.at_b, velocity_b)
   _keep_separating(a, b)
   particle_event.emit("reflection", contact.at)
 

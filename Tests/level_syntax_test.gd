@@ -126,9 +126,48 @@ func _ready() -> void:
   _check_burst_output()
   _check_stray_particles()
   _check_map_stars()
+  _check_pusher_stars()
+  _check_mirrored_z_bosons()
   _check_bundled_launch()
   print("Level syntax checks passed")
   get_tree().quit()
+
+func _check_mirrored_z_bosons() -> void:
+  var source := """11 x 13;
+rate_medal: {1/step};
+cost_medal: {30};
+star_medal: {any: 2/step};
+emitter: {x=9, y=3, NW, [z_boson], rate=1/step, fixed=pr}
+emitter: {x=1, y=3, NE, [z_boson], rate=1/step, fixed=pr}
+emitter: {x=7, y=0, N, [electron], rate=1/step, fixed=pr}
+emitter: {x=3, y=0, N, [electron], rate=1/step, fixed=pr}
+wall: {x=4, y=6}
+wall: {x=6, y=6}
+"""
+  var game = GAME.instantiate()
+  game.editor_playtest = true
+  game.level_override = PARSER.parse(source)
+  assert(not game.level_override.has("error"), str(game.level_override))
+  get_tree().root.add_child(game)
+  game.begin_run()
+  var reflections := [0]
+  game.particle_event.connect(func(kind: String, _at: Vector2):
+    if kind == "reflection": reflections[0] += 1)
+  var mirror := Vector2(-1.0, 1.0)
+  var offset := Vector2(10.0 * SimulationGrid.CELL, 0.0)
+  for tick in range(900):
+    game.step_simulation(SimulationGrid.TICK)
+    var particles: Array[Particle] = game._particles()
+    for particle in particles:
+      var at := particle.motion_position() * mirror + offset
+      var heading := particle.direction * mirror
+      assert(particles.any(func(other: Particle) -> bool:
+        return (other.flavour == particle.flavour and other.motion_position().distance_to(at) < 0.15
+          and other.direction.distance_to(heading) < 0.004)), "The Z boson level lost symmetry at tick %d." % tick)
+    for child in game.get_children():
+      if child is Particle and child.is_queued_for_deletion(): child.free()
+  assert(reflections[0] > 30, "The mirrored board should exercise repeated reflections.")
+  game.free()
 
 func _advance_forecast(game: Node2D) -> void:
   var deadline := Time.get_ticks_msec() + 30000
@@ -259,6 +298,26 @@ func _check_map_stars() -> void:
   game.begin_run()
   _run_steps(game, 3)
   assert(game.star_hits.size() == 2 and game.earned_medals == ["cost", "star"])
+  game.free()
+
+func _check_pusher_stars() -> void:
+  var game = GAME.instantiate()
+  game.editor_playtest = true
+  game.level_override = PARSER.parse("3 x 3; goal: {photon: 1, 2, 3}; star: {x=1,y=2}; emitter: {x=0,y=1,E,[photon]}; pusher: {x=1,y=1,N};")
+  get_tree().root.add_child(game)
+  game.begin_run()
+  _run_steps(game, 0.25)
+  assert(game.star_hits.has(Vector2i(1, 2)), "A push can take a particle through a star.")
+  game.stop_to_build()
+  game.begin_run()
+  var blocker := PARTICLES.instantiate(Particle.Flavour.PROTON)
+  blocker.size = 0.8
+  blocker.free_flight = true
+  blocker.direction = Vector2.ZERO
+  blocker.position = Vector2(1.0, 0.55) * SimulationGrid.CELL
+  game.add_child(blocker)
+  _run_steps(game, 0.25)
+  assert(game._particles() == [blocker] and game.star_hits.is_empty(), "A push interrupted by a collision should stop before the star.")
   game.free()
 
 func _check_bundled_launch() -> void:
