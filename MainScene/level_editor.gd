@@ -46,6 +46,8 @@ var area_tool := AreaTool.NONE
 var width_input: SpinBox
 var height_input: SpinBox
 var file_dialog: FileDialog
+var location_dialog: ConfirmationDialog
+var location_mode := FileDialog.FILE_MODE_OPEN_FILE
 var confirm: ConfirmationDialog
 var path := ""
 var last_file_directory := ""
@@ -167,9 +169,6 @@ func _build_workspace() -> void:
   UI.button(bar, "Open…", func() -> void: _request_action("open")).tooltip_text = UI.shortcut_label("O")
   UI.button(bar, "Save", _save).tooltip_text = UI.shortcut_label("S")
   UI.button(bar, "Save as…", _save_as).tooltip_text = UI.shortcut_label("Shift+S")
-  if OS.has_feature("android"):
-    UI.button(bar, "Open device file…", func() -> void: _request_action("open_device"))
-    UI.button(bar, "Save to device…", _save_to_device)
   UI.button(bar, "Undo", _undo_editor).tooltip_text = UI.shortcut_label("Z")
   UI.button(bar, "Redo", _redo_editor).tooltip_text = UI.shortcut_label("Shift+Z")
   UI.button(bar, "Copy", _copy_selected).tooltip_text = "Copy the selected building (%s)" % UI.shortcut_label("C")
@@ -279,7 +278,7 @@ func _build_dialogs() -> void:
   _build_source_dialog()
   _build_settings_dialog()
   _build_file_dialogs()
-  for dialog in [inspector_dialog, source_dialog, settings_dialog, file_dialog, confirm]:
+  for dialog in [inspector_dialog, source_dialog, settings_dialog, file_dialog, location_dialog, confirm]:
     dialog.about_to_popup.connect(game.cancel_board_gesture)
 
 func _build_source_dialog() -> void:
@@ -380,6 +379,14 @@ func _build_file_dialogs() -> void:
   file_dialog.file_selected.connect(_file_selected)
   file_dialog.canceled.connect(_restore_source_after_file_dialog)
   UI.setup_dialog(file_dialog, self, "Open level")
+  location_dialog = ConfirmationDialog.new()
+  location_dialog.dialog_text = "Choose where to find the level."
+  location_dialog.ok_button_text = "Game folder"
+  location_dialog.add_button("Device files…", false, "device")
+  location_dialog.confirmed.connect(_location_selected.bind(false), CONNECT_DEFERRED)
+  location_dialog.custom_action.connect(_location_device_selected)
+  location_dialog.canceled.connect(_restore_source_after_file_dialog)
+  UI.setup_dialog(location_dialog, self, "Choose location")
   confirm = ConfirmationDialog.new()
   confirm.dialog_text = "Discard unsaved changes?"
   confirm.ok_button_text = "Discard changes"
@@ -1421,9 +1428,7 @@ func _perform_pending_action() -> void:
       _set_source(NEW_LEVEL)
       game.fit_board()
     "open":
-      _show_file_dialog(FileDialog.FILE_MODE_OPEN_FILE)
-    "open_device":
-      _show_file_dialog(FileDialog.FILE_MODE_OPEN_FILE, true)
+      _choose_file_location(FileDialog.FILE_MODE_OPEN_FILE)
     "back": get_tree().change_scene_to_file("res://MainScene/level_select.tscn")
     "quit": get_tree().quit()
 
@@ -1433,11 +1438,25 @@ func _save() -> void:
 
 func _save_as() -> void:
   if not _can_save(): return
-  _show_file_dialog(FileDialog.FILE_MODE_SAVE_FILE)
+  _choose_file_location(FileDialog.FILE_MODE_SAVE_FILE)
 
-func _save_to_device() -> void:
-  if not _can_save(): return
-  _show_file_dialog(FileDialog.FILE_MODE_SAVE_FILE, true)
+func _choose_file_location(mode: FileDialog.FileMode) -> void:
+  if not OS.has_feature("android"):
+    _show_file_dialog(mode)
+    return
+  location_mode = mode
+  location_dialog.dialog_text = "Choose where to save the level." if mode == FileDialog.FILE_MODE_SAVE_FILE else "Choose where to open the level from."
+  return_to_source = source_dialog.visible
+  if return_to_source: source_dialog.hide()
+  location_dialog.popup_centered()
+
+func _location_selected(device_files: bool) -> void:
+  _show_file_dialog(location_mode, device_files)
+
+func _location_device_selected(action: String) -> void:
+  if action != "device": return
+  location_dialog.hide()
+  _location_selected.call_deferred(true)
 
 func _show_file_dialog(mode: FileDialog.FileMode, device_files := false) -> void:
   if file_dialog.visible: return
@@ -1461,8 +1480,8 @@ func _show_file_dialog(mode: FileDialog.FileMode, device_files := false) -> void
   file_dialog.filters = PackedStringArray(["*.level ; Vertex levels"]) if device_files or not saving else PackedStringArray()
   file_dialog.current_dir = directory
   file_dialog.current_file = (path.get_file() if not path.is_empty() and not path.begins_with("content://") else "new-level.level") if saving else ""
-  return_to_source = source_dialog.visible
-  if return_to_source: source_dialog.hide()
+  return_to_source = return_to_source or source_dialog.visible
+  if source_dialog.visible: source_dialog.hide()
   file_dialog.popup_centered_clamped(Vector2i(820, 560), 0.88)
 
 func _restore_source_after_file_dialog() -> void:

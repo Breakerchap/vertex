@@ -67,4 +67,4 @@ W bosons use `w_plus` and `w_minus`. Both have a field three tiles across. W⁺ 
 
 Neutrinos and antineutrinos respond to Glass and Holders and pass freely through other buildings.
 
-On Android, **Open** and **Save as…** use the game’s private custom levels folder. **Open device file…** and **Save to device…** use the Android file picker for locations such as Downloads and Documents. Device files can be opened in the editor; save a copy in the private custom levels folder to see it on the level screen.
+On Android, **Open** and **Save as…** let you choose the private game folder or device files. Choose **Device files…** to use the Android file picker for locations such as Downloads and Documents. Device files can be opened in the editor; save a copy in the private custom levels folder to see it on the level screen.
