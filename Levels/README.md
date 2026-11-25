@@ -66,3 +66,5 @@ W bosons use `w_plus` and `w_minus`. Both have a field three tiles across. W⁺ 
 | `stray_particle: {x=2, y=1, E, [electron]};` | Starts the run with one particle travelling in the direction of its arrow. Rotate with **Q** or **E**, or tap it on a touchscreen. The rotation cycle includes `REST`, which gives it zero initial momentum. Choose the type in the editor. It defaults to an electron. |
 
 Neutrinos and antineutrinos respond to Glass and Holders and pass freely through other buildings.
+
+On Android, **Open** and **Save as…** use the game’s private custom levels folder. **Open device file…** and **Save to device…** use the Android file picker for locations such as Downloads and Documents. Device files can be opened in the editor; save a copy in the private custom levels folder to see it on the level screen.

@@ -167,6 +167,9 @@ func _build_workspace() -> void:
   UI.button(bar, "Open…", func() -> void: _request_action("open")).tooltip_text = UI.shortcut_label("O")
   UI.button(bar, "Save", _save).tooltip_text = UI.shortcut_label("S")
   UI.button(bar, "Save as…", _save_as).tooltip_text = UI.shortcut_label("Shift+S")
+  if OS.has_feature("android"):
+    UI.button(bar, "Open device file…", func() -> void: _request_action("open_device"))
+    UI.button(bar, "Save to device…", _save_to_device)
   UI.button(bar, "Undo", _undo_editor).tooltip_text = UI.shortcut_label("Z")
   UI.button(bar, "Redo", _redo_editor).tooltip_text = UI.shortcut_label("Shift+Z")
   UI.button(bar, "Copy", _copy_selected).tooltip_text = "Copy the selected building (%s)" % UI.shortcut_label("C")
@@ -552,7 +555,8 @@ func _source_changed() -> void:
 func _update_level_status() -> void:
   _refresh_dock_status()
   var warnings := _level_warnings(parsed)
-  status.text = (path.get_file() if not path.is_empty() else "Untitled") + ("  • unsaved" if source.text != saved_text else "")
+  var display_name := "Device file" if path.begins_with("content://") else (path.get_file() if not path.is_empty() else "Untitled")
+  status.text = display_name + ("  • unsaved" if source.text != saved_text else "")
   if area_tool == AreaTool.STAR:
     status.text = "Tap a cell to toggle a star." if compact_layout else status.text + "  • Click a cell to toggle a star. Esc exits."
   elif area_tool != AreaTool.NONE:
@@ -1418,6 +1422,8 @@ func _perform_pending_action() -> void:
       game.fit_board()
     "open":
       _show_file_dialog(FileDialog.FILE_MODE_OPEN_FILE)
+    "open_device":
+      _show_file_dialog(FileDialog.FILE_MODE_OPEN_FILE, true)
     "back": get_tree().change_scene_to_file("res://MainScene/level_select.tscn")
     "quit": get_tree().quit()
 
@@ -1429,8 +1435,15 @@ func _save_as() -> void:
   if not _can_save(): return
   _show_file_dialog(FileDialog.FILE_MODE_SAVE_FILE)
 
-func _show_file_dialog(mode: FileDialog.FileMode) -> void:
+func _save_to_device() -> void:
+  if not _can_save(): return
+  _show_file_dialog(FileDialog.FILE_MODE_SAVE_FILE, true)
+
+func _show_file_dialog(mode: FileDialog.FileMode, device_files := false) -> void:
   if file_dialog.visible: return
+  if OS.has_feature("android"):
+    file_dialog.access = FileDialog.ACCESS_FILESYSTEM if device_files else FileDialog.ACCESS_USERDATA
+    file_dialog.use_native_dialog = device_files
   for flag in [FileDialog.CUSTOMIZATION_FAVORITES, FileDialog.CUSTOMIZATION_RECENT, FileDialog.CUSTOMIZATION_LAYOUT,
       FileDialog.CUSTOMIZATION_HIDDEN_FILES, FileDialog.CUSTOMIZATION_FILE_FILTER, FileDialog.CUSTOMIZATION_FILE_SORT]:
     file_dialog.set_customization_flag_enabled(flag, not compact_layout)
@@ -1445,9 +1458,9 @@ func _show_file_dialog(mode: FileDialog.FileMode) -> void:
   var saving := mode == FileDialog.FILE_MODE_SAVE_FILE
   file_dialog.file_mode = mode
   file_dialog.title = "Save Vertex level (.level)" if saving else "Open level"
-  file_dialog.filters = PackedStringArray() if saving else PackedStringArray(["*.level ; Vertex levels"])
+  file_dialog.filters = PackedStringArray(["*.level ; Vertex levels"]) if device_files or not saving else PackedStringArray()
   file_dialog.current_dir = directory
-  file_dialog.current_file = (path.get_file() if not path.is_empty() else "new-level.level") if saving else ""
+  file_dialog.current_file = (path.get_file() if not path.is_empty() and not path.begins_with("content://") else "new-level.level") if saving else ""
   return_to_source = source_dialog.visible
   if return_to_source: source_dialog.hide()
   file_dialog.popup_centered_clamped(Vector2i(820, 560), 0.88)
@@ -1458,19 +1471,19 @@ func _restore_source_after_file_dialog() -> void:
   _open_source.call_deferred()
 
 func _is_bundled_level(target: String) -> bool:
-  return ProjectSettings.localize_path(target.simplify_path()).begins_with("res://Levels/")
+  return not target.begins_with("content://") and ProjectSettings.localize_path(target.simplify_path()).begins_with("res://Levels/")
 
 func _file_selected(selected_path: String) -> void:
   _restore_source_after_file_dialog()
   if file_dialog.file_mode == FileDialog.FILE_MODE_SAVE_FILE:
-    if not selected_path.to_lower().ends_with(".level"):
+    if not selected_path.begins_with("content://") and not selected_path.to_lower().ends_with(".level"):
       selected_path += ".level"
       if FileAccess.file_exists(selected_path):
         status.text = "A file named %s already exists. Select it explicitly to replace it." % selected_path.get_file()
         return
     _write_file(selected_path)
   else:
-    if not selected_path.to_lower().ends_with(".level"):
+    if not selected_path.begins_with("content://") and not selected_path.to_lower().ends_with(".level"):
       status.text = "Choose a .level file."
       return
     var file := FileAccess.open(selected_path, FileAccess.READ)
@@ -1478,7 +1491,7 @@ func _file_selected(selected_path: String) -> void:
       status.text = "Could not open file: " + error_string(FileAccess.get_open_error())
       return
     path = selected_path
-    if not _is_bundled_level(path): last_file_directory = path.get_base_dir()
+    if not path.begins_with("content://") and not _is_bundled_level(path): last_file_directory = path.get_base_dir()
     saved_text = file.get_as_text()
     _set_source(saved_text)
     game.fit_board()
@@ -1505,7 +1518,7 @@ func _write_file(target: String) -> void:
     status.text = "Could not write file: " + error_string(file.get_error())
     return
   path = target
-  last_file_directory = target.get_base_dir()
+  if not target.begins_with("content://"): last_file_directory = target.get_base_dir()
   saved_text = source.text
   _source_changed()
 
