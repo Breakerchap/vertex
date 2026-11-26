@@ -16,8 +16,9 @@ func _ready() -> void:
     add_to_group("magnetic_fields")
 
 func exit_heading(direction: Vector2, charge: int, exact := false) -> Vector2:
-  var turn := PI * 0.5 if charge * polarity > 0 else -PI * 0.5
-  var rotated := direction.rotated(turn)
+  # A quarter turn needs no trigonometry. Keep axial components exactly
+  # zero so free-flight particles do not spuriously re-cross a shared edge.
+  var rotated := Vector2(-direction.y, direction.x) if charge * polarity > 0 else Vector2(direction.y, -direction.x)
   return rotated if exact else SimulationGrid.heading(rotated)
 
 func _draw() -> void:

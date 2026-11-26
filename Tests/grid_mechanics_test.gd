@@ -457,10 +457,25 @@ func _z_boson_bounces() -> void:
     _new_board()
     var device := _device(kind, Vector2.ZERO)
     if kind == "emitter": device.stop_sequence()
-    if kind == "detector": device.accepted.assign(["z_boson"])
+    if kind == "detector": device.accepted.assign(["photon"])
     var z := _particle("z_boson", Vector2.LEFT * 2.0)
     sim.step_simulation(4.5)
     _check(sim._particles() == [z] and z.direction == Vector2.LEFT, "A Z boson should bounce off a blocking " + kind + ".")
+  _new_board()
+  var detector := _device("detector", Vector2.ZERO)
+  detector.accepted.assign(["z_boson"])
+  detector.set_meta("detector_id", "z_target")
+  var detected: Array[String] = []
+  sim.particle_detected.connect(func(name: String, id: String) -> void: detected.append(name + "@" + id))
+  var accepted_z := _particle("z_boson", Vector2.LEFT * 2.0)
+  var forecast := FORECAST.new(sim, [detector])
+  sim.step_simulation(4.5)
+  forecast.shadow.step_simulation(4.5)
+  _check(accepted_z.is_queued_for_deletion() and detected == ["z_boson@z_target"],
+    "An accepting detector should absorb and count a Z boson exactly once.")
+  _check(forecast.counts.get("z_boson@z_target", 0) == 1,
+    "An accepting detector should count Z bosons in the forecast as well.")
+  forecast.dispose()
   _new_board()
   var gate := _device("gate", Vector2.ZERO, {"starts_open": true})
   var z := _particle("z_boson", Vector2.LEFT * 2.0)
@@ -473,6 +488,27 @@ func _z_boson_bounces() -> void:
     var incoming := _particle(name, Vector2.LEFT)
     sim.step_simulation(2.0)
     _check(sim._particles().size() == 2 and z.direction == Vector2.RIGHT and incoming.direction == Vector2.LEFT and z.speed == 1.0, "A Z boson and %s should bounce off each other while the Z boson keeps its speed." % name)
+
+func _adjacent_magnet_boundary() -> void:
+  for name in ["w_plus", "w_minus"]:
+    _new_board()
+    # Opposite turns at the shared corner used to bounce a diagonal
+    # free-flight particle between two magnets at zero elapsed time.
+    var polarity := 1 if name == "w_plus" else -1
+    var right := _device("magnet", Vector2.ONE, {"polarity": polarity})
+    _device("magnet", Vector2.DOWN, {"polarity": -polarity})
+    _check(right.exit_heading(Vector2.RIGHT, polarity, true) == Vector2.DOWN,
+      "An axial magnetic turn should have exactly zero transverse component.")
+    var boson := _particle(name, Vector2.ZERO)
+    boson.free_flight = true
+    boson.global_position = Vector2.ONE * CELL * 0.5
+    boson.flight_cell = Vector2.ZERO
+    boson.direction = Vector2.ONE
+    var start := boson.motion_position()
+    sim.step_simulation(0.5)
+    _check(not boson.is_queued_for_deletion() and boson.motion_position().distance_to(start) > CELL * 0.1,
+      name + " should escape a zero-time magnetic turn cycle and advance normally.")
+    _check(is_equal_approx(boson.speed, 1.0), "Magnets should not alter W boson speed.")
 
 func _w_boson_fields() -> void:
   for name in ["w_plus", "w_minus"]:
@@ -665,6 +701,7 @@ func _run() -> void:
   _muon_reaction_directions()
   _z_boson_bounces()
   _w_boson_fields()
+  _adjacent_magnet_boundary()
   _gluon_buildings()
   _gluon_blocks()
   _gluon_trap()

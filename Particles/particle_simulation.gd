@@ -13,6 +13,7 @@ const EPSILON := 0.000001
 # Round Z reflections to a subpixel grid so repeated bounces don't amplify float error.
 const REFLECTION_QUANTUM := 1.0 / 2048.0
 const W_FIELD_ACCELERATION := 2.0
+const MAX_STALLED_MOTION_EVENTS := 32
 const QUARK_COLOURS := [Particle.ColourCharge.RED, Particle.ColourCharge.GREEN, Particle.ColourCharge.BLUE]
 
 @export var running := true
@@ -272,8 +273,24 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
   if not particle.free_flight:
     particle.global_position = SimulationGrid.center(particle.global_position)
   var used := 0.0
+  var previous_used := -1.0
+  var stalled_events := 0
+  # At a shared edge/corner, a magnetic turn can cross another cell boundary
+  # without travelling. Do not let the same magnet turn the particle twice
+  # at that point (opposing magnets could otherwise loop forever).
+  var magnetic_entries := {}
   while time - used > EPSILON:
     var from := particle.motion_position()
+    if used - previous_used <= EPSILON:
+      stalled_events += 1
+      if stalled_events >= MAX_STALLED_MOTION_EVENTS:
+        # Last-resort guard for degenerate geometry; finish the tick at rest
+        # without discarding the particle or changing its momentum.
+        path.append({"from": from, "to": from, "start": used, "end": time})
+        break
+    else:
+      stalled_events = 0
+    previous_used = used
     var held := is_instance_valid(particle.held_by)
     if held or particle.glass_wait > EPSILON or particle.speed <= EPSILON or particle.direction.is_zero_approx():
       var trap := _world_impact(particle, from, Vector2.ZERO, obstacles)
@@ -341,8 +358,14 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
     used += duration
     if particle.free_flight:
       particle.global_position = from + motion
+      if not from.is_equal_approx(particle.global_position): magnetic_entries.clear()
       if duration >= flight_boundary:
         var crossed := Vector2(float(duration >= flight_edges.x), float(duration >= flight_edges.y))
+        var crossed_edge := particle.flight_cell + particle.direction.sign() * (SimulationGrid.CELL * 0.5)
+        # Pin crossed coordinates to the actual edge instead of retaining
+        # rounding error from integrating the travel vector.
+        if crossed.x != 0.0: particle.global_position.x = crossed_edge.x
+        if crossed.y != 0.0: particle.global_position.y = crossed_edge.y
         particle.flight_cell = SimulationGrid.center(particle.flight_cell + crossed * particle.direction.sign() * SimulationGrid.CELL)
         particle.source_building = null
         # Leaving a cell can happen while an off-grid particle still overlaps its gate.
@@ -350,7 +373,11 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
           var gate := particle.passed_gates[i] as Node2D
           if not is_instance_valid(gate) or particle.global_position.distance_to(gate.global_position) > SimulationGrid.CELL + particle.world_collision_radius():
             particle.passed_gates.remove_at(i)
-        var terminal_hit := _enter_tile(particle, tiles, obstacles, path, used)
+        var allow_magnetic_turn := not magnetic_entries.has(particle.flight_cell)
+        var entered = tiles.get(particle.flight_cell)
+        if entered != null and entered.is_in_group("magnetic_fields") and particle.charge != 0:
+          magnetic_entries[particle.flight_cell] = true
+        var terminal_hit := _enter_tile(particle, tiles, obstacles, path, used, false, allow_magnetic_turn)
         if not terminal_hit.is_empty():
           terminal_hit.time = used
           terminal_hits[particle] = terminal_hit
@@ -408,7 +435,8 @@ func _world_impact(particle: Particle, from: Vector2, motion: Vector2, obstacles
       else:
         candidate = obstacle.sweep(from, motion, particle.world_collision_radius())
       if not candidate.is_empty() and z_boson and motion.dot(candidate.normal) >= 0.0:
-        continue
+        # Only discard separating contacts when the Z would bounce.
+        if not obstacle.has_method("accepts") or not obstacle.accepts(particle): continue
       if not candidate.is_empty() and (hit.is_empty() or candidate.fraction < hit.fraction):
         hit = candidate
         target = obstacle
@@ -418,7 +446,8 @@ func _world_impact(particle: Particle, from: Vector2, motion: Vector2, obstacles
       if target.hit_gate(particle, from, motion): continue
     hit.target = target
     hit.at = at
-    hit.reflective = hit.reflective or z_boson
+    var accepts_z: bool = z_boson and target.has_method("accepts") and target.accepts(particle)
+    hit.reflective = false if accepts_z else (hit.reflective or z_boson)
     if hit.reflective:
       particle_event.emit("reflection", at)
     return hit
@@ -476,13 +505,13 @@ func _absorb_at_building(particle: Particle, hit: Dictionary) -> void:
     particle_event.emit("absorption", hit.at)
   particle.queue_free()
 
-func _enter_tile(particle: Particle, tiles: Dictionary, obstacles: Array[Node], path: Array[Dictionary], time: float, pushed := false) -> Dictionary:
+func _enter_tile(particle: Particle, tiles: Dictionary, obstacles: Array[Node], path: Array[Dictionary], time: float, pushed := false, allow_magnetic_turn := true) -> Dictionary:
   var at := particle.flight_cell if particle.free_flight else particle.global_position
   var tile = tiles.get(at)
   if tile == null: return {}
   var device: String = tile.get_meta("device", "")
   if particle.flavour == Particle.Flavour.NEUTRINO and device not in ["glass", "holder"]: return {}
-  if tile.is_in_group("magnetic_fields") and particle.charge != 0:
+  if allow_magnetic_turn and tile.is_in_group("magnetic_fields") and particle.charge != 0:
     particle.direction = tile.exit_heading(particle.direction, particle.charge, particle.free_flight)
     particle_event.emit("field", particle.global_position)
   match device:
