@@ -510,6 +510,35 @@ func _adjacent_magnet_boundary() -> void:
       name + " should escape a zero-time magnetic turn cycle and advance normally.")
     _check(is_equal_approx(boson.speed, 1.0), "Magnets should not alter W boson speed.")
 
+func _w_boson_between_magnets() -> void:
+  # Exercise both W signs, both polarities, and a pair of W bosons
+  # whose fields repeatedly bend each other's magnetic paths.
+  for name in ["w_plus", "w_minus"]:
+    for polarity in [-1, 1]:
+      for spacing in [1, 2]:
+        _new_board()
+        var magnets: Array[Node] = []
+        magnets.append(_device("magnet", Vector2(-spacing, 0), {"polarity": polarity}))
+        magnets.append(_device("magnet", Vector2(spacing, 0), {"polarity": -polarity}))
+        var first := _particle(name, Vector2.ZERO, Vector2.RIGHT)
+        var second := _particle(name, Vector2(0, -0.25), Vector2.LEFT)
+        second.free_flight = true
+        second.global_position = Vector2(0, -0.25) * CELL
+        second.flight_cell = Vector2.ZERO
+        var forecast := FORECAST.new(sim, magnets)
+        for tick in range(120):
+          sim.step_simulation(SimulationGrid.TICK)
+          forecast.shadow.step_simulation(SimulationGrid.TICK)
+        _check(is_instance_valid(first) and is_instance_valid(second) and sim._particles().size() == 2,
+          "Opposite magnets and interacting W fields should not destroy or freeze bosons.")
+        if forecast.shadow._particles().size() == 2:
+          _check(first.motion_position().is_equal_approx(forecast.shadow._particles()[0].motion_position()) and
+            second.motion_position().is_equal_approx(forecast.shadow._particles()[1].motion_position()),
+            "Magnetic boundary handling should be deterministic in the live and forecast simulations.")
+        else:
+          _check(false, "The forecast should preserve both W bosons.")
+        forecast.dispose()
+
 func _w_boson_fields() -> void:
   for name in ["w_plus", "w_minus"]:
     var sign := -1.0 if name == "w_plus" else 1.0
@@ -702,6 +731,7 @@ func _run() -> void:
   _z_boson_bounces()
   _w_boson_fields()
   _adjacent_magnet_boundary()
+  _w_boson_between_magnets()
   _gluon_buildings()
   _gluon_blocks()
   _gluon_trap()

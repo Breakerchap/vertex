@@ -14,6 +14,8 @@ const EPSILON := 0.000001
 const REFLECTION_QUANTUM := 1.0 / 2048.0
 const W_FIELD_ACCELERATION := 2.0
 const MAX_STALLED_MOTION_EVENTS := 32
+const MAX_MOTION_EVENTS_PER_TICK := 256
+const MAGNETIC_EDGE_TOLERANCE := SimulationGrid.CELL * 0.0001
 const QUARK_COLOURS := [Particle.ColourCharge.RED, Particle.ColourCharge.GREEN, Particle.ColourCharge.BLUE]
 
 @export var running := true
@@ -135,18 +137,32 @@ func _simulate_tick(time: float) -> void:
   simulation_stepped.emit(time / SimulationGrid.GRID_TICKS_PER_STEP)
 
 func _apply_w_fields(particles: Array[Particle], time: float) -> void:
+  var radius := W_BOSON.FIELD_RADIUS
   var centers: Dictionary[Particle, Vector2] = {}
+  # Index fields by the cells their radius overlaps. Lists retain the original
+  # particle order, so floating point sums and forecast results stay deterministic.
+  var field_buckets := {}
   for particle in particles:
-    if particle.is_w_boson(): centers[particle] = particle.motion_position()
+    if not particle.is_w_boson(): continue
+    var center := particle.motion_position()
+    centers[particle] = center
+    var low := Vector2i(((center - Vector2.ONE * radius) / radius).floor())
+    var high := Vector2i(((center + Vector2.ONE * radius) / radius).floor())
+    for x in range(low.x, high.x + 1):
+      for y in range(low.y, high.y + 1):
+        var key := Vector2i(x, y)
+        if not field_buckets.has(key): field_buckets[key] = []
+        field_buckets[key].append(particle)
   if centers.is_empty(): return
 
-  var radius := W_BOSON.FIELD_RADIUS
   for particle in particles:
     if is_instance_valid(particle.held_by) or is_instance_valid(particle.trapped_by) or particle.glass_wait > EPSILON:
       continue
     var at := particle.motion_position()
+    var nearby: Array = field_buckets.get(Vector2i((at / radius).floor()), [])
+    if nearby.is_empty(): continue
     var acceleration := Vector2.ZERO
-    for field in centers:
+    for field in nearby:
       if field == particle: continue
       var offset := centers[field] - at
       var distance_squared := offset.length_squared()
@@ -157,10 +173,14 @@ func _apply_w_fields(particles: Array[Particle], time: float) -> void:
     if acceleration.is_zero_approx(): continue
     var velocity := particle.travel_vector().normalized() * particle.speed + acceleration * time
     var was_free := particle.free_flight
-    var flight_cell := particle.flight_cell
+    var in_magnet := not particle.magnetic_exit.is_zero_approx()
+    var flight_cell := particle.flight_cell if was_free else particle.global_position
     particle.speed = velocity.length()
     _redirect_particle(particle, at, velocity)
-    if was_free and particle.free_flight: particle.flight_cell = flight_cell
+    # A force changes momentum, not which side of a shared magnetic edge
+    # the particle occupies. Preserve its current magnet when converting
+    # a grid turn into free flight, just as for an existing free flight.
+    if (was_free or in_magnet) and particle.free_flight: particle.flight_cell = flight_cell
 
 func _advance_gluons(particles: Array[Particle], time: float, obstacles: Array[Node], tiles: Dictionary) -> Array[Dictionary]:
   var gluons: Array[BOSON] = []
@@ -279,8 +299,17 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
   # without travelling. Do not let the same magnet turn the particle twice
   # at that point (opposing magnets could otherwise loop forever).
   var magnetic_entries := {}
+  var magnetic_anchor := particle.motion_position()
+  var motion_events := 0
   while time - used > EPSILON:
     var from := particle.motion_position()
+    motion_events += 1
+    if motion_events > MAX_MOTION_EVENTS_PER_TICK:
+      path.append({"from": from, "to": from, "start": used, "end": time})
+      break
+    if from.distance_squared_to(magnetic_anchor) > MAGNETIC_EDGE_TOLERANCE * MAGNETIC_EDGE_TOLERANCE:
+      magnetic_entries.clear()
+      magnetic_anchor = from
     if used - previous_used <= EPSILON:
       stalled_events += 1
       if stalled_events >= MAX_STALLED_MOTION_EVENTS:
@@ -358,7 +387,6 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
     used += duration
     if particle.free_flight:
       particle.global_position = from + motion
-      if not from.is_equal_approx(particle.global_position): magnetic_entries.clear()
       if duration >= flight_boundary:
         var crossed := Vector2(float(duration >= flight_edges.x), float(duration >= flight_edges.y))
         var crossed_edge := particle.flight_cell + particle.direction.sign() * (SimulationGrid.CELL * 0.5)
@@ -407,6 +435,10 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
 func _flight_edges(particle: Particle, velocity: Vector2) -> Vector2:
   var edge := particle.flight_cell + velocity.sign() * (SimulationGrid.CELL * 0.5)
   var distance := edge - particle.global_position
+  # Treat numerical noise at a boundary as zero travel. This lets the
+  # magnetic-entry guard resolve a shared-edge/corner cycle in one tick.
+  if absf(distance.x) <= MAGNETIC_EDGE_TOLERANCE: distance.x = 0.0
+  if absf(distance.y) <= MAGNETIC_EDGE_TOLERANCE: distance.y = 0.0
   var across_x := INF if absf(velocity.x) <= EPSILON else maxf(0.0, distance.x / velocity.x)
   var across_y := INF if absf(velocity.y) <= EPSILON else maxf(0.0, distance.y / velocity.y)
   return Vector2(across_x, across_y)
@@ -544,12 +576,23 @@ func _enter_tile(particle: Particle, tiles: Dictionary, obstacles: Array[Node], 
 
 func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, terminal_hits: Dictionary,
     contacts: Array[Dictionary]) -> Dictionary:
+  # W bosons only collide with neutrinos. Avoid visiting all W/W and W/other
+  # pairs (which can dominate a board with magnetically circulating W bosons).
+  var all_indices: Array[int] = []
+  var non_w_indices: Array[int] = []
+  var neutrino_indices: Array[int] = []
   for i in range(particles.size()):
+    var particle := particles[i]
+    if not paths.has(particle): continue
+    all_indices.append(i)
+    if not particle.is_w_boson(): non_w_indices.append(i)
+    if particle.flavour == Particle.Flavour.NEUTRINO: neutrino_indices.append(i)
+  for i in all_indices:
     var a := particles[i]
-    if not paths.has(a): continue
-    for j in range(i + 1, particles.size()):
-      var b := particles[j]
-      if not paths.has(b) or b in a.separating_from or _passes_through(a, b): continue
+    var candidates := all_indices if a.flavour == Particle.Flavour.NEUTRINO else (neutrino_indices if a.is_w_boson() else non_w_indices)
+    for index in range(candidates.bsearch(i + 1), candidates.size()):
+      var b := particles[candidates[index]]
+      if b in a.separating_from or _passes_through(a, b): continue
       var contact := _first_contact(a, b, paths[a], paths[b])
       if not contact.is_empty():
         contact.a = a
