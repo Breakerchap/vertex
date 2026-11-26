@@ -21,7 +21,7 @@ Photons, neutrinos and antineutrinos travel 1.5 tiles per grid tick. Baryons sta
 
 Detectors absorb particles and count those that match their expression. For example, `[electron OR positron]` matches either type, while `[(up OR down) AND up_r]` matches a red up quark. `AND` binds more tightly than `OR`, and commas mean `OR`. Use a broad name such as `up` to match every colour of that quark.
 
-A level clears as soon as a detector accepts any particle. You can keep running to earn medals, and open the results or advance using **Level cleared**. Completion and each medal are saved independently across attempts.
+By default, a level clears as soon as a detector accepts any particle. You can keep running to earn medals, and open the results or advance using **Level cleared**. Completion and each medal are saved independently across attempts.
 
 Set all three medals in **Level settings**. Use **Place stars** to toggle a marker on any board cell. Example level source:
 

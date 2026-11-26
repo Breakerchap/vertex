@@ -791,6 +791,8 @@ func _paste_building(cell: Vector2i) -> bool:
   var id_pattern := RegEx.new()
   id_pattern.compile("(?i),\\s*id\\s*=\\s*[a-z][a-z0-9_]*")
   declaration = id_pattern.sub(declaration, "")
+  id_pattern.compile("(?i)\\{\\s*id\\s*=\\s*[a-z][a-z0-9_]*\\s*,")
+  declaration = id_pattern.sub(declaration, "{")
   var offset := cell - copied_origin
   for axis in ["x", "y"]:
     var regex := RegEx.new()

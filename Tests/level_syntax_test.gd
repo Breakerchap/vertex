@@ -17,6 +17,19 @@ func _ready() -> void:
   PARTICLES.record_detection(scoped_counts, "photon", "b")
   assert(scoped_counts["photon@b"] == 1 and scoped_counts["any"] == 3)
   assert(PARSER.parse("2 x 2; clear: {missing}; rate_medal: {1}; cost_medal: {0}; star_medal: {any: 1};").has("error"))
+  var scoped_game = GAME.instantiate()
+  scoped_game.level = scoped
+  scoped_game.total_counts = {"any": 2, "any@a": 2, "photon@a": 2}
+  assert(not scoped_game._clear_requirement_met())
+  assert(not scoped_game._meets_output(scoped.rate_rule.rates, scoped_game.total_counts, 1.0))
+  scoped_game.total_counts = scoped_counts
+  assert(scoped_game._clear_requirement_met())
+  assert(scoped_game._meets_output(scoped.rate_rule.rates, scoped_counts, 1.0))
+  assert(scoped_game._goal_count({"up@a": 3, "up_r@a": 2, "up_r@b": 4}, "[up,up_r]@a") == 3)
+  scoped_game.level.clear_mode = "or"
+  scoped_game.total_counts = {"any@b": 1}
+  assert(scoped_game._clear_requirement_met())
+  scoped_game.free()
   var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Tests/magnet_fixture.level"))
   assert(not level.has("error"))
   assert(level.buildings[3].accepted == ["electron", "positron"])

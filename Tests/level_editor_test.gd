@@ -20,6 +20,7 @@ func _ready() -> void:
   for file in DirAccess.get_files_at("res://Levels"):
     if file.ends_with(".level"):
       assert(not PARSER.parse(FileAccess.get_file_as_string("res://Levels/" + file)).has("error"), file)
+  _check_detector_objectives(editor)
   var original := "# preserve this 99 x 99 comment\ntitle: A 15 x 15 dream;\n5 x 5;\ngoal: {[(electron OR up) AND up_r]: 1/s, 2/s, 3/s};\nwall: {x=+0..+1, y=0, fixed=p};\nmagnet: {x=2,y=2,-,fixed=rp};\ninventory: {mirror=2};\n"
   editor._set_source(original)
   editor._set_source("Not a valid level")
@@ -234,6 +235,37 @@ func _ready() -> void:
   editor.free()
   print("Level editor checks passed")
   get_tree().quit()
+
+func _check_detector_objectives(editor) -> void:
+  editor._set_source("5 x 5; rate_medal: {1/step}; cost_medal: {30}; star_medal: {any: 2/step}; detector: {x=0,y=0..1,[photon]};")
+  editor._open_settings()
+  assert(editor.detector_options.size() == 2)
+  assert(editor.clear_detectors.get_child_count() == 2)
+  editor.clear_mode_input.select(1)
+  for choice in editor.clear_detectors.get_children(): choice.button_pressed = true
+  editor.rate_medal_input.text = ""
+  editor._add_star_output(editor.rate_outputs)
+  editor._add_star_output(editor.rate_outputs)
+  for index in range(2):
+    var output: Dictionary = editor.rate_outputs.get_child(index).get_meta("output")
+    output.destination.select(index + 1)
+  var star_fields: Dictionary = editor.star_rules.get_child(0).get_meta("rule")
+  star_fields.rates.get_child(0).get_meta("output").destination.select(2)
+  editor._apply_settings()
+  assert(not editor.parsed.has("error"), editor.settings_error.text)
+  assert(editor.parsed.clear_ids == ["d1", "d2"])
+  assert(editor.parsed.rate_rule.rates == {"any@d1": 1.0, "any@d2": 1.0})
+  assert(editor.parsed.medals.star[0].rates.has("any@d2"))
+  assert(editor.parsed.buildings[0].id == "d1" and editor.parsed.buildings[1].id == "d2")
+  editor._open_settings()
+  assert(editor.clear_detectors.get_child(0).button_pressed and editor.clear_detectors.get_child(1).button_pressed)
+  assert(editor.rate_outputs.get_child(1).get_meta("output").destination.get_selected_metadata() == "d2")
+  editor.settings_dialog.hide()
+  editor._move_block(Vector2i(0, 0), Vector2i(2, 2))
+  assert(editor.game._building_at(Vector2i(2, 2)).get_meta("detector_id") == "d1")
+  editor._select_at(Vector2i(2, 2))
+  editor._delete_selected()
+  assert(editor.game._building_at(Vector2i(2, 2)) != null, "Remove objective references before deleting a named detector")
 
 func _check_stray_particle_editor(editor) -> void:
   editor._set_source(editor.NEW_LEVEL)
