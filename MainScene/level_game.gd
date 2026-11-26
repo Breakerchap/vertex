@@ -74,6 +74,7 @@ var selected_building: Node = null
 var cost: int = 0
 var simulating: bool = false
 var total_counts: Dictionary = {}
+var clear_progress: Label
 var elapsed: float = 0.0
 var automatic_speed := true
 var next_forecast_at := 0.0
@@ -433,9 +434,22 @@ func _layout_sidebar() -> void:
   game_sidebar.offset_bottom = bottom
 
 func _add_medals(rows: VBoxContainer) -> void:
+  if level.has("clear_ids"):
+    clear_progress = UI.label("")
+    clear_progress.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(clear_progress)
+    _refresh_clear_progress()
   var overview := HBoxContainer.new()
   rows.add_child(overview)
-  _add_output_meter(overview, "any", "", level.medals.rate, "rate")
+  if level.has("rate_rule"):
+    var outputs := VBoxContainer.new()
+    outputs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    overview.add_child(outputs)
+    _add_medal_icon(outputs, "rate")
+    for key in level.rate_rule.rates:
+      _add_output_meter(outputs, key, _output_title(level.rate_rule.targets.get(key, key)), level.rate_rule.rates[key], "rate_condition")
+  else:
+    _add_output_meter(overview, "any", "", level.medals.rate, "rate")
   var budget := HBoxContainer.new()
   budget.size_flags_vertical = Control.SIZE_SHRINK_END
   overview.add_child(budget)
@@ -452,7 +466,7 @@ func _add_medals(rows: VBoxContainer) -> void:
     var rule: Dictionary = level.medals.star[index]
     for key in rule.rates:
       var target: String = rule.targets.get(key, key)
-      var title := "" if key == "any" else (PARTICLES.label(target) if PARTICLES.is_selector(target) else target)
+      var title := _output_title(target)
       _add_output_meter(conditions, key, title, rule.rates[key], "star")
     if rule.has("cost"):
       _add_cost_requirement(conditions, rule.cost)
@@ -466,6 +480,28 @@ func _add_medals(rows: VBoxContainer) -> void:
       var progress := UI.label("")
       conditions.add_child(progress)
       star_labels.append(progress)
+
+func _output_title(target: String) -> String:
+  var particle := target.get_slice("@", 0)
+  var title := "Total output" if particle == "any" else (PARTICLES.label(particle) if PARTICLES.is_selector(particle) else particle)
+  if "@" in target: return "%s · Detector %s" % [title, target.get_slice("@", 1).to_upper()]
+  return "" if target == "any" else title
+
+func _refresh_clear_progress() -> void:
+  if not is_instance_valid(clear_progress): return
+  var parts := PackedStringArray()
+  for id in level.get("clear_ids", []):
+    parts.append(("%s ✓" if total_counts.get("any@" + id, 0) > 0 else "%s ○") % id.to_upper())
+  clear_progress.text = "Clear: " + (" AND " if level.get("clear_mode", "and") == "and" else " OR ").join(parts)
+
+func _clear_requirement_met() -> bool:
+  if not level.has("clear_ids"): return not total_counts.is_empty()
+  var all_required: bool = level.get("clear_mode", "and") == "and"
+  for id in level.clear_ids:
+    var detected: bool = total_counts.get("any@" + id, 0) > 0
+    if all_required and not detected: return false
+    if not all_required and detected: return true
+  return all_required
 
 func _add_medal_icon(parent: Container, kind: String) -> void:
   var badge := MEDALS.icon(kind, 24, false)
@@ -566,6 +602,20 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
     var accepted: Array[String] = []
     accepted.assign(entry.get("accepted", entry.get("particles", ["photon"])))
     building.accepted = accepted
+    var detector_id := str(entry.get("id", ""))
+    if not detector_id.is_empty():
+      building.set_meta("detector_id", detector_id)
+      var tag := Label.new()
+      tag.text = detector_id.to_upper()
+      tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+      tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+      tag.add_theme_font_size_override("font_size", int(CELL * 0.22))
+      tag.add_theme_color_override("font_outline_color", Color.BLACK)
+      tag.add_theme_constant_override("outline_size", 6)
+      tag.position = Vector2(-CELL * 0.5, -CELL * 0.5)
+      tag.size.x = CELL
+      tag.z_index = 4
+      building.add_child(tag)
   add_child(building)
   if entry.kind in ["emitter", "detector"]:
     var preview = Node2D.new()
@@ -1055,6 +1105,7 @@ func _clear_stats() -> void:
   forecast_counts.clear()
   forecast_steps = 0.0
   total_counts.clear()
+  _refresh_clear_progress()
   elapsed = 0.0
   earned_medals.clear()
   star_hits.clear()
@@ -1064,13 +1115,14 @@ func _clear_stats() -> void:
   queue_redraw()
   if is_instance_valid(diagnostic_overlay): diagnostic_overlay.clear_events()
 
-func _on_particle_detected(name: String) -> void:
-  PARTICLES.record_detection(total_counts, name)
+func _on_particle_detected(name: String, detector_id := "") -> void:
+  PARTICLES.record_detection(total_counts, name, detector_id)
+  _refresh_clear_progress()
 
 func _on_simulation_stepped(delta: float) -> void:
   if not simulating: return
   elapsed += delta
-  var first_detection := not completed and not total_counts.is_empty()
+  var first_detection := not completed and _clear_requirement_met()
   if first_detection or star_hits_changed:
     star_hits_changed = false
     if first_detection or completed: _update_clear(first_detection)
@@ -1082,7 +1134,8 @@ func _update_clear(first_detection: bool) -> void:
   completed = true
   var previous_count := earned_medals.size()
   if first_detection and cost <= level.medals.cost: earned_medals.append("cost")
-  if "rate" not in earned_medals and _meets_output({"any": level.medals.rate}, forecast_counts, forecast_steps):
+  var rate_targets: Dictionary = level.get("rate_rule", {}).get("rates", {"any": level.medals.rate})
+  if "rate" not in earned_medals and _meets_output(rate_targets, forecast_counts, forecast_steps):
     earned_medals.append("rate")
   if "star" not in earned_medals:
     for rule in level.medals.star:
@@ -1169,14 +1222,16 @@ func _check_star_segment(from: Vector2, to: Vector2, radius: float) -> void:
     queue_redraw()
 
 func _goal_count(counts: Dictionary, key: String) -> int:
-  if not (key.begins_with("[") and key.ends_with("]")):
+  var particle := key.get_slice("@", 0)
+  var suffix := "@" + key.get_slice("@", 1) if "@" in key else ""
+  if not (particle.begins_with("[") and particle.ends_with("]")):
     return int(counts.get(key, 0))
-  var names := key.substr(1, key.length() - 2).split(",", false)
+  var names := particle.substr(1, particle.length() - 2).split(",", false)
   var total := 0
   for name in names:
     # Colour-specific counts are also included in their broad flavour count.
     if PARTICLES.family(name) in names: continue
-    total += int(counts.get(name, 0))
+    total += int(counts.get(name + suffix, 0))
   return total
 
 func _meets_output(rates: Dictionary, counts: Dictionary, steps: float) -> bool:

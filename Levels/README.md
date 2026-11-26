@@ -37,7 +37,22 @@ star: {x=5, y=3};
 - The Cost medal requires a build cost at or below the amount. Buildings already on the board cost nothing.
 - The Star medal supports total output (`any`), named particles or a detector-style particle expression, a build cost limit, excluded building types, and touching all placed stars during the run. Exclusions apply to every building on the board, including starting buildings. Conditions in one `star_medal` block are required together. Additional `star_medal` blocks offer alternative ways to earn the same medal.
 
-The first detection clears the level and starts a background simulation of the build. Output meters and rate-based medals use the same forecast. It measures full cycles when the output repeats and averages a later window when the pattern is irregular. The display uses particles per second at normal playback speed.
+In **Level settings**, choose how a level clears: any detector (the default), all selected detectors, or any selected detector. Select the detectors using their board coordinates. For Rate and Star medals, add an output condition and choose either all detectors or a particular detector; choose total output or a particle expression. The editor automatically assigns persistent detector IDs when a condition references them. A detector's ID appears on the board. Move a detector without changing its ID; remove its objective references before deleting it.
+
+For source editing, the equivalent is:
+
+```text
+detector: {x=8, y=8, [photon], id=a, fixed=p};
+detector: {x=8, y=0, [photon], id=b, fixed=p};
+clear: {a AND b};
+rate_medal: {photon@a: 1/step; photon@b: 1/step};
+cost_medal: {30};
+star_medal: {photon@a: 2/step; photon@b: 2/step};
+```
+
+Use `OR` instead of `AND` for alternative clear detectors. Clear requires one accepted particle at each required detector during the same run, not necessarily simultaneously. A scoped output condition such as `[electron OR positron]@a` measures only that detector. `any@a` counts everything accepted there. Unscoped output conditions still count across the board. All output conditions in a Rate or Star set must be satisfied. IDs must be unique and may contain letters, digits and underscores, starting with a letter.
+
+Completing the clear objective starts a background simulation of the build. Output meters and rate-based medals use the same forecast. It measures full cycles when the output repeats and averages a later window when the pattern is irregular. The display uses particles per second at normal playback speed.
 
 Existing `goal` blocks and `/s` rates still load. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Old hint declarations are ignored. Previous star totals carry forward as completion records.
 

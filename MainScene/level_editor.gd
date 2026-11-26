@@ -71,6 +71,10 @@ var settings_dialog: AcceptDialog
 var title_input: LineEdit
 var rotation_input: OptionButton
 var rate_medal_input: LineEdit
+var detector_options: Array[Dictionary] = []
+var clear_mode_input: OptionButton
+var clear_detectors: VBoxContainer
+var rate_outputs: VBoxContainer
 var cost_medal_input: LineEdit
 var star_rules: VBoxContainer
 var inventory_fields := {}
@@ -340,8 +344,22 @@ func _build_settings_dialog() -> void:
   rotation_input.add_item("8 directions (45 degrees)", 8)
   rotation_input.add_item("4 directions (90 degrees)", 4)
   settings_column.add_child(rotation_input)
+  var clear_title := UI.label("Level completion")
+  UI.heading(clear_title)
+  settings_column.add_child(clear_title)
+  clear_mode_input = OptionButton.new()
+  clear_mode_input.add_item("Any detector (default)")
+  clear_mode_input.add_item("All selected detectors")
+  clear_mode_input.add_item("Any selected detector")
+  settings_column.add_child(clear_mode_input)
+  clear_detectors = VBoxContainer.new()
+  settings_column.add_child(clear_detectors)
+  clear_mode_input.item_selected.connect(func(index: int) -> void: clear_detectors.visible = index != 0)
   _medal_heading(settings_column, "rate")
-  rate_medal_input = _medal_field(settings_column, "Minimum total output per step", "e.g. 1/step")
+  rate_medal_input = _medal_field(settings_column, "Minimum total per step (optional with output conditions)", "e.g. 1/step")
+  rate_outputs = VBoxContainer.new()
+  settings_column.add_child(rate_outputs)
+  UI.button(settings_column, "+ Output condition", func() -> void: _add_star_output(rate_outputs))
   _medal_heading(settings_column, "cost")
   cost_medal_input = _medal_field(settings_column, "Build for this amount or less", "e.g. 30")
   _medal_heading(settings_column, "star")
@@ -770,6 +788,9 @@ func _paste_at_cursor() -> void:
 func _paste_building(cell: Vector2i) -> bool:
   if copied_declaration.is_empty() or parsed.has("error"): return false
   var declaration := copied_declaration
+  var id_pattern := RegEx.new()
+  id_pattern.compile("(?i),\\s*id\\s*=\\s*[a-z][a-z0-9_]*")
+  declaration = id_pattern.sub(declaration, "")
   var offset := cell - copied_origin
   for axis in ["x", "y"]:
     var regex := RegEx.new()
@@ -943,6 +964,10 @@ func _build_visual_form() -> void:
     else:
       UI.button(turns, "↶  Q", _rotate_block.bind(-1)).tooltip_text = "Rotate counterclockwise"
       UI.button(turns, "↷  E", _rotate_block.bind(1)).tooltip_text = "Rotate clockwise"
+  if entry.kind == "detector" and entry.has("id"):
+    var tag := UI.label("Detector " + str(entry.id).to_upper() + " · used in level settings")
+    tag.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    visual_form.add_child(tag)
   if entry.kind in ["emitter", "detector"]:
     var heading := UI.label("Emission order" if entry.kind == "emitter" else "Accepted particles")
     UI.heading(heading, 15)
@@ -1204,6 +1229,8 @@ func _add_star_rule(rule: Dictionary = {}) -> void:
   panel.set_meta("rule", {"rates": output_rows, "cost": cost_field, "excluded": excluded, "hit_stars": hit_stars})
 
 func _add_star_output(parent: VBoxContainer, target := "any", rate := 1.0) -> void:
+  var detector_id := target.get_slice("@", 1) if "@" in target else ""
+  target = target.get_slice("@", 0)
   var row := VBoxContainer.new()
   parent.add_child(row)
   var controls := HFlowContainer.new()
@@ -1213,6 +1240,17 @@ func _add_star_output(parent: VBoxContainer, target := "any", rate := 1.0) -> vo
   selection.add_item("Specific particles")
   selection.select(0 if target == "any" else 1)
   controls.add_child(selection)
+  var destination := OptionButton.new()
+  destination.fit_to_longest_item = false
+  destination.custom_minimum_size.x = 150
+  destination.add_item("All detectors")
+  destination.set_item_metadata(0, "")
+  for option in detector_options:
+    destination.add_item(_detector_label(option))
+    var index := destination.item_count - 1
+    destination.set_item_metadata(index, option.id)
+    if option.id == detector_id: destination.select(index)
+  controls.add_child(destination)
   var amount := LineEdit.new()
   amount.text = _medal_value(rate) + "/step"
   amount.placeholder_text = "Minimum per step"
@@ -1226,7 +1264,7 @@ func _add_star_output(parent: VBoxContainer, target := "any", rate := 1.0) -> vo
     expression.load_text(target.substr(1, target.length() - 2) if bracketed else target)
   expression.visible = selection.selected == 1
   selection.item_selected.connect(func(index: int) -> void: expression.visible = index == 1)
-  row.set_meta("output", {"selection": selection, "amount": amount, "expression": expression, "bracketed": bracketed})
+  row.set_meta("output", {"selection": selection, "amount": amount, "expression": expression, "bracketed": bracketed, "destination": destination})
 
 func _medal_value(value: float) -> String:
   return String.num_scientific(value)
@@ -1243,13 +1281,74 @@ func _star_body(rule: Dictionary) -> String:
   if rule.hit_stars: conditions.append("hit_stars: true")
   return "; ".join(conditions)
 
+func _detector_label(option: Dictionary) -> String:
+  return "Detector %s · (%d, %d)" % [str(option.id).to_upper(), option.cell.x, option.cell.y]
+
+func _prepare_detector_options() -> void:
+  detector_options.clear()
+  var used := {}
+  for entry in parsed.buildings:
+    if entry.kind == "detector" and entry.has("id"): used[entry.id] = true
+  var next_id := 1
+  for block in blocks:
+    for entry in block.entries:
+      if entry.kind != "detector": continue
+      var id := str(entry.get("id", ""))
+      if id.is_empty():
+        while used.has("d%d" % next_id): next_id += 1
+        id = "d%d" % next_id
+        used[id] = true
+        next_id += 1
+      detector_options.append({"id": id, "cell": Vector2i(entry.x, entry.y), "start": block.start, "authored": entry.has("id")})
+
+func _read_output_rows(parent: VBoxContainer) -> PackedStringArray:
+  var conditions := PackedStringArray()
+  for row in parent.get_children():
+    if row.is_queued_for_deletion(): continue
+    var output: Dictionary = row.get_meta("output")
+    var target := "any"
+    if output.selection.selected == 1:
+      target = output.expression.source_text()
+      if target.is_empty():
+        settings_error.text = "Choose a particle expression for each specific output."
+        return PackedStringArray()
+      if output.bracketed or not PARSER._valid_particle(target): target = "[" + target + "]"
+    var id: String = output.destination.get_item_metadata(output.destination.selected)
+    if not id.is_empty(): target += "@" + id
+    conditions.append("%s: %s" % [target, output.amount.text.strip_edges()])
+  return conditions
+
+func _rate_body(data: Dictionary) -> String:
+  if not data.has("rate_rule"): return _medal_value(data.medals.rate) + "/step"
+  var parts := PackedStringArray()
+  for key in data.rate_rule.rates:
+    parts.append("%s: %s/step" % [data.rate_rule.targets.get(key, key), _medal_value(data.rate_rule.rates[key])])
+  return "; ".join(parts)
+
 func _open_settings() -> void:
   if parsed.has("error") or parsed.is_empty(): return
   _clear_children(star_rules)
+  _clear_children(rate_outputs)
+  _clear_children(clear_detectors)
+  _prepare_detector_options()
   settings_error.text = ""
+  clear_mode_input.select(0 if not parsed.has("clear_ids") else (1 if parsed.clear_mode == "and" else 2))
+  clear_detectors.visible = clear_mode_input.selected != 0
+  for option in detector_options:
+    var choice := CheckBox.new()
+    choice.text = _detector_label(option)
+    choice.set_meta("detector_id", option.id)
+    choice.button_pressed = option.id in parsed.get("clear_ids", [])
+    clear_detectors.add_child(choice)
+  if detector_options.is_empty(): clear_detectors.add_child(UI.label("Place a detector on the board first."))
   title_input.text = str(parsed.get("title", ""))
   rotation_input.select(rotation_input.get_item_index(parsed.rotation_steps))
   rate_medal_input.text = _medal_value(parsed.medals.rate) + "/step"
+  if parsed.has("rate_rule"):
+    rate_medal_input.text = ""
+    for key in parsed.rate_rule.rates:
+      if key == "any": rate_medal_input.text = _medal_value(parsed.rate_rule.rates[key]) + "/step"
+      else: _add_star_output(rate_outputs, parsed.rate_rule.targets.get(key, key), parsed.rate_rule.rates[key])
   cost_medal_input.text = _medal_value(parsed.medals.cost)
   for rule in parsed.medals.star: _add_star_rule(rule)
   for kind in inventory_fields:
@@ -1257,24 +1356,29 @@ func _open_settings() -> void:
   settings_dialog.popup_centered_clamped(Vector2i(620, 660), 0.88)
 
 func _apply_settings() -> void:
+  settings_error.text = ""
+  var clear_ids := PackedStringArray()
+  if clear_mode_input.selected != 0:
+    for choice in clear_detectors.get_children():
+      if choice is CheckBox and choice.button_pressed: clear_ids.append(choice.get_meta("detector_id"))
+    if clear_ids.is_empty():
+      settings_error.text = "Select at least one detector to clear the level."
+      return
+  var clear_body := (" AND " if clear_mode_input.selected == 1 else " OR ").join(clear_ids)
+  var rate_parts := _read_output_rows(rate_outputs)
+  if not settings_error.text.is_empty(): return
+  var rate_body := rate_medal_input.text.strip_edges()
+  if not rate_parts.is_empty():
+    if not rate_body.is_empty(): rate_parts.insert(0, "any: " + rate_body)
+    rate_body = "; ".join(rate_parts)
   var new_star_bodies := PackedStringArray()
   var old_star_bodies := PackedStringArray()
   for rule in parsed.medals.star: old_star_bodies.append(_star_body(rule))
   for panel in star_rules.get_children():
     if panel.is_queued_for_deletion(): continue
     var fields: Dictionary = panel.get_meta("rule")
-    var conditions := PackedStringArray()
-    for row in fields.rates.get_children():
-      if row.is_queued_for_deletion(): continue
-      var output: Dictionary = row.get_meta("output")
-      var target := "any"
-      if output.selection.selected == 1:
-        target = output.expression.source_text()
-        if target.is_empty():
-          settings_error.text = "Choose a particle expression for each specific output."
-          return
-        if output.bracketed or not PARSER._valid_particle(target): target = "[" + target + "]"
-      conditions.append("%s: %s" % [target, output.amount.text.strip_edges()])
+    var conditions := _read_output_rows(fields.rates)
+    if not settings_error.text.is_empty(): return
     var cost: String = fields.cost.text.strip_edges()
     if not cost.is_empty(): conditions.append("cost: " + cost)
     var excluded: String = fields.excluded.text.strip_edges()
@@ -1288,12 +1392,12 @@ func _apply_settings() -> void:
     settings_error.text = "Add a condition set for the Star medal."
     return
   var new_medals := {
-    "rate": PackedStringArray([rate_medal_input.text.strip_edges()]),
+    "rate": PackedStringArray([rate_body]),
     "cost": PackedStringArray([cost_medal_input.text.strip_edges()]),
     "star": new_star_bodies,
   }
   var old_medals := {
-    "rate": PackedStringArray([_medal_value(parsed.medals.rate) + "/step"]),
+    "rate": PackedStringArray([_rate_body(parsed)]),
     "cost": PackedStringArray([_medal_value(parsed.medals.cost)]),
     "star": old_star_bodies,
   }
@@ -1312,9 +1416,37 @@ func _apply_settings() -> void:
   var masked: String = PARSER.mask_comments(source.text)
   var edits: Array[Dictionary] = []
   var medal_indices := {"rate": 0, "cost": 0, "star": 0}
+  var referenced := {}
+  for id in clear_ids: referenced[id] = true
+  var scope := RegEx.new()
+  scope.compile("@([a-z][a-z0-9_]*)")
+  for body in [rate_body] + Array(new_star_bodies):
+    for match_id in scope.search_all(body):
+      referenced[match_id.get_string(1)] = true
+  var found_clear := false
   for item in PARSER.find_blocks(masked):
     var kind := item.get_string(1).to_lower()
-    if kind == "inventory" and inventory != parsed.inventory:
+    if kind == "clear":
+      found_clear = true
+      var declaration := "clear: {%s};" % clear_body if not clear_body.is_empty() else ""
+      edits.append({"span": item, "text": declaration})
+    elif kind == "detector":
+      var options: Array[Dictionary] = []
+      var needs_ids := false
+      for option in detector_options:
+        if option.start != item.get_start(): continue
+        options.append(option)
+        if not option.authored and referenced.has(option.id): needs_ids = true
+      if needs_ids:
+        var declarations := PackedStringArray()
+        var original := source.text.substr(item.get_start(), item.get_end(2) + 1 - item.get_start())
+        for option in options:
+          var declaration := _single_declaration(original, option.cell)
+          if not option.authored and referenced.has(option.id):
+            declaration = declaration.left(declaration.rfind("}")).strip_edges() + ", id=" + option.id + "}"
+          declarations.append(declaration + ";")
+        edits.append({"span": item, "text": "\n".join(declarations)})
+    elif kind == "inventory" and inventory != parsed.inventory:
       edits.append({"span": item, "text": ""})
     elif kind == "goal":
       edits.append({"span": item, "text": ""})
@@ -1327,6 +1459,7 @@ func _apply_settings() -> void:
       elif next[index] != old_medals[medal][index]:
         edits.append({"span": item, "text": _medal_declaration(medal, next[index])})
       medal_indices[medal] += 1
+  if not found_clear and not clear_body.is_empty(): additional.append("clear: {%s};" % clear_body)
   for medal in new_medals:
     for index in range(medal_indices[medal], new_medals[medal].size()):
       additional.append(_medal_declaration(medal, new_medals[medal][index]))

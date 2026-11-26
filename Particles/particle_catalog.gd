@@ -88,10 +88,15 @@ static func detection_keys(particle: String) -> Array[String]:
   var base := family(particle)
   return [particle] if base.is_empty() else [particle, base]
 
-static func record_detection(counts: Dictionary, particle: String) -> void:
+static func record_detection(counts: Dictionary, particle: String, detector_id := "") -> void:
   counts["any"] = int(counts.get("any", 0)) + 1
   for key in detection_keys(particle):
     counts[key] = int(counts.get(key, 0)) + 1
+  if not detector_id.is_empty():
+    var suffix := "@" + detector_id
+    counts["any" + suffix] = int(counts.get("any" + suffix, 0)) + 1
+    for key in detection_keys(particle):
+      counts[key + suffix] = int(counts.get(key + suffix, 0)) + 1
 
 static func label(particle: String) -> String:
   if particle in QUARK_FAMILIES: return "%s (any colour)" % particle.capitalize()

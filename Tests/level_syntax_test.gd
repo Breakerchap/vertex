@@ -6,6 +6,17 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 
 func _ready() -> void:
+  var scoped := PARSER.parse("3 x 3; clear: {a AND b}; rate_medal: {photon@a: 1/step; photon@b: 1/step}; cost_medal: {0}; star_medal: {[up OR down]@a: 1/step}; detector: {x=0,y=0,[photon OR up],id=a}; detector: {x=2,y=2,[photon],id=b};")
+  assert(not scoped.has("error"), str(scoped))
+  assert(scoped.clear_ids == ["a", "b"])
+  assert(scoped.rate_rule.rates.has("photon@a") and scoped.rate_rule.rates.has("photon@b"))
+  var scoped_counts := {}
+  PARTICLES.record_detection(scoped_counts, "photon", "a")
+  PARTICLES.record_detection(scoped_counts, "photon", "a")
+  assert(scoped_counts.get("photon@b", 0) == 0 and scoped_counts["any"] == 2)
+  PARTICLES.record_detection(scoped_counts, "photon", "b")
+  assert(scoped_counts["photon@b"] == 1 and scoped_counts["any"] == 3)
+  assert(PARSER.parse("2 x 2; clear: {missing}; rate_medal: {1}; cost_medal: {0}; star_medal: {any: 1};").has("error"))
   var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Tests/magnet_fixture.level"))
   assert(not level.has("error"))
   assert(level.buildings[3].accepted == ["electron", "positron"])

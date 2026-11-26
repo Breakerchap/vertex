@@ -1,7 +1,7 @@
 class_name ParticleSimulation
 extends Node2D
 
-signal particle_detected(particle_name: String)
+signal particle_detected(particle_name: String, detector_id: String)
 signal simulation_stepped(steps: float)
 signal particle_event(kind: String, at: Vector2)
 
@@ -471,7 +471,7 @@ func _reflect_particle(particle: Particle, at: Vector2, hit: Dictionary, incomin
 func _absorb_at_building(particle: Particle, hit: Dictionary) -> void:
   if hit.target.has_method("accepts") and hit.target.accepts(particle):
     particle_event.emit("detection", hit.at)
-    particle_detected.emit(particle.level_particle_name())
+    particle_detected.emit(particle.level_particle_name(), str(hit.target.get_meta("detector_id", "")))
   else:
     particle_event.emit("absorption", hit.at)
   particle.queue_free()

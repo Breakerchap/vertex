@@ -99,12 +99,12 @@ func _init(source: ParticleSimulation, buildings: Array[Node]) -> void:
         particle_copies[original].separating_from.append(particle_copies[partner])
   shadow.particle_detected.connect(_on_detected)
 
-func _on_detected(particle_name: String) -> void:
-  PARTICLES.record_detection(counts, particle_name)
+func _on_detected(particle_name: String, detector_id := "") -> void:
+  PARTICLES.record_detection(counts, particle_name, detector_id)
   if event_ticks.is_empty() or event_ticks[-1] != elapsed_ticks:
     event_ticks.append(elapsed_ticks)
     event_counts.append({})
-  PARTICLES.record_detection(event_counts[-1], particle_name)
+  PARTICLES.record_detection(event_counts[-1], particle_name, detector_id)
 
 ## Measure a repeating output cycle or fall back to a time average.
 func advance() -> bool:

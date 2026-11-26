@@ -31,7 +31,7 @@ static func find_dimensions(text: String) -> RegExMatch:
 static func find_blocks(text: String) -> Array[RegExMatch]:
   var blocks := RegEx.new()
   var names: Array = CATALOG.SCENES.keys()
-  names.append_array(MEDAL_BLOCKS + ["star", "goal", "inventory", "no_build", "magnetic_field", "mirror"])
+  names.append_array(MEDAL_BLOCKS + ["clear", "star", "goal", "inventory", "no_build", "magnetic_field", "mirror"])
   blocks.compile("(?is)\\b(" + "|".join(names) + ")\\s*:\\s*\\{([^}]*)\\}[ \\t]*;?")
   return blocks.search_all(_without_metadata(text))
 
@@ -67,9 +67,22 @@ static func parse(source: String) -> Dictionary:
         if result.has("error"):
           return result
         old_goals.append(result)
+      "clear":
+        if data.has("clear_ids"): return {"error": "Duplicate clear declaration."}
+        var clear_rule := _parse_clear(body)
+        if clear_rule.has("error"): return clear_rule
+        data.merge(clear_rule)
       "rate_medal", "cost_medal":
         var medal := kind.trim_suffix("_medal")
         if data.medals.has(medal): return {"error": "Duplicate " + kind + " declaration."}
+        if medal == "rate" and ":" in body:
+          var rule := _parse_star_medal(body)
+          if rule.has("error"): return rule
+          if rule.rates.is_empty() or rule.has("cost") or rule.hit_stars or not rule.no_buildings.is_empty():
+            return {"error": "The Rate medal accepts only output conditions."}
+          data.rate_rule = rule
+          data.medals.rate = float(rule.rates.get("any", 1.0))
+          continue
         var amount := _parse_rate(body) if medal == "rate" else _parse_cost_limit(body)
         if medal == "rate" and amount <= 0.0: return {"error": "The Rate medal needs a positive rate."}
         if medal == "cost" and amount < 0.0: return {"error": "The Cost medal needs a nonnegative cost limit."}
@@ -104,12 +117,27 @@ static func parse(source: String) -> Dictionary:
   elif data.medals.size() != MEDAL_BLOCKS.size() or not old_goals.is_empty():
     return {"error": "Define a rate_medal, cost_medal and star_medal together."}
   var occupied := {}
+  var detector_ids := {}
   for building in data.buildings:
     var cell := Vector2i(building.x, building.y)
     var key := CATALOG.occupancy_key(building.kind, cell, building.facing)
     if occupied.has(key):
       return {"error": "Overlapping buildings at (%d, %d)." % [cell.x, cell.y]}
     occupied[key] = true
+    if building.has("id"):
+      if building.kind != "detector": return {"error": "Only detectors may have an id."}
+      var id := str(building.id)
+      if not _valid_detector_id(id): return {"error": "Invalid detector id: " + id}
+      if detector_ids.has(id): return {"error": "Duplicate detector id: " + id}
+      detector_ids[id] = true
+  for id in data.get("clear_ids", []):
+    if not detector_ids.has(id): return {"error": "Unknown detector in clear objective: " + id}
+  var rules: Array = data.medals.star.duplicate()
+  if data.has("rate_rule"): rules.append(data.rate_rule)
+  for rule in rules:
+    for key in rule.rates:
+      if "@" in key and not detector_ids.has(key.get_slice("@", 1)):
+        return {"error": "Unknown detector in output objective: " + key.get_slice("@", 1)}
   return data
 
 static func _parse_cost_limit(text: String) -> float:
@@ -117,7 +145,41 @@ static func _parse_cost_limit(text: String) -> float:
   if not value.is_valid_float() or not is_finite(float(value)): return -1.0
   return float(value)
 
+static func _valid_detector_id(id: String) -> bool:
+  var pattern := RegEx.new()
+  pattern.compile("^[a-z][a-z0-9_]*$")
+  return id not in ["and", "or", "any"] and pattern.search(id) != null
+
+static func _parse_clear(body: String) -> Dictionary:
+  var expression := body.strip_edges().to_lower()
+  var pattern := RegEx.new()
+  pattern.compile("\\s+")
+  var words := pattern.sub(expression, " ", true).split(" ", false)
+  if words.size() == 0 or words.size() % 2 == 0:
+    return {"error": "Clear needs detector ids separated by AND or OR."}
+  var ids: Array[String] = []
+  var mode := "and"
+  for index in range(words.size()):
+    var word := words[index]
+    if index % 2 == 0:
+      if not _valid_detector_id(word) or word in ids: return {"error": "Invalid or repeated clear detector: " + word}
+      ids.append(word)
+    elif word not in ["and", "or"] or (index > 1 and word != mode):
+      return {"error": "Use either AND or OR between all clear detectors."}
+    else:
+      mode = word
+  return {"clear_ids": ids, "clear_mode": mode}
+
 static func _parse_output_target(target: String) -> Dictionary:
+  if "@" in target:
+    var parts := target.split("@")
+    if parts.size() != 2 or not _valid_detector_id(parts[1].strip_edges().to_lower()):
+      return {"error": "Use particle@detector_id for detector output."}
+    var id := parts[1].strip_edges().to_lower()
+    var base := _parse_output_target(parts[0].strip_edges())
+    if base.has("error"): return base
+    return {"key": base.key + "@" + id, "target": base.target + "@" + id}
+  if target.to_lower() == "any": return {"key": "any", "target": "any"}
   if target.begins_with("[") and target.ends_with("]"):
     var expression := particle_expression(target.substr(1, target.length() - 2))
     if expression.has("error"): return expression
