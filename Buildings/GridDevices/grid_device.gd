@@ -74,7 +74,10 @@ func sweep_for(particle: Particle, from: Vector2, motion: Vector2) -> Dictionary
     "filter":
       if particle.flavour == Particle.Flavour.PHOTON or (particle.is_quark() and particle.colour == FILTER_COLOURS[filter_colour]):
         return {}
-  return sweep(from, motion, particle.world_collision_radius())
+  var hit := sweep(from, motion, particle.world_collision_radius())
+  if kind == "filter" and particle.is_quark() and not hit.is_empty():
+    hit.reflective = true
+  return hit
 
 ## Return whether the impact lets the particle carry on.
 func hit_gate(particle: Particle, from: Vector2, motion: Vector2) -> bool:

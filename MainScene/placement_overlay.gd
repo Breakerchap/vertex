@@ -14,18 +14,24 @@ const EVENT_COLOURS := {
 
 var events: Array[Dictionary] = []
 
+func _ready() -> void:
+  set_process(false)
+
 func add_event(kind: String, at: Vector2) -> void:
   events.append({"kind": kind, "position": to_local(at), "life": 2.0})
   if events.size() > 80: events.pop_front()
+  set_process(true)
 
 func clear_events() -> void:
   events.clear()
+  set_process(false)
   queue_redraw()
 
 func _process(delta: float) -> void:
   for i in range(events.size() - 1, -1, -1):
     events[i]["life"] = float(events[i].life) - delta
     if events[i].life <= 0.0: events.remove_at(i)
+  if events.is_empty(): set_process(false)
   queue_redraw()
 
 ## Always align outlines and placement previews with grid cells, not sprite rotation.

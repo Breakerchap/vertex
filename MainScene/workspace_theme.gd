@@ -11,6 +11,26 @@ const GOLD := Color("f5ce7e")
 
 static var shared: Theme
 
+static func vertical_scroll() -> ScrollContainer:
+  var scroll := ScrollContainer.new()
+  scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+  scroll.scroll_deadzone = 8
+  scroll.child_entered_tree.connect(_pass_scroll_input)
+  return scroll
+
+static func _pass_scroll_input(node: Node) -> void:
+  # Keep edit fields and nested scrollers in charge of their own gestures.
+  if node is ScrollContainer or not node is Control: return
+  if node is Container or node is BaseButton or node is Label or node is TextureRect or node is ProgressBar:
+    if node.mouse_filter == Control.MOUSE_FILTER_STOP:
+      node.mouse_filter = Control.MOUSE_FILTER_PASS
+    if node is OptionButton:
+      node.action_mode = BaseButton.ACTION_MODE_BUTTON_RELEASE
+    if not node.child_entered_tree.is_connected(_pass_scroll_input):
+      node.child_entered_tree.connect(_pass_scroll_input)
+    for child in node.get_children():
+      if child.is_inside_tree(): _pass_scroll_input(child)
+
 static func theme() -> Theme:
   if shared != null: return shared
   shared = Theme.new()

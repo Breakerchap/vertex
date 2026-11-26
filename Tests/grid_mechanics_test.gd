@@ -100,10 +100,18 @@ func _devices() -> void:
   var good := _particle("down_b", Vector2.LEFT)
   var bad := _particle("up_g", Vector2.RIGHT, Vector2.LEFT)
   sim.step_simulation(2)
-  _check(_at(good, Vector2.RIGHT) and bad.is_queued_for_deletion(), "Filters should allow only matching quark colours.")
+  _check(_at(good, Vector2.RIGHT) and not bad.is_queued_for_deletion() and bad.direction == Vector2.RIGHT,
+    "A filter should pass the matching quark and bounce the other one.")
   var blue := _particle("photon", Vector2.LEFT)
   sim.step_simulation()
   _check(_at(blue, Vector2.RIGHT * 0.5), "Uncoloured photons should pass through a filter.")
+
+  for name in ["electron", "neutron"]:
+    _new_board()
+    _device("filter", Vector2.ZERO)
+    var rejected := _particle(name, Vector2.LEFT)
+    sim.step_simulation()
+    _check(rejected.is_queued_for_deletion(), "A filter should absorb a " + name + ".")
 
   _new_board()
   _device("edge_wall", Vector2.ZERO)
@@ -164,12 +172,22 @@ func _pusher_contacts() -> void:
 
   _new_board()
   _device("pusher", Vector2.ZERO)
-  _device("pusher", Vector2.UP)
+  _device("pusher", Vector2.UP * 2.0)
   var up := _particle("up_r", Vector2.LEFT)
-  var down := _particle("down_b", Vector2(-1, -1))
+  var down := _particle("down_b", Vector2(-1, -2))
   sim.step_simulation()
-  _check(sim._particles().size() == 2 and _at(up, Vector2.UP) and _at(down, Vector2.UP * 2.0),
+  _check(sim._particles().size() == 2 and _at(up, Vector2.UP) and _at(down, Vector2.UP * 3.0),
     "Particles pushed in parallel should stay separated.")
+
+  for orientation in [2, 4]:
+    _new_board()
+    var first := _device("pusher", Vector2.ZERO)
+    var second := _device("pusher", Vector2.UP, {"orientation": orientation})
+    var photon := _particle("photon", Vector2.LEFT, Vector2.RIGHT, 1.0)
+    sim.step_simulation()
+    var expected := Vector2(1, -1) if orientation == 2 else Vector2.ZERO
+    _check(_at(photon, expected) and photon.direction == Vector2.RIGHT and not first.push_up and not second.push_up,
+      "A second pusher should act immediately, with each pusher firing once per chain.")
 
 func _rails_and_forecast() -> void:
   _new_board()
@@ -422,13 +440,13 @@ func _reflectors_and_neutrino_holders() -> void:
       _device("reflector", Vector2.ZERO)
       var particle := _particle(name, side * 2.0, -side)
       sim.step_simulation(4.5)
-      if particle.charge == 0:
+      if particle.charge == 0 and side == Vector2.UP:
         _check(not particle.is_queued_for_deletion() and particle.direction == side, "Reflectors should bounce neutral %s from %s." % [name, side])
       else:
-        _check(particle.is_queued_for_deletion(), "Reflectors should destroy charged %s from %s." % [name, side])
+        _check(particle.is_queued_for_deletion(), "Reflectors should destroy %s approaching from %s." % [name, side])
   _new_board()
   _device("pusher", Vector2.ZERO)
-  _device("reflector", Vector2.UP)
+  _device("reflector", Vector2.UP, {"orientation": 4})
   var photon := _particle("photon", Vector2.LEFT)
   sim.step_simulation()
   _check(sim._particles().size() == 1 and photon.direction == Vector2.DOWN, "A photon pushed into a reflector should reflect on impact.")
@@ -453,7 +471,7 @@ func _muon_reaction_directions() -> void:
   _check(first != second, "Product headings should change when incoming momentum changes even with the same relative velocity.")
 
 func _z_boson_bounces() -> void:
-  for kind in ["wall", "edge_wall", "gate", "glass", "filter", "detector", "emitter", "reflector"]:
+  for kind in ["wall", "edge_wall", "gate", "glass", "filter", "detector", "emitter"]:
     _new_board()
     var device := _device(kind, Vector2.ZERO)
     if kind == "emitter": device.stop_sequence()
@@ -461,6 +479,26 @@ func _z_boson_bounces() -> void:
     var z := _particle("z_boson", Vector2.LEFT * 2.0)
     sim.step_simulation(4.5)
     _check(sim._particles() == [z] and z.direction == Vector2.LEFT, "A Z boson should bounce off a blocking " + kind + ".")
+  for side in [Vector2.UP, Vector2.DOWN, Vector2.RIGHT]:
+    _new_board()
+    _device("reflector", Vector2.ZERO, {"orientation": 2})
+    var z := _particle("z_boson", side * 2.0, -side)
+    sim.step_simulation(4.5)
+    var reflected: bool = not z.is_queued_for_deletion() and z.direction == side
+    _check(reflected if side == Vector2.RIGHT else z.is_queued_for_deletion(),
+      "A Z boson should only bounce off the shiny side of a rotated reflector.")
+  for kind in ["wall", "edge_wall"]:
+    _new_board()
+    var emitter := _device("emitter", Vector2.ZERO, {"start_on_ready": false}) as ParticleEmitter
+    var cell := Vector2.RIGHT if kind == "wall" else Vector2.ZERO
+    _device(kind, cell)
+    var reflections := [0]
+    sim.particle_event.connect(func(event: String, _at: Vector2) -> void:
+      if event == "reflection": reflections[0] += 1)
+    var z := emitter.emit_particle(Particle.Flavour.Z_BOSON, false, Vector2.RIGHT)
+    sim.step_simulation(2.0)
+    _check(reflections[0] == 1 and z.direction == Vector2.LEFT and z.motion_position().x < -CELL,
+      "A Z boson should escape its emitter after a bounce off the adjacent " + kind + ".")
   _new_board()
   var detector := _device("detector", Vector2.ZERO)
   detector.accepted.assign(["z_boson"])
@@ -634,17 +672,18 @@ func _gluon_buildings() -> void:
   sim.step_simulation(0.8)
   _check(gluon.is_queued_for_deletion() and captive.trapped_by == null and not captive.is_queued_for_deletion(), "A destroyed gluon should release its trapped particle.")
 
-func _gluon_blocks() -> void:
+func _gluon_pass_through() -> void:
   _new_board()
   var a := _particle("gluon", Vector2.LEFT * 2.0) as BOSON
   var b := _particle("gluon", Vector2.RIGHT * 2.0, Vector2.LEFT) as BOSON
-  sim.step_simulation(2.0)
-  _check(a.blocked_by == b and b.blocked_by == a and a.caught.is_empty() and b.caught.is_empty(), "Head-on gluon tips should block each other without trapping each other.")
-  _check(is_equal_approx(a.motion_position().distance_to(b.motion_position()), a.world_collision_radius() + b.world_collision_radius()), "A gluon tip should stop where its hitbox meets the other tip.")
   var forecast := FORECAST.new(sim, [])
-  forecast.shadow.step_simulation()
-  var shadow_a := forecast.shadow._particles()[0] as BOSON
-  _check(shadow_a.blocked_by == forecast.shadow._particles()[1] and shadow_a.motion_position().is_equal_approx(a.motion_position()), "Forecasts should preserve blocked tips.")
+  sim.step_simulation(2.0)
+  forecast.shadow.step_simulation(2.0)
+  _check(_at(a, Vector2.RIGHT * 2.0) and _at(b, Vector2.LEFT * 2.0) and a.caught.is_empty() and b.caught.is_empty(),
+    "Head-on gluon tips should pass through and keep travelling.")
+  var forecast_particles := forecast.shadow._particles()
+  _check(_at(forecast_particles[0], Vector2.RIGHT * 2.0) and _at(forecast_particles[1], Vector2.LEFT * 2.0),
+    "Gluon tips should pass through each other in the forecast.")
   forecast.dispose()
 
   _new_board()
@@ -652,7 +691,58 @@ func _gluon_blocks() -> void:
   sim.step_simulation(2.0)
   b = _particle("gluon", Vector2(2, -2), Vector2.DOWN) as BOSON
   sim.step_simulation(2.0)
-  _check(b.blocked_by == a and a.blocked_by == null and b.motion_position().y < 0.0 and _at(a, Vector2.RIGHT * 8.0), "A gluon should stop at another gluon's laid trail while the leading tip continues.")
+  _check(_at(b, Vector2(2, 2)) and _at(a, Vector2.RIGHT * 8.0),
+    "A gluon should pass through another gluon's trail.")
+
+  _new_board()
+  a = _particle("gluon", Vector2.ZERO) as BOSON
+  a.trap(_particle("electron", Vector2.LEFT * 4.0))
+  a.trap(_particle("positron", Vector2.RIGHT * 4.0))
+  b = _particle("gluon", Vector2.UP, Vector2.DOWN) as BOSON
+  sim.step_simulation()
+  _check(a.caught.size() == 2 and _at(b, Vector2.DOWN),
+    "A gluon should also pass through a contracting trail.")
+
+func _gluon_emitter_waits_for_tail() -> void:
+  _new_board()
+  var emitter := _device("emitter", Vector2.ZERO, {"rate": 20.0, "start_on_ready": false}) as ParticleEmitter
+  var entry := ParticleEmission.new()
+  entry.flavour = Particle.Flavour.GLUON
+  emitter.play_sequence([entry, entry])
+  sim.step_simulation(2.0)
+  var gluon := emitter.last_gluon
+  _check(sim._particles() == [gluon] and _at(gluon, Vector2.RIGHT * 4.0) and emitter._pending.size() == 1,
+    "A gluon emitter should keep its next emission queued while its earlier trail covers the launch area.")
+  var forecast := FORECAST.new(sim, [emitter])
+  forecast.shadow.step_simulation()
+  _check(forecast.shadow._particles().size() == 1, "The forecast should also wait for the copied gluon's trail.")
+  forecast.dispose()
+
+  var near := _particle("electron", Vector2.LEFT * 2.0)
+  var far := _particle("positron", Vector2.RIGHT * 3.0)
+  gluon.trap(near)
+  gluon.trap(far)
+  sim.step_simulation(SimulationGrid.TICK)
+  _check(emitter.last_gluon == gluon, "A contracting trail across the emitter should keep blocking emission.")
+  near.global_position.y += CELL * 3.0
+  far.global_position.y += CELL * 3.0
+  sim.step_simulation(SimulationGrid.TICK * 2.0)
+  _check(emitter.last_gluon == gluon and emitter._pending.size() == 1,
+    "Clearing the emitter should start a full firing interval.")
+  forecast = FORECAST.new(sim, [emitter])
+  var shadow_emitter := forecast.emitters[0]
+  var shadow_gluon := shadow_emitter.last_gluon
+  forecast.shadow.step_simulation(SimulationGrid.TICK)
+  sim.step_simulation(SimulationGrid.TICK)
+  _check(emitter.last_gluon == gluon and shadow_emitter.last_gluon == shadow_gluon,
+    "The live and forecast emitters should both wait until the remaining cooldown has elapsed.")
+  forecast.shadow.step_simulation(SimulationGrid.TICK)
+  sim.step_simulation(SimulationGrid.TICK)
+  _check(emitter.last_gluon != gluon and not gluon.is_queued_for_deletion() and emitter._pending.is_empty(),
+    "The emitter should fire one interval after clearance, even while its previous gluon exists.")
+  _check(shadow_emitter.last_gluon != shadow_gluon and shadow_emitter._pending.is_empty(),
+    "The forecast should fire on the same tick as the live emitter.")
+  forecast.dispose()
 
 func _gluon_trap() -> void:
   _new_board()
@@ -733,7 +823,8 @@ func _run() -> void:
   _adjacent_magnet_boundary()
   _w_boson_between_magnets()
   _gluon_buildings()
-  _gluon_blocks()
+  _gluon_pass_through()
+  _gluon_emitter_waits_for_tail()
   _gluon_trap()
   _gluon_trail_bounces_and_releases()
   if is_instance_valid(sim): sim.free()

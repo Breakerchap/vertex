@@ -10,7 +10,6 @@ const EPSILON := 0.00001
 
 var trail_points := PackedVector2Array()
 var edge_stopped := false
-var blocked_by: Particle
 var caught: Array[Particle] = []
 
 func _ready() -> void:
@@ -32,13 +31,9 @@ func release_captives() -> void:
     if is_instance_valid(particle): particle.trapped_by = null
   caught.clear()
 
-func record_path(path: Array, until: float) -> void:
+func record_path(path: Array[Dictionary]) -> void:
   for leg in path:
-    if leg.start > until: break
     _record_point(leg.from)
-    if leg.end > until:
-      _record_point(leg.from.lerp(leg.to, inverse_lerp(leg.start, leg.end, until)))
-      break
     _record_point(leg.to)
   _record_point(motion_position())
   sprite.rotation = direction.angle() + PI * 0.5
@@ -87,12 +82,21 @@ func _move_captive(particle: Particle, at: Vector2, heading: Vector2) -> void:
   particle.update_motion_offset()
 
 func sweep_trail(particle: Particle, from: Vector2, motion: Vector2) -> Dictionary:
+  if particle.flavour == Flavour.GLUON: return {}
   var reflect := particle.flavour == Flavour.Z_BOSON
+  if caught.size() == 2 and not reflect: return {}
+  return _sweep_trail(from, motion, particle.world_collision_radius(), reflect)
+
+func trail_overlaps(at: Vector2, radius: float) -> bool:
+  if caught.size() == 2: prune_captives()
+  if caught.size() != 2 and trail_points[0].distance_squared_to(at) <= radius * radius:
+    return true
+  return not _sweep_trail(at, Vector2.ZERO, radius, false).is_empty()
+
+func _sweep_trail(from: Vector2, motion: Vector2, radius: float, reflect: bool) -> Dictionary:
   var diameter := world_collision_radius() * 2.0
-  var radius := particle.world_collision_radius()
   var sweep_bounds := Rect2(from, Vector2.ZERO).expand(from + motion).grow(radius + diameter * 0.5)
   if caught.size() == 2:
-    if not reflect and particle.flavour != Flavour.GLUON: return {}
     return _sweep_capsule(from, motion, caught[0].global_position, caught[1].global_position, radius + diameter * LINE_HALF_WIDTH, reflect)
   var tip := trail_points[trail_points.size() - 1]
   var best := _sweep_capsule(from, motion, tip, tip, radius + diameter * 0.5, reflect)

@@ -18,10 +18,16 @@ func sweep(from: Vector2, motion: Vector2, particle_radius: float) -> Dictionary
   var axis_x := basis.x.normalized()
   var axis_y := basis.y.normalized()
   var half_size := shape.size * Vector2(basis.x.length(), basis.y.length()) * 0.5
-  var relative := from - collision_shape.global_position
+  var relative := from - basis.origin
   var start := Vector2(relative.dot(axis_x), relative.dot(axis_y))
   var move := Vector2(motion.dot(axis_x), motion.dot(axis_y))
   var radius := maxf(0.0, particle_radius)
+  var extent := half_size + Vector2.ONE * radius
+  var sweep_min := start.min(start + move)
+  var sweep_max := start.max(start + move)
+  if (sweep_min.x > extent.x or sweep_max.x < -extent.x
+      or sweep_min.y > extent.y or sweep_max.y < -extent.y):
+    return {}
   var closest := Vector2(clampf(start.x, -half_size.x, half_size.x), clampf(start.y, -half_size.y, half_size.y))
   var offset := start - closest
   if offset.length_squared() <= radius * radius:

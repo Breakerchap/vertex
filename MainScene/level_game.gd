@@ -100,6 +100,7 @@ var stop_button: Button
 
 func _ready() -> void:
   running = false
+  set_process(false)
   RenderingServer.set_default_clear_color(UI.BACKGROUND)
   $SimulationControls/Panel.theme = UI.theme()
   _add_camera_controls()
@@ -135,6 +136,7 @@ func _exit_tree() -> void:
   _cancel_forecast()
 
 func _draw() -> void:
+  _refresh_placement_overlay()
   if level.is_empty() or level.has("error"):
     return
   for x in range(level.width):
@@ -188,6 +190,7 @@ func _update_board_camera(available: Rect2) -> void:
   camera.zoom = Vector2.ONE * zoom_amount
   camera.offset = (get_viewport_rect().size * 0.5 - available.get_center()) / zoom_amount
   camera.force_update_scroll()
+  _refresh_placement_overlay()
 
 func fit_board() -> void:
   camera_pan = Vector2.ZERO
@@ -399,8 +402,7 @@ func _add_sidebar(layer: CanvasLayer) -> void:
   sidebar.add_child(panel)
   var margin := UI.margin()
   panel.add_child(margin)
-  var scroll := ScrollContainer.new()
-  scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+  var scroll := UI.vertical_scroll()
   margin.add_child(scroll)
   var rows := VBoxContainer.new()
   rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -542,7 +544,6 @@ func _load_initial_board() -> void:
   _clear_particles()
   _clear_buildings()
   inventory = level.inventory.duplicate(true)
-  track_particle_paths = not level.stars.is_empty()
   inventory.erase("rail")
   cost = 0
   undo_history.clear()
@@ -707,6 +708,8 @@ func _board_target(cell: Vector2i, world: Vector2) -> Node:
 
 func _input(event: InputEvent) -> void:
   if not is_visible_in_tree(): return
+  if not simulating and (event is InputEventMouse or event is InputEventScreenDrag or event is InputEventScreenTouch):
+    _refresh_placement_overlay()
   if event is InputEventScreenDrag and touches.has(event.index):
     _drag_touch(event)
   elif event is InputEventScreenTouch and not event.pressed and touches.has(event.index):
@@ -753,6 +756,10 @@ func cancel_board_gesture() -> void:
   pan_button = MOUSE_BUTTON_NONE
   mouse_panning = false
   touches.clear()
+  _refresh_placement_overlay()
+
+func _refresh_placement_overlay() -> void:
+  if is_instance_valid(diagnostic_overlay): diagnostic_overlay.queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
   if not is_visible_in_tree(): return
@@ -1101,6 +1108,7 @@ func _clear_particles() -> void:
 
 func _clear_stats() -> void:
   _cancel_forecast()
+  track_particle_paths = not level.stars.is_empty()
   next_forecast_at = 0.0
   forecast_counts.clear()
   forecast_steps = 0.0
@@ -1128,6 +1136,7 @@ func _on_simulation_stepped(delta: float) -> void:
     if first_detection or completed: _update_clear(first_detection)
   if completed and forecast == null and elapsed >= next_forecast_at:
     forecast = FORECAST.new(self, buildings)
+    set_process(true)
     _refresh_output()
 
 func _update_clear(first_detection: bool) -> void:
@@ -1166,6 +1175,7 @@ func _cancel_forecast() -> void:
   if forecast != null:
     forecast.dispose()
   forecast = null
+  set_process(false)
 
 func _save_run_progress() -> void:
   if not editor_playtest: Global.record_level_progress(Global.selected_level, earned_medals)
@@ -1218,6 +1228,7 @@ func _check_star_segment(from: Vector2, to: Vector2, radius: float) -> void:
     if at.distance_squared_to(nearest) <= radius * radius: star_hits[cell] = true
   if previous != star_hits.size():
     star_hits_changed = true
+    track_particle_paths = star_hits.size() < level.stars.size()
     _refresh_star_labels()
     queue_redraw()
 

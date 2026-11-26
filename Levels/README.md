@@ -52,17 +52,21 @@ star_medal: {photon@a: 2/step; photon@b: 2/step};
 
 Use `OR` instead of `AND` for alternative clear detectors. Clear requires one accepted particle at each required detector during the same run, not necessarily simultaneously. A scoped output condition such as `[electron OR positron]@a` measures only that detector. `any@a` counts everything accepted there. Unscoped output conditions still count across the board. All output conditions in a Rate or Star set must be satisfied. IDs must be unique and may contain letters, digits and underscores, starting with a letter.
 
+Deleting a detector in the editor removes its clear and medal conditions. If no named clear detectors remain, any detector can clear the level. A Rate or Star medal that loses its last condition uses the corresponding new-level threshold.
+
 Completing the clear objective starts a background simulation of the build. Output meters and rate-based medals use the same forecast. It measures full cycles when the output repeats and averages a later window when the pattern is irregular. The display uses particles per second at normal playback speed.
 
 Existing `goal` blocks and `/s` rates still load. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Old hint declarations are ignored. Previous star totals carry forward as completion records.
 
 ## Gluons, Z bosons and W bosons
 
-Use `gluon` and `z_boson` in emitter sequences. Gluons have mass zero and travel two tiles per tick. Glass slows them, reflectors bounce them, pushers shift them, and walls and filters block them. The trail follows the tip's route. Two gluon tips stop when they meet, and a tip also stops if it hits another gluon's trail.
+Use `gluon` and `z_boson` in emitter sequences. Gluons have mass zero and travel two tiles per tick. Glass slows them, the shiny side of reflectors bounces them, pushers shift them, and walls and filters absorb them. The trail follows the tip's route. Gluon tips pass through other gluon tips and trails.
+
+An emitter waits for its previous gluon's trail to clear the emitter's front, then waits one firing interval before emitting another gluon.
 
 The first particle to touch a trail stays in place. When a second touches it, the tip stops moving and both particles are pulled together at three tiles per tick. They interact on contact and the trail disappears. A trail stays active when its tip reaches the edge of the board. If a building absorbs the tip, the trail disappears and releases its captive.
 
-Z bosons travel one tile per tick. They bounce off other particles, gluon trails, and buildings that would otherwise absorb them, including detectors that do not accept Z bosons. A detector that accepts `z_boson` absorbs and counts it normally. They still pass through an open gate.
+Z bosons travel one tile per tick. They bounce off other particles, gluon trails, and most buildings, including detectors that reject them. A detector that accepts `z_boson` absorbs and counts it. The sides and back of a reflector also absorb Z bosons. They pass through an open gate.
 
 W bosons use `w_plus` and `w_minus`. Both have a field three tiles across. W⁺ pulls nearby particles inward and W⁻ pushes them outward. The force fades toward the field's edge. W bosons pass through other particles and gluon trails. A neutrino is absorbed on contact and flips the W boson's sign. An antineutrino is absorbed and converts the W into a Z boson. The converted boson keeps its motion.
 
@@ -72,11 +76,11 @@ W bosons use `w_plus` and `w_minus`. Both have a field three tiles across. W⁺ 
 | --- | --- |
 | `gate: {x=2, y=1, open=false};` | Starts closed by default. Along its facing axis, a closed gate absorbs the hit and opens, and an open gate passes the hit and closes. Hits from other directions are blocked. |
 | `glass: {x=2, y=1};` | Electrons, muons, neutrinos, their antiparticles, photons and gluons pause while passing through. Glass blocks all other particles. |
-| `filter: {x=2, y=1, colour=blue};` | Passes photons and quarks of one matching colour. Choose red, green or blue. |
+| `filter: {x=2, y=1, colour=blue};` | Passes photons and quarks of the chosen colour. Bounces rejected quarks and Z bosons. Absorbs other particles that hit it. Choose red, green or blue. |
 | `edge_wall: {x=2, y=1, N};` | Blocks the chosen cardinal edge while leaving the cell free for a building. Click near an edge to place or select its wall. |
-| `reflector: {x=2, y=1, N};` | Reflects uncharged particles and absorbs charged ones. Existing `mirror` declarations and inventory entries still load. |
+| `reflector: {x=2, y=1, N};` | The shiny front reflects uncharged particles. Charged hits and hits on the sides or back are absorbed. Existing `mirror` declarations and inventory entries still load. |
 | `holder: {x=2, y=1};` | Holds one particle at the cell centre, including neutrinos or antineutrinos. A particle interaction releases the holder’s contents or the reaction products. |
-| `pusher: {x=2, y=1};` | The facing direction sets the first one-tile push. The next push goes in the opposite direction. Each keeps its speed and heading. |
+| `pusher: {x=2, y=1};` | The facing direction sets the first one-tile push. The next push goes in the opposite direction. A push into another pusher triggers it immediately. Each pusher fires at most once in that chain, and the particle keeps its speed and heading. |
 | `magnet: {x=2, y=1, polarity=positive};` | Charged particles enter and exit through the edges along paths that turn them 90 degrees. A matching charge turns clockwise and an opposite charge turns counterclockwise. Neutral particles pass straight through. |
 | `stray_particle: {x=2, y=1, E, [electron]};` | Starts the run with one particle travelling in the direction of its arrow. Rotate with **Q** or **E**, or tap it on a touchscreen. The rotation cycle includes `REST`, which gives it zero initial momentum. Choose the type in the editor. It defaults to an electron. |
 

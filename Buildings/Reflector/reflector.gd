@@ -19,7 +19,7 @@ func _ready() -> void:
   if not Engine.is_editor_hint():
     add_to_group("particle_blockers")
 
-## Sweep against the reflector body. Neutral particles reflect on every face.
+## Only the flat front strip reflects uncharged particles.
 func sweep_for(particle: Particle, from: Vector2, motion: Vector2) -> Dictionary:
   var neutral := particle.charge == 0
   var tangent := global_transform.x.normalized()
@@ -94,4 +94,5 @@ func sweep_for(particle: Particle, from: Vector2, motion: Vector2) -> Dictionary
 
   if best_t == INF:
     return {}
-  return {"fraction": best_t, "normal": (tangent * best_normal.x + normal * best_normal.y).normalized(), "reflective": neutral}
+  return {"fraction": best_t, "normal": (tangent * best_normal.x + normal * best_normal.y).normalized(),
+    "reflective": neutral and best_normal == Vector2.UP, "allow_z_reflection": false}

@@ -50,6 +50,7 @@ func _init(source: ParticleSimulation, buildings: Array[Node]) -> void:
         copy._pending = original._pending.duplicate()
         copy._sequence_template = original._sequence_template.duplicate()
         copy._time_until_next = original._time_until_next
+        copy._gluon_cooldown = original._gluon_cooldown
         if copy._continuous or (copy.repeat_sequence and not copy._pending.is_empty()):
           var entries: int = 1 if copy._continuous else copy._sequence_template.size()
           var period: float = entries * TICKS_PER_SIMULATION_STEP / copy.rate
@@ -76,6 +77,7 @@ func _init(source: ParticleSimulation, buildings: Array[Node]) -> void:
     copy.glass_wait = original.glass_wait
     copy.constituents = original.constituents.duplicate()
     copy.source_building = building_copies.get(original.source_building)
+    copy.emission_source = building_copies.get(original.emission_source)
     copy.held_by = building_copies.get(original.held_by)
     if is_instance_valid(copy.held_by):
       copy.held_by.set("held_particle", copy)
@@ -85,13 +87,15 @@ func _init(source: ParticleSimulation, buildings: Array[Node]) -> void:
     shadow.add_child(copy)
     copy.flight_cell = original.flight_cell
     particle_copies[original] = copy
+  for original in building_copies:
+    if original is ParticleEmitter and is_instance_valid(original.last_gluon):
+      building_copies[original].last_gluon = particle_copies.get(original.last_gluon)
   for original in particle_copies:
     if original.flavour == Particle.Flavour.GLUON:
       var gluon := original as BOSON
       var trail := particle_copies[original] as BOSON
       trail.trail_points = gluon.trail_points.duplicate()
       trail.edge_stopped = gluon.edge_stopped
-      trail.blocked_by = particle_copies.get(gluon.blocked_by)
       for captive in gluon.caught:
         if particle_copies.has(captive): trail.trap(particle_copies[captive])
     for partner in original.separating_from:
@@ -170,6 +174,7 @@ func _skip_idle_steps(remaining_ticks: int) -> int:
   if has_rails or remaining_ticks < TICKS_PER_SIMULATION_STEP: return 0
   var idle_steps := float(remaining_ticks) / TICKS_PER_SIMULATION_STEP
   for emitter in emitters:
+    if is_inf(emitter._gluon_cooldown): return 0
     if emitter._continuous or not emitter._pending.is_empty():
       idle_steps = minf(idle_steps, emitter._time_until_next - ParticleSimulation.EPSILON)
       if idle_steps < 1.0: return 0
@@ -177,6 +182,7 @@ func _skip_idle_steps(remaining_ticks: int) -> int:
   if not shadow._particles().is_empty(): return 0
   for emitter in emitters:
     if emitter._continuous or not emitter._pending.is_empty(): emitter._time_until_next -= whole_steps
+    emitter._gluon_cooldown = maxf(0.0, emitter._gluon_cooldown - whole_steps)
   return whole_steps * TICKS_PER_SIMULATION_STEP
 
 func dispose() -> void:

@@ -39,9 +39,8 @@ func _ready() -> void:
   subtitle.text = "Levels"
   UI.heading(subtitle, 19)
   box.add_child(subtitle)
-  var list := ScrollContainer.new()
+  var list := UI.vertical_scroll()
   list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-  list.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
   box.add_child(list)
   levels = VBoxContainer.new()
   levels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -103,7 +102,7 @@ func _refresh_levels() -> void:
       var clear_mark := UI.label("✓" if progress.completed else "")
       clear_mark.custom_minimum_size.x = 18
       clear_mark.tooltip_text = "Level cleared" if progress.completed else "Level uncleared"
-      clear_mark.mouse_filter = Control.MOUSE_FILTER_STOP
+      clear_mark.mouse_filter = Control.MOUSE_FILTER_PASS
       row.add_child(clear_mark)
       row.add_child(MEDALS.strip(progress.medals, 28))
   if paths.is_empty():

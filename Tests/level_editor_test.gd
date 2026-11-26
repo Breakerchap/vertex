@@ -4,6 +4,7 @@ const EDITOR = preload("res://MainScene/level_editor.tscn")
 const PARSER = preload("res://Levels/level_parser.gd")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
+const UI = preload("res://MainScene/workspace_theme.gd")
 
 func _ready() -> void:
   get_window().size = Vector2i(1280, 720)
@@ -17,6 +18,7 @@ func _ready() -> void:
   assert(panel_rect.position.x >= 0 and panel_rect.position.y >= 0)
   assert(panel_rect.end.x <= viewport_size.x and panel_rect.end.y <= viewport_size.y)
   await _check_adaptive_layout(editor)
+  await _check_touch_scrolling()
   for file in DirAccess.get_files_at("res://Levels"):
     if file.ends_with(".level"):
       assert(not PARSER.parse(FileAccess.get_file_as_string("res://Levels/" + file)).has("error"), file)
@@ -265,7 +267,62 @@ func _check_detector_objectives(editor) -> void:
   assert(editor.game._building_at(Vector2i(2, 2)).get_meta("detector_id") == "d1")
   editor._select_at(Vector2i(2, 2))
   editor._delete_selected()
-  assert(editor.game._building_at(Vector2i(2, 2)) != null, "Remove objective references before deleting a named detector")
+  assert(editor.game._building_at(Vector2i(2, 2)) == null)
+  assert(editor.parsed.clear_ids == ["d2"] and editor.parsed.rate_rule.rates == {"any@d2": 1.0})
+  assert(editor.parsed.medals.star[0].rates.has("any@d2"))
+  editor._select_at(Vector2i(0, 1))
+  editor._delete_selected()
+  assert(not editor.parsed.has("clear_ids") and not editor.parsed.has("rate_rule"))
+  assert(editor.parsed.medals.star[0].rates == {"any": 2.0})
+  editor._undo_editor()
+  assert(editor.game._building_at(Vector2i(0, 1)) != null and editor.parsed.clear_ids == ["d2"])
+
+func _check_touch_scrolling() -> void:
+  var layer := CanvasLayer.new()
+  layer.layer = 110
+  add_child(layer)
+  var scroll := UI.vertical_scroll()
+  scroll.size = Vector2(200, 120)
+  layer.add_child(scroll)
+  var rows := VBoxContainer.new()
+  rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  scroll.add_child(rows)
+  var presses := [0]
+  for i in range(10):
+    var button := UI.button(rows, "Row %d" % i, func() -> void: presses[0] += 1)
+    button.custom_minimum_size.y = 42
+  await get_tree().process_frame
+  await get_tree().process_frame
+  var touch_emulation := Input.emulate_touch_from_mouse
+  Input.emulate_touch_from_mouse = true
+  var at := Vector2(70, 70)
+  var down := InputEventMouseMotion.new()
+  down.position = at
+  down.device = InputEvent.DEVICE_ID_EMULATION
+  get_viewport().push_input(down, true)
+  _mouse_button(MOUSE_BUTTON_LEFT, at, true, InputEvent.DEVICE_ID_EMULATION)
+  _touch(0, at, true)
+  var swipe := InputEventMouseMotion.new()
+  swipe.position = at - Vector2(0, 33)
+  swipe.relative = swipe.position - at
+  swipe.button_mask = MOUSE_BUTTON_MASK_LEFT
+  swipe.device = InputEvent.DEVICE_ID_EMULATION
+  get_viewport().push_input(swipe, true)
+  _touch_drag(0, swipe.position)
+  _mouse_button(MOUSE_BUTTON_LEFT, swipe.position, false, InputEvent.DEVICE_ID_EMULATION)
+  _touch(0, swipe.position, false)
+  assert(scroll.scroll_vertical >= 30 and presses[0] == 0,
+    "Swiping from a button should scroll without activating it. Scroll: %d, presses: %d." % [scroll.scroll_vertical, presses[0]])
+  Input.emulate_touch_from_mouse = touch_emulation
+  await get_tree().process_frame
+  await get_tree().process_frame
+  var tap: Vector2 = rows.get_child(2).get_global_rect().get_center()
+  _mouse_button(MOUSE_BUTTON_LEFT, tap, true, InputEvent.DEVICE_ID_EMULATION)
+  _touch(0, tap, true)
+  _mouse_button(MOUSE_BUTTON_LEFT, tap, false, InputEvent.DEVICE_ID_EMULATION)
+  _touch(0, tap, false)
+  assert(presses[0] == 1, "An ordinary tap should still activate a button in the scroller.")
+  layer.free()
 
 func _check_stray_particle_editor(editor) -> void:
   editor._set_source(editor.NEW_LEVEL)

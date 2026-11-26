@@ -49,9 +49,8 @@ func _ready() -> void:
   title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   UI.heading(title)
   column.add_child(title)
-  scroll = ScrollContainer.new()
+  scroll = UI.vertical_scroll()
   scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-  scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
   column.add_child(scroll)
   contents = VBoxContainer.new()
   contents.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -132,17 +131,13 @@ func _button_input(event: InputEvent, kind: String) -> void:
     drag_kind = kind
     drag_start = get_global_mouse_position()
 
-func _process(_delta: float) -> void:
-  if drag_kind.is_empty() or not is_instance_valid(ghost): return
-  var pos := get_global_mouse_position()
-  if pos.distance_to(drag_start) > 8.0:
-    ghost.texture = _icon(drag_kind)
-    ghost.position = pos - ghost.size * 0.5
-    ghost.show()
-
 func _input(event: InputEvent) -> void:
-  if drag_kind.is_empty(): return
-  if event is InputEventMouseButton and event.device != InputEvent.DEVICE_ID_EMULATION and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+  if drag_kind.is_empty() or event.device == InputEvent.DEVICE_ID_EMULATION: return
+  if event is InputEventMouseMotion and event.position.distance_to(drag_start) > 8.0:
+    ghost.texture = _icon(drag_kind)
+    ghost.position = event.position - ghost.size * 0.5
+    ghost.show()
+  elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
     var kind := drag_kind
     drag_kind = ""
     if is_instance_valid(ghost): ghost.hide()

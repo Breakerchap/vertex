@@ -247,9 +247,8 @@ func _build_inspector(hud: CanvasLayer) -> void:
   inspector_column.add_child(inspector_actions)
   UI.button(inspector_actions, "Tools", _select_move_tool)
   UI.button(inspector_actions, "Remove  " + UI.delete_key_label(), _delete_selected)
-  var inspector_scroll := ScrollContainer.new()
+  var inspector_scroll := UI.vertical_scroll()
   inspector_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-  inspector_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
   inspector_column.add_child(inspector_scroll)
   visual_form = VBoxContainer.new()
   visual_form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -265,8 +264,7 @@ func _build_dialogs() -> void:
   inspector_dialog = AcceptDialog.new()
   inspector_dialog.ok_button_text = "Close"
   UI.setup_dialog(inspector_dialog, self, "Properties")
-  var scroll := ScrollContainer.new()
-  scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+  var scroll := UI.vertical_scroll()
   inspector_dialog.add_child(scroll)
   var inspector := VBoxContainer.new()
   inspector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -328,9 +326,8 @@ func _build_settings_dialog() -> void:
   UI.setup_dialog(settings_dialog, self, "Level settings")
   var settings_root := VBoxContainer.new()
   settings_dialog.add_child(settings_root)
-  var settings_scroll := ScrollContainer.new()
+  var settings_scroll := UI.vertical_scroll()
   settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-  settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
   settings_root.add_child(settings_scroll)
   var settings_column := VBoxContainer.new()
   settings_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -644,6 +641,7 @@ func _set_area_tool(tool: AreaTool) -> void:
   unblock_area_button.set_pressed_no_signal(tool == AreaTool.UNBLOCK)
   star_tool_button.set_pressed_no_signal(tool == AreaTool.STAR)
   game.area_selection_enabled = tool in [AreaTool.BLOCK, AreaTool.UNBLOCK]
+  game._refresh_placement_overlay()
   game.area_origin = Vector2i(-1, -1)
   game.drag_cell = Vector2i(-1, -1)
   if not parsed.has("error"): _update_level_status()
@@ -732,6 +730,7 @@ func _select_block(index: int, cell: Vector2i = Vector2i(-1, -1)) -> void:
     selected_building = game._building_at(cell, entry.kind, entry.facing)
     inspector_heading.text = "%s  (%d, %d)" % [str(entry.kind).capitalize(), cell.x, cell.y]
   game.selected_building = selected_building
+  game._refresh_placement_overlay()
   _refresh_tool_panels()
   _build_visual_form()
   if index < 0: _clear_property_form()
@@ -830,6 +829,11 @@ func _replace_selected_cell(replacement: String) -> bool:
   if selected_block < 0: return false
   var block: Dictionary = blocks[selected_block]
   var declarations := PackedStringArray()
+  var deleted_detectors := PackedStringArray()
+  if replacement.is_empty():
+    for entry in block.entries:
+      if entry.has("id") and (edit_range or Vector2i(entry.x, entry.y) == selected_cell):
+        deleted_detectors.append(entry.id)
   if edit_range:
     if not replacement.is_empty(): declarations.append(replacement.trim_suffix(";"))
   else:
@@ -839,7 +843,7 @@ func _replace_selected_cell(replacement: String) -> bool:
         if not replacement.is_empty(): declarations.append(replacement.trim_suffix(";"))
       else:
         declarations.append(_single_declaration(block.text, cell).trim_suffix(";"))
-  return _replace_block(selected_block, ";\n".join(declarations))
+  return _replace_block(selected_block, ";\n".join(declarations), deleted_detectors)
 
 func _move_block(from_cell: Vector2i, to_cell: Vector2i) -> void:
   if parsed.has("error") or from_cell == to_cell: return
@@ -1135,9 +1139,11 @@ func _apply_advanced_field(field: Control) -> void:
   if is_instance_valid(field) and field in property_fields:
     _apply_properties()
 
-func _replace_block(index: int, replacement: String) -> bool:
+func _replace_block(index: int, replacement: String, deleted_detectors := PackedStringArray()) -> bool:
   var block: Dictionary = blocks[index]
   var updated := source.text.left(block.start) + replacement + source.text.substr(block.end)
+  if not deleted_detectors.is_empty():
+    updated = _remove_detector_objectives(updated, deleted_detectors)
   var result := PARSER.parse(updated)
   if result.has("error"):
     var error := declaration_error if inspector_dialog.visible else property_error
@@ -1177,6 +1183,54 @@ func _apply_properties() -> void:
 func _delete_selected() -> void:
   if selected_block < 0: return
   _replace_selected_cell("")
+
+func _remove_detector_objectives(updated: String, deleted: PackedStringArray) -> String:
+  var spans := PARSER.find_blocks(PARSER.mask_comments(updated))
+  spans.reverse()
+  var star_blocks := 0
+  var removed_stars := 0
+  for span in spans:
+    var kind := span.get_string(1).to_lower()
+    var replacement := ""
+    if kind == "clear":
+      var ids := PackedStringArray()
+      for id in parsed.clear_ids:
+        if id not in deleted: ids.append(id)
+      if ids.size() == parsed.clear_ids.size(): continue
+      if not ids.is_empty():
+        replacement = "clear: {%s};" % (" " + parsed.clear_mode.to_upper() + " ").join(ids)
+    elif kind in ["rate_medal", "star_medal"]:
+      var body := updated.substr(span.get_start(2), span.get_end(2) - span.get_start(2))
+      var conditions := PackedStringArray()
+      var removed := false
+      var offset := 0
+      for clause in span.get_string(2).split(";"):
+        var target := clause.get_slice(":", 0).strip_edges().to_lower()
+        if "@" in target and target.get_slice("@", 1).strip_edges() in deleted:
+          removed = true
+        else:
+          conditions.append(body.substr(offset, clause.length()))
+        offset += clause.length() + 1
+      var kept := ";".join(conditions)
+      var empty := PARSER.mask_comments(kept).replace(";", "").strip_edges().is_empty()
+      if kind == "star_medal":
+        star_blocks += 1
+        if removed and empty: removed_stars += 1
+      if not removed: continue
+      if not empty:
+        replacement = _medal_declaration(kind.trim_suffix("_medal"), kept)
+      elif kind == "rate_medal":
+        replacement = _medal_declaration("rate", "1/s" if parsed.legacy_rates else "1/step")
+    else:
+      continue
+    updated = updated.left(span.get_start()) + replacement + updated.substr(span.get_end())
+  if removed_stars > 0 and removed_stars == star_blocks:
+    updated += "\n" + _medal_declaration("star", "any: 2/s" if parsed.legacy_rates else "any: 2/step") + "\n"
+  if parsed.legacy_rates:
+    var result := PARSER.parse(updated)
+    if not result.has("error") and not result.legacy_rates:
+      updated = _preserve_legacy_emitter_rates(updated, result)
+  return updated
 
 func _toggle_star(cell: Vector2i) -> void:
   if not game.is_cell_on_board(cell): return
@@ -1494,21 +1548,25 @@ func _apply_settings() -> void:
   updated = prefix + updated
   var result: Dictionary = PARSER.parse(updated)
   if not result.has("error") and parsed.legacy_rates and not result.legacy_rates:
-    var declarations := PARSER.find_blocks(PARSER.mask_comments(updated))
-    declarations.reverse()
-    for declaration in declarations:
-      if declaration.get_string(1).to_lower() != "emitter": continue
-      var emitter := PARSER.parse_building("emitter", declaration.get_string(2), result.width, result.height, true)
-      var start := declaration.get_start()
-      var stop := declaration.get_end()
-      var authored := updated.substr(start, stop - start)
-      updated = updated.left(start) + _explicit_emitter_rate(authored, emitter.entries[0].rate) + updated.substr(stop)
+    updated = _preserve_legacy_emitter_rates(updated, result)
     result = PARSER.parse(updated)
   if result.has("error"):
     settings_error.text = str(result.error)
     return
   if updated != source.text: _set_source(updated)
   settings_dialog.hide()
+
+func _preserve_legacy_emitter_rates(updated: String, data: Dictionary) -> String:
+  var declarations := PARSER.find_blocks(PARSER.mask_comments(updated))
+  declarations.reverse()
+  for declaration in declarations:
+    if declaration.get_string(1).to_lower() != "emitter": continue
+    var emitter := PARSER.parse_building("emitter", declaration.get_string(2), data.width, data.height, true)
+    var start := declaration.get_start()
+    var stop := declaration.get_end()
+    var authored := updated.substr(start, stop - start)
+    updated = updated.left(start) + _explicit_emitter_rate(authored, emitter.entries[0].rate) + updated.substr(stop)
+  return updated
 
 func _explicit_emitter_rate(declaration: String, rate: float) -> String:
   var regex := RegEx.new()

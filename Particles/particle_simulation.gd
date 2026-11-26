@@ -18,7 +18,10 @@ const MAX_MOTION_EVENTS_PER_TICK := 256
 const MAGNETIC_EDGE_TOLERANCE := SimulationGrid.CELL * 0.0001
 const QUARK_COLOURS := [Particle.ColourCharge.RED, Particle.ColourCharge.GREEN, Particle.ColourCharge.BLUE]
 
-@export var running := true
+@export var running := true:
+  set(value):
+    running = value
+    set_physics_process(running or _pending_ticks > 0)
 @export_range(0.25, 4.0, 0.25) var simulation_speed := 1.0
 
 var _accumulated_time := 0.0
@@ -36,6 +39,7 @@ func _physics_process(delta: float) -> void:
     if _pending_ticks > 0:
       _pending_ticks -= 1
       step_simulation(SimulationGrid.TICK)
+    set_physics_process(running or _pending_ticks > 0)
     return
   _pending_ticks = 0
   _accumulated_time += delta * maxf(get_playback_speed(), 0.0)
@@ -60,10 +64,12 @@ func request_steps(count: int) -> void:
   running = false
   _accumulated_time = 0.0
   _pending_ticks += maxi(count, 0) * SimulationGrid.TICKS_PER_STEP
+  set_physics_process(_pending_ticks > 0)
 
 func cancel_pending_steps() -> void:
   _pending_ticks = 0
   pause_requested = false
+  set_physics_process(running)
 
 func reset_step_clock() -> void:
   _step_phase = 0.0
@@ -133,7 +139,7 @@ func _simulate_tick(time: float) -> void:
           particle.global_position = particle.held_by.global_position
           if particle.free_flight: particle.flight_cell = particle.global_position
           if particle.flavour == Particle.Flavour.GLUON:
-            (particle as BOSON).record_path([], 0.0)
+            (particle as BOSON).record_path([])
   simulation_stepped.emit(time / SimulationGrid.GRID_TICKS_PER_STEP)
 
 func _apply_w_fields(particles: Array[Particle], time: float) -> void:
@@ -192,37 +198,31 @@ func _advance_gluons(particles: Array[Particle], time: float, obstacles: Array[N
     var pull := _pull_captives(gluon, time)
     if not pull.is_empty(): pulls.append(pull)
     gluons.append(gluon)
-    obstacles.append(gluon)
   if gluons.is_empty(): return pulls
 
-  # Keep the previous trail geometry stable while sweeping all moving tips.
-  var paths := {}
   var hits := {}
   for gluon in gluons:
     if gluon.caught.size() == 2: continue
-    if gluon.edge_stopped or (is_instance_valid(gluon.blocked_by) and not gluon.blocked_by.is_queued_for_deletion()):
+    var path: Array[Dictionary]
+    if gluon.edge_stopped:
       var at := gluon.motion_position()
-      paths[gluon] = [{"from": at, "to": at, "start": 0.0, "end": time}]
+      path = [{"from": at, "to": at, "start": 0.0, "end": time}]
     else:
-      gluon.blocked_by = null
-      paths[gluon] = _advance_particle(gluon, time, obstacles, tiles, hits)
+      path = _advance_particle(gluon, time, obstacles, tiles, hits)
 
-  var stopped := _block_gluon_tips(gluons, paths, hits)
-  for gluon in gluons:
-    if not paths.has(gluon): continue
-    if track_particle_paths: _report_particle_path(gluon, paths[gluon], stopped.get(gluon, time))
+    if track_particle_paths: _report_particle_path(gluon, path, time)
     if hits.has(gluon):
       var hit: Dictionary = hits[gluon]
       if hit.has("edge"):
         _redirect_particle(gluon, hit.at, gluon.direction)
         gluon.edge_stopped = true
-      elif hit.target is BOSON:
-        _stop_gluon(gluon, hit.target, hit.at, gluon.direction)
       else:
         gluon.release_captives()
         _absorb_at_building(gluon, hit)
         continue
-    gluon.record_path(paths[gluon], float(stopped.get(gluon, time)))
+    gluon.record_path(path)
+  # Only other particle types collide with the updated trails.
+  obstacles.append_array(gluons)
   return pulls
 
 func _pull_captives(gluon: BOSON, time: float) -> Dictionary:
@@ -238,39 +238,6 @@ func _pull_captives(gluon: BOSON, time: float) -> Dictionary:
 
 func _report_particle_path(_particle: Particle, _path: Array[Dictionary], _until: float) -> void:
   pass
-
-func _block_gluon_tips(gluons: Array[BOSON], paths: Dictionary, hits: Dictionary) -> Dictionary:
-  var contacts: Array[Dictionary] = []
-  for i in range(gluons.size()):
-    var a := gluons[i]
-    if not paths.has(a): continue
-    for j in range(i + 1, gluons.size()):
-      var b := gluons[j]
-      if not paths.has(b): continue
-      var contact := _first_contact(a, b, paths[a], paths[b])
-      if not contact.is_empty():
-        contact.a = a
-        contact.b = b
-        contacts.append(contact)
-  contacts.sort_custom(_contact_precedes)
-  var stopped := {}
-  for contact in contacts:
-    var a: BOSON = contact.a
-    var b: BOSON = contact.b
-    if stopped.has(a) or stopped.has(b): continue
-    _stop_gluon(a, b, contact.at_a, contact.velocity_a)
-    _stop_gluon(b, a, contact.at_b, contact.velocity_b)
-    _truncate_push(paths[a], contact.get("push_a", {}), contact.at_a)
-    _truncate_push(paths[b], contact.get("push_b", {}), contact.at_b)
-    stopped[a] = contact.time
-    stopped[b] = contact.time
-    hits.erase(a)
-    hits.erase(b)
-  return stopped
-
-func _stop_gluon(gluon: BOSON, blocker: BOSON, at: Vector2, heading: Vector2) -> void:
-  _redirect_particle(gluon, at, gluon.direction if heading.is_zero_approx() else heading)
-  if not is_instance_valid(gluon.blocked_by): gluon.blocked_by = blocker
 
 func _finish_motion(rebounds: Dictionary, terminal_hits: Dictionary, time: float, obstacles: Array[Node], tiles: Dictionary) -> Array[Dictionary]:
   for particle in rebounds:
@@ -396,6 +363,7 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
         if crossed.y != 0.0: particle.global_position.y = crossed_edge.y
         particle.flight_cell = SimulationGrid.center(particle.flight_cell + crossed * particle.direction.sign() * SimulationGrid.CELL)
         particle.source_building = null
+        particle.emission_source = null
         # Leaving a cell can happen while an off-grid particle still overlaps its gate.
         for i in range(particle.passed_gates.size() - 1, -1, -1):
           var gate := particle.passed_gates[i] as Node2D
@@ -405,7 +373,7 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
         var entered = tiles.get(particle.flight_cell)
         if entered != null and entered.is_in_group("magnetic_fields") and particle.charge != 0:
           magnetic_entries[particle.flight_cell] = true
-        var terminal_hit := _enter_tile(particle, tiles, obstacles, path, used, false, allow_magnetic_turn)
+        var terminal_hit := _enter_tile(particle, tiles, obstacles, path, used, allow_magnetic_turn)
         if not terminal_hit.is_empty():
           terminal_hit.time = used
           terminal_hits[particle] = terminal_hit
@@ -418,11 +386,13 @@ func _advance_particle(particle: Particle, time: float, obstacles: Array[Node], 
       # The exit is already half a tile along the outbound grid line.
       particle.progress = 0.5
       particle.source_building = null
+      particle.emission_source = null
       particle.passed_gates.clear()
     elif particle.progress >= 1.0 - EPSILON:
       particle.global_position = destination
       particle.progress = 0.0
       particle.source_building = null
+      particle.emission_source = null
       particle.passed_gates.clear()
       var terminal_hit := _enter_tile(particle, tiles, obstacles, path, used)
       if not terminal_hit.is_empty():
@@ -449,16 +419,16 @@ func _is_grid_heading(travel: Vector2) -> bool:
 func _world_impact(particle: Particle, from: Vector2, motion: Vector2, obstacles: Array[Node]) -> Dictionary:
   var hits_buildings := particle.flavour != Particle.Flavour.NEUTRINO and not motion.is_zero_approx()
   var z_boson := particle.flavour == Particle.Flavour.Z_BOSON
-  var gluon := particle.flavour == Particle.Flavour.GLUON
-  var edge := _gluon_edge_impact(from, motion) if gluon else {}
+  var edge := _gluon_edge_impact(from, motion) if particle.flavour == Particle.Flavour.GLUON else {}
   while true:
     var hit := {}
     var target: Node
     for obstacle in obstacles:
-      if obstacle == particle or obstacle == particle.source_building or obstacle.is_queued_for_deletion(): continue
+      if (obstacle == particle or obstacle == particle.source_building or obstacle == particle.emission_source
+          or obstacle.is_queued_for_deletion()): continue
       var candidate: Dictionary
       if obstacle is BOSON:
-        if particle.is_w_boson() or (gluon and motion.is_zero_approx()): continue
+        if particle.is_w_boson(): continue
         candidate = obstacle.sweep_trail(particle, from, motion)
       elif not hits_buildings:
         continue
@@ -466,10 +436,11 @@ func _world_impact(particle: Particle, from: Vector2, motion: Vector2, obstacles
         candidate = obstacle.sweep_for(particle, from, motion)
       else:
         candidate = obstacle.sweep(from, motion, particle.world_collision_radius())
-      if not candidate.is_empty() and z_boson and motion.dot(candidate.normal) >= 0.0:
-        # Only discard separating contacts when the Z would bounce.
-        if not obstacle.has_method("accepts") or not obstacle.accepts(particle): continue
-      if not candidate.is_empty() and (hit.is_empty() or candidate.fraction < hit.fraction):
+      if candidate.is_empty(): continue
+      if z_boson and candidate.get("allow_z_reflection", true):
+        candidate.reflective = not obstacle.has_method("accepts") or not obstacle.accepts(particle)
+      if candidate.reflective and motion.dot(candidate.normal) >= 0.0: continue
+      if hit.is_empty() or candidate.fraction < hit.fraction:
         hit = candidate
         target = obstacle
     if hit.is_empty() or (not edge.is_empty() and edge.fraction < hit.fraction): return edge
@@ -478,8 +449,6 @@ func _world_impact(particle: Particle, from: Vector2, motion: Vector2, obstacles
       if target.hit_gate(particle, from, motion): continue
     hit.target = target
     hit.at = at
-    var accepts_z: bool = z_boson and target.has_method("accepts") and target.accepts(particle)
-    hit.reflective = false if accepts_z else (hit.reflective or z_boson)
     if hit.reflective:
       particle_event.emit("reflection", at)
     return hit
@@ -526,6 +495,7 @@ func _reflect_particle(particle: Particle, at: Vector2, hit: Dictionary, incomin
     _redirect_reflection(particle, at, heading)
   else:
     _redirect_particle(particle, at, heading)
+  # Keep the emitter exemption while the particle bounces within its spawn cell.
   particle.source_building = hit.target
   particle.passed_gates.clear()
 
@@ -537,12 +507,36 @@ func _absorb_at_building(particle: Particle, hit: Dictionary) -> void:
     particle_event.emit("absorption", hit.at)
   particle.queue_free()
 
-func _enter_tile(particle: Particle, tiles: Dictionary, obstacles: Array[Node], path: Array[Dictionary], time: float, pushed := false, allow_magnetic_turn := true) -> Dictionary:
+func _enter_tile(particle: Particle, tiles: Dictionary, obstacles: Array[Node], path: Array[Dictionary], time: float, allow_magnetic_turn := true) -> Dictionary:
   var at := particle.flight_cell if particle.free_flight else particle.global_position
   var tile = tiles.get(at)
   if tile == null: return {}
   var device: String = tile.get_meta("device", "")
   if particle.flavour == Particle.Flavour.NEUTRINO and device not in ["glass", "holder"]: return {}
+  if device == "pusher":
+    var pushed_from := {}
+    while device == "pusher" and not pushed_from.has(tile):
+      var shift: Vector2 = tile.next_push()
+      var from := particle.global_position
+      var hit := _world_impact(particle, from, shift, obstacles)
+      var motion := shift * float(hit.get("fraction", 1.0))
+      # Sweep the push at the entry time while keeping the incoming momentum.
+      path.append({"from": from, "to": from + motion, "motion": motion, "start": time, "end": time,
+        "velocity": particle.direction.normalized() * particle.speed, "push": pushed_from.size(), "pusher": tile})
+      if not hit.is_empty():
+        path.back().push_end = true
+        if not hit.reflective: return hit
+        _reflect_particle(particle, hit.at, hit, shift)
+        return {}
+      pushed_from[tile] = true
+      particle.global_position += shift
+      at = SimulationGrid.center(at + shift)
+      if particle.free_flight: particle.flight_cell = at
+      tile = tiles.get(at)
+      device = "" if tile == null else tile.get_meta("device", "")
+    path.back().push_end = true
+    if tile == null: return {}
+    allow_magnetic_turn = true
   if allow_magnetic_turn and tile.is_in_group("magnetic_fields") and particle.charge != 0:
     particle.direction = tile.exit_heading(particle.direction, particle.charge, particle.free_flight)
     particle_event.emit("field", particle.global_position)
@@ -555,23 +549,6 @@ func _enter_tile(particle: Particle, tiles: Dictionary, obstacles: Array[Node], 
         tile.held_particle = particle
         particle.held_by = tile
         particle.global_position = tile.global_position
-    "pusher":
-      if pushed: return {}
-      var shift: Vector2 = tile.next_push()
-      var from := particle.global_position
-      var hit := _world_impact(particle, from, shift, obstacles)
-      var motion := shift * float(hit.get("fraction", 1.0))
-      # Sweep the push at the entry time while keeping the incoming momentum.
-      path.append({"from": from, "to": from + motion, "motion": motion, "start": time, "end": time,
-        "velocity": particle.direction.normalized() * particle.speed, "push": true})
-      if not hit.is_empty():
-        if not hit.reflective: return hit
-        _reflect_particle(particle, hit.at, hit, shift)
-        return {}
-      particle.global_position += shift
-      if particle.free_flight:
-        particle.flight_cell = SimulationGrid.center(particle.flight_cell + shift)
-      return _enter_tile(particle, tiles, obstacles, path, time, true)
   return {}
 
 func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, terminal_hits: Dictionary,
@@ -606,7 +583,7 @@ func _resolve_particle_contacts(particles: Array[Particle], paths: Dictionary, t
     var b: Particle = contact.b
     if a.is_queued_for_deletion() or b.is_queued_for_deletion() or redirected.has(a) or redirected.has(b):
       continue
-    if track_particle_paths and contact.has("push_fraction"):
+    if contact.has("push_fraction"):
       push_contacts.append(contact)
     var pulled := contact.has("gluon")
     if pulled:
@@ -704,6 +681,7 @@ func _leg_velocity(leg: Dictionary) -> Vector2:
 
 func _contact_precedes(a: Dictionary, b: Dictionary) -> bool:
   if a.time != b.time: return a.time < b.time
+  if a.get("push", -1) != b.get("push", -1): return a.get("push", -1) < b.get("push", -1)
   return a.get("push_fraction", -1.0) < b.get("push_fraction", -1.0)
 
 func _first_contact(a: Particle, b: Particle, a_path: Array, b_path: Array) -> Dictionary:
@@ -715,15 +693,24 @@ func _first_contact(a: Particle, b: Particle, a_path: Array, b_path: Array) -> D
       if end < start: continue
       var push_a: bool = leg_a.has("push")
       var push_b: bool = leg_b.has("push")
-      # If both particles are pushed together, sweep their displacements together.
+      # Sweep simultaneous pushes in order. A shorter chain stays at its
+      # final point while the other particle completes its remaining pushes.
+      var settled_a := false
+      var settled_b := false
+      if push_a and push_b and leg_a.push != leg_b.push:
+        settled_a = leg_a.push < leg_b.push and leg_a.get("push_end", false)
+        settled_b = leg_b.push < leg_a.push and leg_b.get("push_end", false)
+        if not settled_a and not settled_b: continue
       if push_a != push_b and _push_at_time(b_path if push_a else a_path, start): continue
       var a_start: Vector2 = leg_a.from
       var b_start: Vector2 = leg_b.from
-      var offset_a := _leg_offset(leg_a, start)
-      var offset_b := _leg_offset(leg_b, start)
+      var offset_a: Vector2 = leg_a.motion if settled_a else _leg_offset(leg_a, start)
+      var offset_b: Vector2 = leg_b.motion if settled_b else _leg_offset(leg_b, start)
       var relative := (a_start - b_start) + (offset_a - offset_b)
-      var motion_a: Vector2 = leg_a.motion if push_a else _leg_offset(leg_a, end) - offset_a
-      var motion_b: Vector2 = leg_b.motion if push_b else _leg_offset(leg_b, end) - offset_b
+      var motion_a := Vector2.ZERO
+      var motion_b := Vector2.ZERO
+      if not settled_a: motion_a = leg_a.motion if push_a else _leg_offset(leg_a, end) - offset_a
+      if not settled_b: motion_b = leg_b.motion if push_b else _leg_offset(leg_b, end) - offset_b
       var motion := motion_a - motion_b
       var squared := motion.length_squared()
       var projection := relative.dot(motion)
@@ -743,9 +730,11 @@ func _first_contact(a: Particle, b: Particle, a_path: Array, b_path: Array) -> D
         "separation": relative + motion * fraction}
       if a.flavour == Particle.Flavour.Z_BOSON or b.flavour == Particle.Flavour.Z_BOSON:
         contact.reflection_time = clampf(snappedf(time, REFLECTION_QUANTUM), start, end)
-      if push_a: contact.push_a = leg_a
-      if push_b: contact.push_b = leg_b
-      if push_a or push_b: contact.push_fraction = fraction
+      if push_a and not settled_a: contact.push_a = leg_a
+      if push_b and not settled_b: contact.push_b = leg_b
+      if push_a or push_b:
+        contact.push = leg_a.push if push_a and not settled_a else leg_b.push
+        contact.push_fraction = fraction
       return contact
   return {}
 
@@ -759,8 +748,15 @@ func _leg_offset(leg: Dictionary, time: float) -> Vector2:
 
 func _truncate_push(path: Array, push: Dictionary, at: Vector2) -> void:
   if push.is_empty(): return
+  var index := path.find(push)
+  for i in range(index + 1, path.size()):
+    var leg: Dictionary = path[i]
+    if leg.has("pusher"):
+      leg.pusher.push_up = not leg.pusher.push_up
+      leg.pusher.queue_redraw()
   push.to = at
-  path.resize(path.find(push) + 1)
+  push.motion = at - push.from
+  path.resize(index + 1)
 
 func _position_on_leg(leg: Dictionary, time: float) -> Vector2:
   if leg.end <= leg.start: return leg.to

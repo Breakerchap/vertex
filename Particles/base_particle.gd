@@ -38,6 +38,7 @@ var magnetic_exit := Vector2.ZERO
 var glass_wait := 0.0
 var held_by: Node2D
 var trapped_by: Particle
+var emission_source: Node2D
 var source_building: Node2D
 var passed_gates: Array[Node] = []
 var placeholder_label := ""
