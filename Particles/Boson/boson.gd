@@ -4,7 +4,7 @@ const Z_TEXTURE = preload("res://Z_boson.png")
 const TIP = preload("res://gluon_tip.png")
 const MIDDLE = preload("res://gluon_middle.png")
 const LINE = preload("res://gluon_line.png")
-const PULL_SPEED := 3.0
+const PULL_SPEED := 2.0
 const LINE_HALF_WIDTH := 0.18
 const EPSILON := 0.00001
 
