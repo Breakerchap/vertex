@@ -6,6 +6,7 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 
 func _ready() -> void:
+  _check_rate_migration()
   var scoped := PARSER.parse("3 x 3; clear: {a AND b}; rate_medal: {photon@a: 1/step; photon@b: 1/step}; cost_medal: {0}; star_medal: {[up OR down]@a: 1/step}; detector: {x=0,y=0,[photon OR up],id=a}; detector: {x=2,y=2,[photon],id=b};")
   assert(not scoped.has("error"), str(scoped))
   assert(scoped.clear_ids == ["a", "b"])
@@ -214,12 +215,12 @@ func _run_sparse_level(repeating: bool) -> Node2D:
 func _check_sparse_output() -> void:
   var game := _run_sparse_level(true)
   _advance_forecast(game)
-  assert(is_equal_approx(game.output_rows[0].meter.rate, 1.0 / 300.0), "The sparse stream should measure one detection every 300 steps.")
+  assert(is_equal_approx(game.output_rows[0].meter.rate, 1.0 / 1200.0), "The sparse stream should measure one detection every 1200 ticks.")
   assert(game.completed and game.earned_medals == ["cost", "rate"], "A build at the cost limit should earn the Cost medal.")
   assert(game.cost_rows[0].label.text == "$5 / $5")
   assert(game.total_counts.get("electron", 0) == 1, "Forecast counts must never enter live totals.")
   game.stop_to_build()
-  assert(game.output_rows[0].meter.rate == 0.0 and game.output_rows[0].meter.sample_steps == 0.0)
+  assert(game.output_rows[0].meter.rate == 0.0 and game.output_rows[0].meter.sample_grid_ticks == 0.0)
   game.free()
 
 func _check_one_off_output() -> void:
@@ -239,8 +240,8 @@ func _check_burst_output() -> void:
   _run_steps(game, 2)
   assert(game.forecast != null, "The first burst should start a forecast.")
   _advance_forecast(game)
-  assert(game.output_rows[0].meter.rate == 0.25 and game.output_rows[0].meter.sample_steps == 12.0,
-    "Count three detections over the full twelve-step cycle, including silence.")
+  assert(game.output_rows[0].meter.rate == 0.0625 and game.output_rows[0].meter.sample_grid_ticks == 48.0,
+    "Count three detections over the full 48-tick cycle, including silence.")
   assert(game.earned_medals == ["cost", "star"], "The burst should earn only the medals whose limits it meets.")
   game.free()
 
@@ -355,7 +356,43 @@ func _check_bundled_launch() -> void:
   game.begin_run()
   _run_steps(game, 8)
   _advance_forecast(game)
-  assert(game.output_rows[0].meter.rate == 1.0 and game.output_rows[0].meter.sample_steps == 1.0,
-    "First Contact should measure exactly one photon per second from a repeating cycle.")
+  assert(game.output_rows[0].meter.rate == 0.25 and game.output_rows[0].meter.sample_grid_ticks == 4.0,
+    "First Contact should measure exactly one photon per four ticks from a repeating cycle.")
   assert(game.completed and game.earned_medals.size() == 3, "First Contact should have a route to all three medals.")
   game.free()
+
+func _check_rate_migration() -> void:
+  var legacy := "5 x 5;\n# keep 8/step and cost: 20 unchanged\nrate_medal: {photon@a: 2/step; any: 1/2};\ncost_medal: {30};\nstar_medal: {photon: 1/300; cost: 20; hit_stars: true};\nemitter: {x=0,y=0,E,[photon], rate=1/s};\nemitter: {x=0,y=1,E,[electron]};\nemitter: {x=0,y=2,E,[electron], rate=0.75/tick};\ndetector: {x=4,y=0,[photon],id=a};\n"
+  var upgraded := PARSER.migrate_rates(legacy)
+  assert(upgraded != legacy and PARSER.migrate_rates(upgraded) == upgraded, "Migration must be idempotent.")
+  assert(upgraded.contains("# keep 8/step and cost: 20 unchanged"))
+  assert(upgraded.contains("photon@a: 0.5/tick") and upgraded.contains("any: 0.125/tick"))
+  assert(upgraded.contains("cost: 20") and upgraded.contains("1/1200/tick"))
+  assert(upgraded.contains("rate=0.25/tick") and upgraded.contains("rate=0.75/tick"))
+  var old_data := PARSER.parse(legacy)
+  var new_data := PARSER.parse(upgraded)
+  assert(not old_data.has("error") and not new_data.has("error"))
+  assert(old_data.medals == new_data.medals and old_data.rate_rule == new_data.rate_rule and old_data.buildings == new_data.buildings)
+  assert(new_data.buildings[0].rate == 0.25 and new_data.buildings[1].rate == 0.25 and new_data.buildings[2].rate == 0.75)
+  assert(new_data.medals.cost == 30.0)
+  var goal := "3 x 3; goal: {photon: 1/s, 2/step, inf; cost: 30, 20, 10}; emitter: {x=0,y=0,rate=1/2};"
+  var migrated_goal := PARSER.migrate_rates(goal)
+  assert(migrated_goal.contains("photon: 0.25/tick, 0.5/tick, inf") and migrated_goal.contains("cost: 30, 20, 10"))
+  assert(PARSER.parse(goal).medals == PARSER.parse(migrated_goal).medals)
+  assert(PARSER.parse(goal).buildings == PARSER.parse(migrated_goal).buildings)
+  var invalid := "3 x 3; rate_medal: {1/step};"
+  assert(PARSER.migrate_rates(invalid) == invalid)
+  assert(PARSER._parse_rate("1/tick") == 1.0 and PARSER._parse_rate("1/4/tick") == 0.25)
+  assert(PARSER._parse_rate("1/step") == 0.25 and PARSER._parse_rate("1/s") == 0.25)
+  # Exercise the on-disk migration without touching a player's levels.
+  var path := "user://rate-migration-test-%d.level" % Time.get_ticks_usec()
+  var file := FileAccess.open(path, FileAccess.WRITE)
+  assert(file != null)
+  file.store_string(legacy)
+  file.close()
+  assert(Global.migrate_level_file(path))
+  assert(FileAccess.get_file_as_string(path) == upgraded)
+  assert(FileAccess.get_file_as_string(path + ".pre-tick.bak") == legacy)
+  assert(not Global.migrate_level_file(path))
+  DirAccess.remove_absolute(path)
+  DirAccess.remove_absolute(path + ".pre-tick.bak")

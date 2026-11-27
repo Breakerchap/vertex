@@ -99,7 +99,7 @@ func _simulate_tick(time: float) -> void:
         tiles[building.global_position] = building
 
   for emitter in _active_descendants("particle_emitters"):
-    emitter.step_emission(time / SimulationGrid.GRID_TICKS_PER_STEP)
+    emitter.step_emission(time)
   var particles := _particles()
   _apply_w_fields(particles, time)
   var paths := {}

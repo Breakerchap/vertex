@@ -8,7 +8,7 @@ const PARTICLE_PICKER = preload("res://MainScene/particle_picker.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
 const MEDALS = preload("res://MainScene/medal_display.gd")
-const NEW_LEVEL := "9 x 9;\n\nrate_medal: {1/step};\ncost_medal: {30};\nstar_medal: {any: 2/step};\n\n"
+const NEW_LEVEL := "9 x 9;\n\nrate_medal: {0.25/tick};\ncost_medal: {30};\nstar_medal: {any: 0.5/tick};\n\n"
 
 enum AreaTool { NONE, BLOCK, UNBLOCK, STAR }
 
@@ -353,7 +353,7 @@ func _build_settings_dialog() -> void:
   settings_column.add_child(clear_detectors)
   clear_mode_input.item_selected.connect(func(index: int) -> void: clear_detectors.visible = index != 0)
   _medal_heading(settings_column, "rate")
-  rate_medal_input = _medal_field(settings_column, "Minimum total per step (optional with output conditions)", "e.g. 1/step")
+  rate_medal_input = _medal_field(settings_column, "Minimum total per tick (optional with output conditions)", "e.g. 0.25/tick")
   rate_outputs = VBoxContainer.new()
   settings_column.add_child(rate_outputs)
   UI.button(settings_column, "+ Output condition", func() -> void: _add_star_output(rate_outputs))
@@ -741,7 +741,7 @@ func _place_editor_kind(kind: String, cell: Vector2i, facing := "E") -> void:
     status.show()
     return
   var extra := ""
-  if kind == "emitter": extra = ", E, rate=1/step"
+  if kind == "emitter": extra = ", E, rate=0.25/tick"
   elif kind == "detector": extra = ", [photon]"
   elif kind == "stray_particle": extra = ", E, [electron]"
   elif kind == "edge_wall": extra = ", " + facing
@@ -999,11 +999,12 @@ func _build_visual_form() -> void:
   if entry.kind == "emitter":
     var rate := SpinBox.new()
     rate.min_value = 0.0
-    rate.max_value = 1000.0
+    rate.max_value = 250.0
     rate.allow_greater = true
     rate.step = 0.0
     rate.value = float(entry.rate)
-    _visual_row("Rate / step", rate)
+    rate.tooltip_text = "Particles per tick. 0.25 emits one particle every four ticks."
+    _visual_row("Rate / tick", rate)
     visual_fields.rate = rate
   var fixed_position := CheckBox.new()
   fixed_position.text = "Lock position"
@@ -1066,7 +1067,7 @@ func _apply_visual_properties() -> void:
   elif not entry.particles.is_empty():
     parts.append("[" + ", ".join(entry.particles) + "]")
   if visual_fields.has("rate"):
-    parts.append("rate=%s/step" % String.num_scientific(visual_fields.rate.value))
+    parts.append("rate=%s/tick" % String.num_scientific(visual_fields.rate.value))
   var fixed := str(entry.fixed).replace("p", "")
   if visual_fields.fixed_position.button_pressed: fixed += "p"
   if visual_fields.has("fixed_rotation"):
@@ -1220,12 +1221,12 @@ func _remove_detector_objectives(updated: String, deleted: PackedStringArray) ->
       if not empty:
         replacement = _medal_declaration(kind.trim_suffix("_medal"), kept)
       elif kind == "rate_medal":
-        replacement = _medal_declaration("rate", "1/s" if parsed.legacy_rates else "1/step")
+        replacement = _medal_declaration("rate", "0.25/tick")
     else:
       continue
     updated = updated.left(span.get_start()) + replacement + updated.substr(span.get_end())
   if removed_stars > 0 and removed_stars == star_blocks:
-    updated += "\n" + _medal_declaration("star", "any: 2/s" if parsed.legacy_rates else "any: 2/step") + "\n"
+    updated += "\n" + _medal_declaration("star", "any: 0.5/tick") + "\n"
   if parsed.legacy_rates:
     var result := PARSER.parse(updated)
     if not result.has("error") and not result.legacy_rates:
@@ -1284,7 +1285,7 @@ func _add_star_rule(rule: Dictionary = {}) -> void:
   column.add_child(hit_stars)
   panel.set_meta("rule", {"rates": output_rows, "cost": cost_field, "excluded": excluded, "hit_stars": hit_stars})
 
-func _add_star_output(parent: VBoxContainer, target := "any", rate := 1.0) -> void:
+func _add_star_output(parent: VBoxContainer, target := "any", rate := 0.25) -> void:
   var detector_id := target.get_slice("@", 1) if "@" in target else ""
   target = target.get_slice("@", 0)
   var row := VBoxContainer.new()
@@ -1308,8 +1309,8 @@ func _add_star_output(parent: VBoxContainer, target := "any", rate := 1.0) -> vo
     if option.id == detector_id: destination.select(index)
   controls.add_child(destination)
   var amount := LineEdit.new()
-  amount.text = _medal_value(rate) + "/step"
-  amount.placeholder_text = "Minimum per step"
+  amount.text = _medal_value(rate) + "/tick"
+  amount.placeholder_text = "Minimum per tick"
   amount.custom_minimum_size.x = 120
   controls.add_child(amount)
   UI.button(controls, "Remove output", func() -> void: row.queue_free())
@@ -1331,7 +1332,7 @@ func _medal_declaration(kind: String, body: String) -> String:
 func _star_body(rule: Dictionary) -> String:
   var conditions := PackedStringArray()
   for key in rule.rates:
-    conditions.append("%s: %s/step" % [rule.targets.get(key, key), _medal_value(rule.rates[key])])
+    conditions.append("%s: %s/tick" % [rule.targets.get(key, key), _medal_value(rule.rates[key])])
   if rule.has("cost"): conditions.append("cost: " + _medal_value(rule.cost))
   if not rule.no_buildings.is_empty(): conditions.append("no_buildings: " + ", ".join(rule.no_buildings))
   if rule.hit_stars: conditions.append("hit_stars: true")
@@ -1371,14 +1372,14 @@ func _read_output_rows(parent: VBoxContainer) -> PackedStringArray:
       if output.bracketed or not PARSER._valid_particle(target): target = "[" + target + "]"
     var id: String = output.destination.get_item_metadata(output.destination.selected)
     if not id.is_empty(): target += "@" + id
-    conditions.append("%s: %s" % [target, output.amount.text.strip_edges()])
+    conditions.append("%s: %s" % [target, PARSER.editor_rate_text(output.amount.text)])
   return conditions
 
 func _rate_body(data: Dictionary) -> String:
-  if not data.has("rate_rule"): return _medal_value(data.medals.rate) + "/step"
+  if not data.has("rate_rule"): return _medal_value(data.medals.rate) + "/tick"
   var parts := PackedStringArray()
   for key in data.rate_rule.rates:
-    parts.append("%s: %s/step" % [data.rate_rule.targets.get(key, key), _medal_value(data.rate_rule.rates[key])])
+    parts.append("%s: %s/tick" % [data.rate_rule.targets.get(key, key), _medal_value(data.rate_rule.rates[key])])
   return "; ".join(parts)
 
 func _open_settings() -> void:
@@ -1399,11 +1400,11 @@ func _open_settings() -> void:
   if detector_options.is_empty(): clear_detectors.add_child(UI.label("Place a detector on the board first."))
   title_input.text = str(parsed.get("title", ""))
   rotation_input.select(rotation_input.get_item_index(parsed.rotation_steps))
-  rate_medal_input.text = _medal_value(parsed.medals.rate) + "/step"
+  rate_medal_input.text = _medal_value(parsed.medals.rate) + "/tick"
   if parsed.has("rate_rule"):
     rate_medal_input.text = ""
     for key in parsed.rate_rule.rates:
-      if key == "any": rate_medal_input.text = _medal_value(parsed.rate_rule.rates[key]) + "/step"
+      if key == "any": rate_medal_input.text = _medal_value(parsed.rate_rule.rates[key]) + "/tick"
       else: _add_star_output(rate_outputs, parsed.rate_rule.targets.get(key, key), parsed.rate_rule.rates[key])
   cost_medal_input.text = _medal_value(parsed.medals.cost)
   for rule in parsed.medals.star: _add_star_rule(rule)
@@ -1423,7 +1424,7 @@ func _apply_settings() -> void:
   var clear_body := (" AND " if clear_mode_input.selected == 1 else " OR ").join(clear_ids)
   var rate_parts := _read_output_rows(rate_outputs)
   if not settings_error.text.is_empty(): return
-  var rate_body := rate_medal_input.text.strip_edges()
+  var rate_body := PARSER.editor_rate_text(rate_medal_input.text)
   if not rate_parts.is_empty():
     if not rate_body.is_empty(): rate_parts.insert(0, "any: " + rate_body)
     rate_body = "; ".join(rate_parts)
@@ -1573,7 +1574,7 @@ func _explicit_emitter_rate(declaration: String, rate: float) -> String:
   regex.compile("(?i)\\brate\\s*=\\s*[^,}\\s]+")
   var masked := PARSER.mask_comments(declaration)
   var found := regex.search(masked)
-  var text := "rate=%s/step" % String.num_scientific(rate)
+  var text := "rate=%s/tick" % String.num_scientific(rate)
   if found != null:
     return declaration.left(found.get_start()) + text + declaration.substr(found.get_end())
   var end := masked.rfind("}")
@@ -1705,7 +1706,7 @@ func _file_selected(selected_path: String) -> void:
     path = selected_path
     if not path.begins_with("content://") and not _is_bundled_level(path): last_file_directory = path.get_base_dir()
     saved_text = file.get_as_text()
-    _set_source(saved_text)
+    _set_source(PARSER.migrate_rates(saved_text))
     game.fit_board()
 
 func _can_save() -> bool:
@@ -1720,6 +1721,8 @@ func _write_file(target: String) -> void:
   if _is_bundled_level(target):
     status.text = "Built-in levels are read-only. Save a copy in another folder."
     return
+  var upgraded := PARSER.migrate_rates(source.text)
+  if upgraded != source.text: _set_source(upgraded)
   var file := FileAccess.open(target, FileAccess.WRITE)
   if file == null:
     status.text = "Could not save file: " + error_string(FileAccess.get_open_error())

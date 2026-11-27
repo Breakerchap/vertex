@@ -3,17 +3,17 @@ extends Control
 const UI = preload("res://MainScene/workspace_theme.gd")
 const TRACK_HEIGHT := 8.0
 
-var target := 1.0
+var target := 0.25
 var rate := 0.0
 var measuring := false
-var sample_steps := 0.0
+var sample_grid_ticks := 0.0
 
 func _ready() -> void:
   custom_minimum_size = Vector2(36.0, TRACK_HEIGHT)
   size_flags_vertical = Control.SIZE_SHRINK_CENTER
 
-func set_rate(value: float, pending: bool, steps: float) -> void:
-  sample_steps = steps
+func set_rate(value: float, pending: bool, ticks: float) -> void:
+  sample_grid_ticks = ticks
   rate = value
   measuring = pending
   queue_redraw()
@@ -31,6 +31,6 @@ func _draw() -> void:
   draw_rect(fill, UI.ACCENT)
 
 func _get_tooltip(_at_position: Vector2) -> String:
-  if sample_steps > 0.0: return "%s/s output" % format_rate(rate)
+  if sample_grid_ticks > 0.0: return "%s/tick output" % format_rate(rate)
   if measuring: return "Measuring output…"
-  return "%s/s required" % format_rate(target)
+  return "%s/tick required" % format_rate(target)

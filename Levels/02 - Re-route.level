@@ -2,14 +2,14 @@ title: 02 - Re-route;
 
 15 x 8;
 
-rate_medal: {2/step};
+rate_medal: {0.5/tick};
 cost_medal: {15};
 star_medal: { hit_stars: true };
 star: { x = 4, y = 2 };
 star: { x = 4, y = 3 };
 
-emitter: {x=1, y=4, E, [electron], rate=1/step, fixed=rp};
-emitter: {x=13, y=4, W, [positron], rate=1/step, fixed=rp};
+emitter: {x=1, y=4, E, [electron], rate=0.25/tick, fixed=rp};
+emitter: {x=13, y=4, W, [positron], rate=0.25/tick, fixed=rp};
 mirror: {x=7, y=6, SW, fixed=p};
 wall: {x=2, y=6, fixed=pr} 
 detector: {x=4, y=1, [photon], fixed=rp};

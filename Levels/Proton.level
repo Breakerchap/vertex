@@ -1,17 +1,17 @@
 title: Proton Stuff;
 9 x 9;
 
-rate_medal: { 1/step };
+rate_medal: { 0.25/tick };
 cost_medal: { 40 };
-star_medal: { proton: 1/step; cost: 120 };
+star_medal: { proton: 0.25/tick; cost: 120 };
 
 detector: {x=7, y=7, [proton], fixed=p}
 wall: {x=8, y=6, fixed=p}
 wall: {x=7, y=6, fixed=p}
 wall: {x=6, y=6, fixed=p}
-emitter: {x=0, y=2, E, [down_r, down_g, down_b], rate=1/step}
-emitter: {x=8, y=2, W, [up_r, up_g, up_b], rate=1/step}
-emitter: {x=4, y=0, N, [up_r, up_g, up_b], rate=1/step}
+emitter: {x=0, y=2, E, [down_r, down_g, down_b], rate=0.25/tick}
+emitter: {x=8, y=2, W, [up_r, up_g, up_b], rate=0.25/tick}
+emitter: {x=4, y=0, N, [up_r, up_g, up_b], rate=0.25/tick}
 
 inventory: {magnet=4, gate=2, filter=3, holder=2, pusher=3};
 

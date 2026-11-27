@@ -80,7 +80,7 @@ var automatic_speed := true
 var next_forecast_at := 0.0
 var forecast: FORECAST
 var forecast_counts: Dictionary = {}
-var forecast_steps := 0.0
+var forecast_grid_ticks := 0.0
 var earned_medals: Array[String] = []
 var medal_icons := {}
 var star_hits := {}
@@ -522,7 +522,7 @@ func _add_output_meter(parent: Container, key: String, title: String, target: fl
   column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   column.add_theme_constant_override("separation", 2)
   parent.add_child(column)
-  var requirement := "%s/s" % OUTPUT_METER.format_rate(target)
+  var requirement := "%s/tick" % OUTPUT_METER.format_rate(target)
   var caption := UI.label(requirement if title.is_empty() else "%s · %s" % [title, requirement])
   caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
   if medal == "rate": caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -593,7 +593,7 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
   if entry.kind != "edge_wall": building.z_index = 1
   if entry.kind == "emitter":
     building.start_on_ready = false
-    building.rate = float(entry.get("rate", 1.0))
+    building.rate = float(entry.get("rate", PARSER.DEFAULT_RATE))
     building.repeat_sequence = true
     var sequence: Array[ENTRY] = []
     for name in entry.get("particles", []):
@@ -1016,10 +1016,10 @@ func _update_hud_actions() -> void:
 
 func _refresh_output() -> void:
   for row in output_rows:
-    row.meter.set_rate(_output_rate(row.key), forecast != null, forecast_steps)
+    row.meter.set_rate(_output_rate(row.key), forecast != null, forecast_grid_ticks)
 
 func _output_rate(key: String) -> float:
-  return _goal_count(forecast_counts, key) / forecast_steps if forecast_steps > 0.0 else 0.0
+  return _goal_count(forecast_counts, key) / forecast_grid_ticks if forecast_grid_ticks > 0.0 else 0.0
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
   if not is_board_pointer(screen_position): return
@@ -1111,7 +1111,7 @@ func _clear_stats() -> void:
   track_particle_paths = not level.stars.is_empty()
   next_forecast_at = 0.0
   forecast_counts.clear()
-  forecast_steps = 0.0
+  forecast_grid_ticks = 0.0
   total_counts.clear()
   _refresh_clear_progress()
   elapsed = 0.0
@@ -1144,11 +1144,11 @@ func _update_clear(first_detection: bool) -> void:
   var previous_count := earned_medals.size()
   if first_detection and cost <= level.medals.cost: earned_medals.append("cost")
   var rate_targets: Dictionary = level.get("rate_rule", {}).get("rates", {"any": level.medals.rate})
-  if "rate" not in earned_medals and _meets_output(rate_targets, forecast_counts, forecast_steps):
+  if "rate" not in earned_medals and _meets_output(rate_targets, forecast_counts, forecast_grid_ticks):
     earned_medals.append("rate")
   if "star" not in earned_medals:
     for rule in level.medals.star:
-      if _meets_build_conditions(rule) and _meets_output(rule.rates, forecast_counts, forecast_steps):
+      if _meets_build_conditions(rule) and _meets_output(rule.rates, forecast_counts, forecast_grid_ticks):
         earned_medals.append("star")
         break
   if first_detection or previous_count != earned_medals.size(): _save_run_progress()
@@ -1164,7 +1164,7 @@ func _meets_build_conditions(rule: Dictionary) -> bool:
 func _process(_delta: float) -> void:
   if forecast == null or not forecast.advance(): return
   forecast_counts = forecast.measured_counts
-  forecast_steps = forecast.measured_steps
+  forecast_grid_ticks = forecast.measured_grid_ticks
   _cancel_forecast()
   next_forecast_at = elapsed + FORECAST_REFRESH_STEPS
   _refresh_output()
@@ -1209,7 +1209,7 @@ func _update_results() -> void:
     if kind == "any" or kind in PARTICLES.QUARK_FAMILIES: continue
     stats += "\n%s · %d detected" % [PARTICLES.label(kind), int(total_counts[kind])]
     var rate := _output_rate(kind)
-    if rate > 0.0: stats += " · %s/s" % OUTPUT_METER.format_rate(rate)
+    if rate > 0.0: stats += " · %s/tick" % OUTPUT_METER.format_rate(rate)
   results_text.text = "%d of 3 medals earned\nBuild cost $%d\n%s" % [earned_medals.size(), cost, stats]
 
 func _report_particle_path(particle: Particle, path: Array[Dictionary], until: float) -> void:
@@ -1245,10 +1245,10 @@ func _goal_count(counts: Dictionary, key: String) -> int:
     total += int(counts.get(name + suffix, 0))
   return total
 
-func _meets_output(rates: Dictionary, counts: Dictionary, steps: float) -> bool:
+func _meets_output(rates: Dictionary, counts: Dictionary, ticks: float) -> bool:
   for key in rates:
-    if steps <= 0.0: return false
-    var actual := _goal_count(counts, key) / steps
+    if ticks <= 0.0: return false
+    var actual := _goal_count(counts, key) / ticks
     if actual < rates[key] and absf(actual / rates[key] - 1.0) > 0.000001: return false
   return true
 

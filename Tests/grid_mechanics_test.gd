@@ -742,7 +742,7 @@ func _gluon_pass_through() -> void:
 
 func _gluon_emitter_waits_for_tail() -> void:
   _new_board()
-  var emitter := _device("emitter", Vector2.ZERO, {"rate": 20.0, "start_on_ready": false}) as ParticleEmitter
+  var emitter := _device("emitter", Vector2.ZERO, {"rate": 5.0, "start_on_ready": false}) as ParticleEmitter
   var entry := ParticleEmission.new()
   entry.flavour = Particle.Flavour.GLUON
   emitter.play_sequence([entry, entry])

@@ -15,8 +15,8 @@ const BOSON = preload("res://Particles/Boson/boson.gd")
 @export var particleFlavour: Particle.Flavour = Particle.Flavour.ELECTRON
 @export var isAnti: bool = false
 @export var direction: Vector2 = Vector2.RIGHT
-## Number of particles emitted per simulation step.
-@export_range(0.01, 1000.0, 0.01, "or_greater") var rate: float = 1.0
+## Number of particles emitted per grid tick.
+@export_range(0.0025, 250.0, 0.0025, "or_greater") var rate: float = 0.25
 @export var sequence: Array[EmissionEntry] = []
 @export var repeat_sequence: bool = false
 @export var start_on_ready: bool = true
@@ -64,7 +64,7 @@ func emit_particle(flavour: Particle.Flavour, anti: bool, travel: Vector2, colou
 func spawnParticle() -> Particle:
   return emit_particle(particleFlavour, isAnti, direction)
 
-## Replace any pending sequence. The first entry is emitted on the next simulation step.
+## Replace any pending sequence. The first entry is emitted on the next simulation update.
 func start_sequence() -> void:
   play_sequence(sequence)
 
@@ -90,15 +90,15 @@ func reset_device() -> void:
   _gluon_cooldown = 0.0
 
 ## Called by ParticleSimulation; sequences pause when the simulation pauses.
-func step_emission(steps: float) -> void:
+func step_emission(ticks: float) -> void:
   if _last_gluon_covers_front():
     _gluon_cooldown = INF
   elif is_inf(_gluon_cooldown) and rate > 0.0:
     _gluon_cooldown = 1.0 / rate
-  _step_scheduled_emission(steps)
-  _gluon_cooldown = maxf(0.0, _gluon_cooldown - steps)
+  _step_scheduled_emission(ticks)
+  _gluon_cooldown = maxf(0.0, _gluon_cooldown - ticks)
 
-func _step_scheduled_emission(steps: float) -> void:
+func _step_scheduled_emission(ticks: float) -> void:
   if not _continuous and _pending.is_empty():
     return
   if rate <= 0.0:
@@ -109,7 +109,7 @@ func _step_scheduled_emission(steps: float) -> void:
     var entry: EmissionEntry = null if _continuous else _pending[0]
     var flavour := entry.flavour if entry != null else particleFlavour
     if (_continuous or entry != null) and _gluon_emission_blocked(flavour):
-      _time_until_next = 0.0 if is_inf(_gluon_cooldown) else maxf(0.0, _gluon_cooldown - steps)
+      _time_until_next = 0.0 if is_inf(_gluon_cooldown) else maxf(0.0, _gluon_cooldown - ticks)
       return
     if _continuous:
       spawnParticle()
@@ -120,7 +120,7 @@ func _step_scheduled_emission(steps: float) -> void:
       if _pending.is_empty() and repeat_sequence and not _sequence_template.is_empty():
         _pending = _sequence_template.duplicate()
     _time_until_next += 1.0 / rate
-  _time_until_next -= steps
+  _time_until_next -= ticks
 
 func _gluon_emission_blocked(flavour: Particle.Flavour) -> bool:
   return flavour == Particle.Flavour.GLUON and (_gluon_cooldown > 0.000001 or _last_gluon_covers_front())

@@ -13,11 +13,11 @@ Coordinates start at the bottom-left and ranges include both ends. Directions ar
 - `fixed=p` locks position, `fixed=r` locks rotation, and `fixed=rp` locks both. Magnets use `c` to lock polarity.
 - **Cmd/Ctrl+Z** and **Cmd/Ctrl+Shift+Z** undo and redo changes. **Cmd/Ctrl+N** starts a new level, **Cmd/Ctrl+O** opens one, **Cmd/Ctrl+S** saves, and **Cmd/Ctrl+Shift+S** opens Save As. **Playtest** uses a separate copy of the board with the authored inventory and locks. The editor shows the last valid board if a source edit has an error.
 
-**Space** plays or pauses, **.** requests one step, **B** returns to build mode, and **X** resets the level. A grid tick contains 15 simulation ticks, and a step contains four grid ticks. The step button advances one grid tick. Pausing finishes the current step. **Esc** clears the current selection and resets the level editor preview if it is running.
+**Space** plays or pauses, **.** advances one tick, **B** returns to build mode, and **X** resets the level. The Tick button advances one grid tick. A grid tick contains 15 internal simulation updates. Pausing still finishes the current four-tick simulation group. **Esc** clears the current selection and resets the level editor preview if it is running.
 
 ## Emitters, detectors and medals
 
-Photons, neutrinos and antineutrinos travel 1.5 tiles per grid tick. Baryons start at half a tile per grid tick. Other particles start at one tile per grid tick. An elastic collision can redistribute speed between equal-mass particles with nonzero mass. The sprite and its hitbox move together during transit. Emitters repeat their particle list and emit electrons when the list is empty. Rates use particles per step and accept decimals or fractions, as in `rate=0.5/step` and `rate=1/2`. Quark colours use `_r`, `_g` or `_b` on `up` and `down`. Use `anti_neutrino` for an antineutrino.
+Photons, neutrinos and antineutrinos travel 1.5 tiles per grid tick. Baryons start at half a tile per grid tick. Other particles start at one tile per grid tick. An elastic collision can redistribute speed between equal-mass particles with nonzero mass. The sprite and its hitbox move together during transit. Emitters repeat their particle list and emit electrons when the list is empty. Rates use particles per tick and accept decimals or fractions, as in `rate=0.5/tick` and `rate=1/2/tick` (one particle every two ticks). An emitter with no rate specified defaults to 0.25/tick, or one particle every four ticks. The editor's rate controls assume per tick when a unit is omitted. Always use an explicit `/tick` suffix in level source. Quark colours use `_r`, `_g` or `_b` on `up` and `down`. Use `anti_neutrino` for an antineutrino.
 
 Detectors absorb particles and count those that match their expression. For example, `[electron OR positron]` matches either type, while `[(up OR down) AND up_r]` matches a red up quark. `AND` binds more tightly than `OR`, and commas mean `OR`. Use a broad name such as `up` to match every colour of that quark.
 
@@ -26,14 +26,14 @@ By default, a level clears as soon as a detector accepts any particle. You can k
 Set all three medals in **Level settings**. Use **Place stars** to toggle a marker on any board cell. Example level source:
 
 ```text
-rate_medal: {2/step};
+rate_medal: {0.5/tick};
 cost_medal: {30};
-star_medal: {[electron OR positron]: 1/step; cost: 20; no_buildings: reflector, magnet; hit_stars: true};
+star_medal: {[electron OR positron]: 0.25/tick; cost: 20; no_buildings: reflector, magnet; hit_stars: true};
 star: {x=2, y=3};
 star: {x=5, y=3};
 ```
 
-- The Rate medal counts total detected particles per step.
+- The Rate medal counts total detected particles per tick.
 - The Cost medal requires a build cost at or below the amount. Buildings already on the board cost nothing.
 - The Star medal supports total output (`any`), named particles or a detector-style particle expression, a build cost limit, excluded building types, and touching all placed stars during the run. Exclusions apply to every building on the board, including starting buildings. Conditions in one `star_medal` block are required together. Additional `star_medal` blocks offer alternative ways to earn the same medal.
 
@@ -45,18 +45,18 @@ For source editing, the equivalent is:
 detector: {x=8, y=8, [photon], id=a, fixed=p};
 detector: {x=8, y=0, [photon], id=b, fixed=p};
 clear: {a AND b};
-rate_medal: {photon@a: 1/step; photon@b: 1/step};
+rate_medal: {photon@a: 0.25/tick; photon@b: 0.25/tick};
 cost_medal: {30};
-star_medal: {photon@a: 2/step; photon@b: 2/step};
+star_medal: {photon@a: 0.5/tick; photon@b: 0.5/tick};
 ```
 
 Use `OR` instead of `AND` for alternative clear detectors. Clear requires one accepted particle at each required detector during the same run, not necessarily simultaneously. A scoped output condition such as `[electron OR positron]@a` measures only that detector. `any@a` counts everything accepted there. Unscoped output conditions still count across the board. All output conditions in a Rate or Star set must be satisfied. IDs must be unique and may contain letters, digits and underscores, starting with a letter.
 
 Deleting a detector in the editor removes its clear and medal conditions. If no named clear detectors remain, any detector can clear the level. A Rate or Star medal that loses its last condition uses the corresponding new-level threshold.
 
-Completing the clear objective starts a background simulation of the build. Output meters and rate-based medals use the same forecast. It measures full cycles when the output repeats and averages a later window when the pattern is irregular. The display uses particles per second at normal playback speed.
+Completing the clear objective starts a background simulation of the build. Output meters and rate-based medals use the same forecast. It measures full cycles when the output repeats and averages a later window when the pattern is irregular. The display uses particles per tick, independent of playback speed.
 
-Existing `goal` blocks and `/s` rates still load. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Old hint declarations are ignored. Previous star totals carry forward as completion records.
+Existing `goal` blocks, bare rates, `/step` and historical `/s` rates still load at their original cadence. Legacy rates are divided by four: `1/step` becomes `0.25/tick`. Custom levels in the game folder are migrated on launch, with a `.pre-tick.bak` backup. External levels are upgraded in the editor when opened and written in the new format on save. Invalid levels are left untouched. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Old hint declarations are ignored. Previous star totals carry forward as completion records.
 
 ## Gluons, Z bosons and W bosons
 

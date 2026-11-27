@@ -39,8 +39,8 @@ tooltip_text = "Pause or resume the simulation"
 text = "Pause"
 
 [node name="Step" type="Button" parent="Panel/Margin/Controls"]
-tooltip_text = "Advance one grid tick (.)"
-text = "Step"
+tooltip_text = "Advance one tick (.)"
+text = "Tick"
 
 [node name="Build" type="Button" parent="Panel/Margin/Controls"]
 visible = false

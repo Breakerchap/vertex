@@ -1,13 +1,13 @@
 title: 01 - First Contact;
 9 x 6;
 
-rate_medal: {1/step};
+rate_medal: {0.25/tick};
 cost_medal: {0};
 star_medal: {hit_stars: true};
 star: {x=2, y=2};
 star: {x=4, y=3};
 
-emitter: {x=1, y=2, E, [electron], rate=1/step, fixed=pr}
-emitter: {x=7, y=2, W, [positron], rate=1/step, fixed=pr}
+emitter: {x=1, y=2, E, [electron], rate=0.25/tick, fixed=pr}
+emitter: {x=7, y=2, W, [positron], rate=0.25/tick, fixed=pr}
 wall: {x=5, y=2}
 detector: {x=4, y=4, [photon], fixed=p}

@@ -8,6 +8,7 @@ const CUSTOM_LEVELS := "user://levels"
 var desktop_view_size: Vector2i
 
 func _ready() -> void:
+  migrate_custom_level_rates()
   desktop_view_size = get_window().content_scale_size
   get_window().size_changed.connect(_update_window_scale)
   _update_window_scale()
@@ -42,6 +43,42 @@ func _update_window_scale() -> void:
 
 func ensure_custom_levels() -> Error:
   return DirAccess.make_dir_recursive_absolute(CUSTOM_LEVELS)
+
+## Migrate writable custom levels once, keeping the original beside them.
+func migrate_custom_level_rates() -> void:
+  if not DirAccess.dir_exists_absolute(CUSTOM_LEVELS): return
+  for name in DirAccess.get_files_at(CUSTOM_LEVELS):
+    if name.to_lower().ends_with(".level"):
+      migrate_level_file(CUSTOM_LEVELS.path_join(name))
+
+func migrate_level_file(path: String) -> bool:
+  var original := FileAccess.get_file_as_string(path)
+  var updated := LevelParser.migrate_rates(original)
+  if updated == original: return false
+  var backup := path + ".pre-tick.bak"
+  if not FileAccess.file_exists(backup):
+    var copied := DirAccess.copy_absolute(path, backup)
+    if copied != OK:
+      push_warning("Could not back up level before rate migration: " + path)
+      return false
+  var temporary := path + ".rate-migration.tmp"
+  var file := FileAccess.open(temporary, FileAccess.WRITE)
+  if file == null:
+    push_warning("Could not write migrated level: " + path)
+    return false
+  file.store_string(updated)
+  file.flush()
+  var write_error := file.get_error()
+  file.close()
+  if write_error != OK or FileAccess.get_file_as_string(temporary) != updated:
+    DirAccess.remove_absolute(temporary)
+    push_warning("Could not verify migrated level: " + path)
+    return false
+  if DirAccess.rename_absolute(temporary, path) != OK:
+    DirAccess.remove_absolute(temporary)
+    push_warning("Could not replace level with its migrated copy: " + path)
+    return false
+  return true
 
 func level_progress(level_path: String) -> Dictionary:
   var progress := ConfigFile.new()

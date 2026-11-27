@@ -12,7 +12,7 @@ const CYCLE_REPEATS := 3
 
 var shadow: ParticleSimulation
 var measured_counts: Dictionary = {}
-var measured_steps := 0.0
+var measured_grid_ticks := 0.0
 var emitters: Array[ParticleEmitter] = []
 var has_rails := false
 var emission_periods: Array[float] = []
@@ -53,11 +53,11 @@ func _init(source: ParticleSimulation, buildings: Array[Node]) -> void:
         copy._gluon_cooldown = original._gluon_cooldown
         if copy._continuous or (copy.repeat_sequence and not copy._pending.is_empty()):
           var entries: int = 1 if copy._continuous else copy._sequence_template.size()
-          var period: float = entries * TICKS_PER_SIMULATION_STEP / copy.rate
+          var period: float = entries * SimulationGrid.TICKS_PER_STEP / copy.rate
           emission_periods.append(period)
           forecast_ticks = ceili(clampf(period * 4.0, forecast_ticks, MAX_FORECAST_TICKS))
         elif not copy._pending.is_empty():
-          forecast_ticks = ceili(clampf(copy._pending.size() * TICKS_PER_SIMULATION_STEP / copy.rate * 2.0,
+          forecast_ticks = ceili(clampf(copy._pending.size() * SimulationGrid.TICKS_PER_STEP / copy.rate * 2.0,
             forecast_ticks, MAX_FORECAST_TICKS))
       "gate": copy.gate_open = original.gate_open
       "pusher": copy.push_up = original.push_up
@@ -134,7 +134,7 @@ func advance() -> bool:
         event_ticks = event_ticks.slice(-keep)
         event_counts = event_counts.slice(-keep)
     if Time.get_ticks_usec() >= deadline and elapsed_ticks < forecast_ticks: return false
-  measured_steps = float(forecast_ticks - midpoint) / TICKS_PER_SIMULATION_STEP
+  measured_grid_ticks = float(forecast_ticks - midpoint) / SimulationGrid.TICKS_PER_STEP
   for key in counts:
     measured_counts[key] = counts[key] - midpoint_counts.get(key, 0)
   return true
@@ -156,7 +156,7 @@ func _measure_cycle() -> bool:
         matches = false
         break
     if not matches: continue
-    measured_steps = float(period) / TICKS_PER_SIMULATION_STEP
+    measured_grid_ticks = float(period) / SimulationGrid.TICKS_PER_STEP
     for index in range(previous + 1, last + 1):
       for key in event_counts[index]:
         measured_counts[key] = measured_counts.get(key, 0) + event_counts[index][key]
@@ -177,13 +177,14 @@ func _skip_idle_steps(remaining_ticks: int) -> int:
   for emitter in emitters:
     if is_inf(emitter._gluon_cooldown): return 0
     if emitter._continuous or not emitter._pending.is_empty():
-      idle_steps = minf(idle_steps, emitter._time_until_next - ParticleSimulation.EPSILON)
+      idle_steps = minf(idle_steps, (emitter._time_until_next - ParticleSimulation.EPSILON) / SimulationGrid.GRID_TICKS_PER_STEP)
       if idle_steps < 1.0: return 0
   var whole_steps := floori(idle_steps)
   if not shadow._particles().is_empty(): return 0
+  var grid_ticks := whole_steps * SimulationGrid.GRID_TICKS_PER_STEP
   for emitter in emitters:
-    if emitter._continuous or not emitter._pending.is_empty(): emitter._time_until_next -= whole_steps
-    emitter._gluon_cooldown = maxf(0.0, emitter._gluon_cooldown - whole_steps)
+    if emitter._continuous or not emitter._pending.is_empty(): emitter._time_until_next -= grid_ticks
+    emitter._gluon_cooldown = maxf(0.0, emitter._gluon_cooldown - grid_ticks)
   return whole_steps * TICKS_PER_SIMULATION_STEP
 
 func dispose() -> void:

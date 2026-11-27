@@ -1,8 +1,8 @@
 11 x 9;
 
-rate_medal: {2/step};
+rate_medal: {0.5/tick};
 cost_medal: {80};
-star_medal: {photon: 2/step; cost: 120};
+star_medal: {photon: 0.5/tick; cost: 120};
 
 
 wall: {x=5, y=1, fixed=p}
@@ -16,8 +16,8 @@ wall: {x=5, y=6, fixed=p}
 
 wall: {x=5, y=8, fixed=p}
 wall: {x=5, y=3, fixed=p}
-emitter: {x=0, y=1, E, [electron], rate=1/step, fixed=pr}
-emitter: {x=0, y=7, E, [positron], rate=1/step, fixed=pr}
+emitter: {x=0, y=1, E, [electron], rate=0.25/tick, fixed=pr}
+emitter: {x=0, y=7, E, [positron], rate=0.25/tick, fixed=pr}
 detector: {x=8, y=8, [photon], fixed=p}
 detector: {x=8, y=0, [photon], fixed=p}
 inventory: {magnet=20};

@@ -5,6 +5,10 @@ const CATALOG = preload("res://Buildings/building_catalog.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const PARTICLE_TOKEN := "[a-zA-Z_][a-zA-Z_0-9]*|[(),]"
 const MEDAL_BLOCKS := ["rate_medal", "cost_medal", "star_medal"]
+# Historical levels used four grid ticks per step (one second at 60 Hz).
+# Keep this conversion fixed even if simulation timing changes later.
+const LEGACY_RATE_DIVISOR := 4.0
+const DEFAULT_RATE := 0.25
 
 static func mask_comments(source: String) -> String:
   var lines := PackedStringArray()
@@ -81,7 +85,7 @@ static func parse(source: String) -> Dictionary:
           if rule.rates.is_empty() or rule.has("cost") or rule.hit_stars or not rule.no_buildings.is_empty():
             return {"error": "The Rate medal accepts only output conditions."}
           data.rate_rule = rule
-          data.medals.rate = float(rule.rates.get("any", 1.0))
+          data.medals.rate = float(rule.rates.get("any", DEFAULT_RATE))
           continue
         var amount := _parse_rate(body) if medal == "rate" else _parse_cost_limit(body)
         if medal == "rate" and amount <= 0.0: return {"error": "The Rate medal needs a positive rate."}
@@ -248,12 +252,12 @@ static func _medals_from_goals(goals: Array[Dictionary]) -> Dictionary:
       if old.goal.has("cost") and is_finite(old.goal.cost[tier]):
         rule.cost = floorf(old.goal.cost[tier])
         cost_limit = minf(cost_limit, rule.cost)
-      if rates.is_empty() and not rule.has("cost"): rule.rates["any"] = 1.0
+      if rates.is_empty() and not rule.has("cost"): rule.rates["any"] = DEFAULT_RATE
       alternatives.append(rule)
       break
   if alternatives.is_empty():
-    alternatives.append({"rates": {"any": 1.0}, "targets": {}, "no_buildings": [], "hit_stars": false})
-  return {"rate": rate if is_finite(rate) else 1.0, "cost": cost_limit if is_finite(cost_limit) else 0.0, "star": alternatives}
+    alternatives.append({"rates": {"any": DEFAULT_RATE}, "targets": {}, "no_buildings": [], "hit_stars": false})
+  return {"rate": rate if is_finite(rate) else DEFAULT_RATE, "cost": cost_limit if is_finite(cost_limit) else 0.0, "star": alternatives}
 
 static func building_kind(name: String) -> String:
   var kind := name.to_lower()
@@ -274,7 +278,9 @@ static func _parse_goal(body: String) -> Dictionary:
       var token := value.strip_edges().to_lower()
       if token == "inf":
         values.append(INF)
-      elif _parse_rate(token) >= 0.0 and (parts[0].strip_edges().to_lower() != "cost" or token.is_valid_float()):
+      elif parts[0].strip_edges().to_lower() == "cost" and _parse_cost_limit(token) >= 0.0:
+        values.append(float(token))
+      elif parts[0].strip_edges().to_lower() != "cost" and _parse_rate(token) >= 0.0:
         values.append(_parse_rate(token))
       else:
         return {"error": "Invalid goal value: " + token}
@@ -324,11 +330,12 @@ static func _parse_no_build(body: String, width: int, height: int) -> Dictionary
   var last := Vector2i(axes.x[1], axes.y[1])
   return {"area": Rect2i(first, last - first + Vector2i.ONE)}
 
-## Bare values and /step are per step. /s is supported for existing levels.
-static func _parse_rate(value: String, legacy_bare := false) -> float:
+## Explicit /tick is canonical. Bare values, /step and historical /s
+## retain their original meaning so old files remain playable without edits.
+static func _parse_rate(value: String, _legacy_bare := false) -> float:
   var token := value.strip_edges().to_lower()
-  var legacy := token.ends_with("/s") or (legacy_bare and not token.ends_with("/step"))
-  token = token.trim_suffix("/step").trim_suffix("/s")
+  var per_tick := token.ends_with("/tick")
+  token = token.trim_suffix("/tick").trim_suffix("/step").trim_suffix("/s")
   var parts := token.split("/")
   if parts.is_empty() or parts.size() > 2 or not parts[0].is_valid_float(): return -1.0
   var rate := float(parts[0])
@@ -336,11 +343,81 @@ static func _parse_rate(value: String, legacy_bare := false) -> float:
     if not parts[1].is_valid_float() or float(parts[1]) <= 0.0: return -1.0
     rate /= float(parts[1])
   if not is_finite(rate): return -1.0
-  # Legacy authored rates used a 60 Hz simulation.
-  return rate * SimulationGrid.TICKS_PER_STEP * SimulationGrid.GRID_TICKS_PER_STEP / 60.0 if legacy else rate
+  return rate if per_tick else rate / LEGACY_RATE_DIVISOR
+
+## Settings controls use ticks even when the author omits the displayed unit.
+## Old units are still accepted explicitly.
+static func editor_rate_text(value: String) -> String:
+  var token := value.strip_edges()
+  var lower := token.to_lower()
+  if token.is_empty() or lower.ends_with("/tick") or lower.ends_with("/step") or lower.ends_with("/s"):
+    return token
+  return token + "/tick"
+
+static func _canonical_rate(token: String) -> String:
+  if token.to_lower().ends_with("/tick"): return token
+  var rate := _parse_rate(token)
+  if rate < 0.0: return token
+  var decimal := String.num(rate, 16)
+  if float(decimal) == rate: return decimal + "/tick"
+  # Preserve nonterminating fractions instead of rounding medal thresholds.
+  var parts := token.to_lower().trim_suffix("/step").trim_suffix("/s").split("/")
+  if parts.size() == 1: return parts[0] + "/4/tick"
+  var divisor := float(parts[1]) * LEGACY_RATE_DIVISOR
+  var denominator := String.num(divisor, 16)
+  if float(denominator) != divisor: denominator = str(divisor)
+  return parts[0] + "/" + denominator + "/tick"
+
+static func _rate_edits(edits: Array[Dictionary], value: String, offset: int) -> void:
+  var tokens := RegEx.new()
+  tokens.compile("[^\\s,;]+")
+  for token in tokens.search_all(value):
+    var original := token.get_string()
+    var replacement := _canonical_rate(original)
+    if replacement != original:
+      edits.append({"start": offset + token.get_start(), "end": offset + token.get_end(), "text": replacement})
+
+## Upgrade rate tokens only; preserve comments, cost limits, detector IDs,
+## ranges, metadata and legacy goal declarations. Invalid files are untouched.
+static func migrate_rates(source: String) -> String:
+  var before := parse(source)
+  if before.has("error"): return source
+  var edits: Array[Dictionary] = []
+  var assignment := RegEx.new()
+  assignment.compile("(?i)\\brate\\s*=\\s*([^,}\\s]+)")
+  for block in find_blocks(mask_comments(source)):
+    var kind := building_kind(block.get_string(1))
+    var body := block.get_string(2)
+    var start := block.get_start(2)
+    if kind == "emitter":
+      var found := assignment.search(body)
+      if found != null:
+        _rate_edits(edits, found.get_string(1), start + found.get_start(1))
+      else:
+        edits.append({"start": block.get_end(2), "end": block.get_end(2), "text": ", rate=0.25/tick"})
+    elif kind == "rate_medal" and not ":" in body:
+      _rate_edits(edits, body, start)
+    elif kind in ["goal", "rate_medal", "star_medal"]:
+      var offset := start
+      for clause in body.split(";"):
+        var colon := clause.find(":")
+        if colon >= 0 and clause.left(colon).strip_edges().to_lower() not in ["cost", "no_buildings", "hit_stars"]:
+          _rate_edits(edits, clause.substr(colon + 1), offset + colon + 1)
+        offset += clause.length() + 1
+  edits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.start > b.start)
+  var updated := source
+  for edit in edits:
+    updated = updated.left(edit.start) + edit.text + updated.substr(edit.end)
+  var after := parse(updated)
+  if after.has("error"): return source
+  before.erase("legacy_rates")
+  after.erase("legacy_rates")
+  # Never rewrite a level if any parsed value would change.
+  if before != after: return source
+  return updated
 
 static func parse_building(kind: String, body: String, width: int, height: int, legacy_rates := false) -> Dictionary:
-  var entry := {"kind": kind, "facing": CATALOG.default_facing(kind), "fixed": "", "rate": 1.0, "particles": []}
+  var entry := {"kind": kind, "facing": CATALOG.default_facing(kind), "fixed": "", "rate": "0.25/tick", "particles": []}
   var list_regex := RegEx.new()
   list_regex.compile("\\[([^]]*)\\]")
   var list_match := list_regex.search(body)
