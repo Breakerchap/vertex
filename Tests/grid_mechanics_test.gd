@@ -742,7 +742,7 @@ func _gluon_pass_through() -> void:
 
 func _gluon_emitter_waits_for_tail() -> void:
   _new_board()
-  var emitter := _device("emitter", Vector2.ZERO, {"rate": 5.0, "start_on_ready": false}) as ParticleEmitter
+  var emitter := _device("emitter", Vector2.ZERO, {"period": 0.2, "start_on_ready": false}) as ParticleEmitter
   var entry := ParticleEmission.new()
   entry.flavour = Particle.Flavour.GLUON
   emitter.play_sequence([entry, entry])
@@ -850,6 +850,16 @@ func _gluon_trail_bounces_and_releases() -> void:
   _check(gluon.is_queued_for_deletion() and first.trapped_by == null and second.trapped_by == null and sim._particles().size() == 3,
     "The gluon should release both particles after contact even when their normal interaction is pass-through.")
 
+func _emitter_periods() -> void:
+  for period in [0.5, 1.0, 2.0, 3.0]:
+    _new_board()
+    var emitter := _device("emitter", Vector2.ZERO, {"period": period, "start_on_ready": false}) as ParticleEmitter
+    emitter.start_emitting()
+    # The first particle emits immediately, with subsequent emissions spaced
+    # by the configured period in grid ticks.
+    sim.step_simulation(6.0)
+    _check(sim._particles().size() == roundi(6.0 / period), "Unexpected number of emissions at period %s." % period)
+
 func _run() -> void:
   _new_board()
   sim.running = true
@@ -866,6 +876,7 @@ func _run() -> void:
     sim._physics_process(1.0 / 60.0)
   _check(sim._ticks_into_step == 1 and not sim.running, "The step control should advance one grid tick.")
   _movement_and_hitboxes()
+  _emitter_periods()
   _devices()
   _pusher_contacts()
   _rails_and_forecast()

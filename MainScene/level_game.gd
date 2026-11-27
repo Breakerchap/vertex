@@ -593,7 +593,7 @@ func _place_building(entry: Dictionary, from_inventory: bool) -> void:
   if entry.kind != "edge_wall": building.z_index = 1
   if entry.kind == "emitter":
     building.start_on_ready = false
-    building.rate = float(entry.get("rate", PARSER.DEFAULT_RATE))
+    building.period = float(entry.get("period", PARSER.DEFAULT_PERIOD))
     building.repeat_sequence = true
     var sequence: Array[ENTRY] = []
     for name in entry.get("particles", []):
@@ -1269,7 +1269,7 @@ func _snapshot_build() -> Dictionary:
     match kind:
       "emitter":
         entry.facing = CATALOG.DIRECTIONS[building.orientation]
-        entry.rate = building.rate
+        entry.period = building.period
       "reflector", "pusher":
         entry.facing = CATALOG.DIRECTIONS[posmod(building.orientation - 2, CATALOG.DIRECTIONS.size())]
       "magnet":

@@ -53,11 +53,11 @@ func _init(source: ParticleSimulation, buildings: Array[Node]) -> void:
         copy._gluon_cooldown = original._gluon_cooldown
         if copy._continuous or (copy.repeat_sequence and not copy._pending.is_empty()):
           var entries: int = 1 if copy._continuous else copy._sequence_template.size()
-          var period: float = entries * SimulationGrid.TICKS_PER_STEP / copy.rate
+          var period: float = entries * SimulationGrid.TICKS_PER_STEP * copy.period
           emission_periods.append(period)
           forecast_ticks = ceili(clampf(period * 4.0, forecast_ticks, MAX_FORECAST_TICKS))
         elif not copy._pending.is_empty():
-          forecast_ticks = ceili(clampf(copy._pending.size() * SimulationGrid.TICKS_PER_STEP / copy.rate * 2.0,
+          forecast_ticks = ceili(clampf(copy._pending.size() * SimulationGrid.TICKS_PER_STEP * copy.period * 2.0,
             forecast_ticks, MAX_FORECAST_TICKS))
       "gate": copy.gate_open = original.gate_open
       "pusher": copy.push_up = original.push_up

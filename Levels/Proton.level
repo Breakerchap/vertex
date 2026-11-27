@@ -9,9 +9,9 @@ detector: {x=7, y=7, [proton], fixed=p}
 wall: {x=8, y=6, fixed=p}
 wall: {x=7, y=6, fixed=p}
 wall: {x=6, y=6, fixed=p}
-emitter: {x=0, y=2, E, [down_r, down_g, down_b], rate=0.25/tick}
-emitter: {x=8, y=2, W, [up_r, up_g, up_b], rate=0.25/tick}
-emitter: {x=4, y=0, N, [up_r, up_g, up_b], rate=0.25/tick}
+emitter: {x=0, y=2, E, [down_r, down_g, down_b], period=4}
+emitter: {x=8, y=2, W, [up_r, up_g, up_b], period=4}
+emitter: {x=4, y=0, N, [up_r, up_g, up_b], period=4}
 
 inventory: {magnet=4, gate=2, filter=3, holder=2, pusher=3};
 

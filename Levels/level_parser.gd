@@ -9,6 +9,7 @@ const MEDAL_BLOCKS := ["rate_medal", "cost_medal", "star_medal"]
 # Keep this conversion fixed even if simulation timing changes later.
 const LEGACY_RATE_DIVISOR := 4.0
 const DEFAULT_RATE := 0.25
+const DEFAULT_PERIOD := 4.0
 
 static func mask_comments(source: String) -> String:
   var lines := PackedStringArray()
@@ -354,6 +355,40 @@ static func editor_rate_text(value: String) -> String:
     return token
   return token + "/tick"
 
+## An emission period is a positive number of grid ticks per particle.
+## Fractions are useful for rates which do not have a terminating decimal.
+static func _parse_period(value: String) -> float:
+  var parts := value.strip_edges().split("/")
+  if parts.is_empty() or parts.size() > 2 or not parts[0].strip_edges().is_valid_float(): return -1.0
+  var period := float(parts[0])
+  if parts.size() == 2:
+    if not parts[1].strip_edges().is_valid_float() or float(parts[1]) <= 0.0: return -1.0
+    period /= float(parts[1])
+  if not is_finite(period) or period <= 0.0 or not is_finite(1.0 / period): return -1.0
+  return period
+
+static func format_period(period: float) -> String:
+  var decimal := String.num(period, 16)
+  if float(decimal) == period: return decimal
+  return String.num_scientific(period)
+
+# Prefer a readable decimal, but keep an exact fractional interval when
+# the reciprocal would otherwise be rounded appreciably.
+static func _period_from_rate(token: String) -> String:
+  var rate := _parse_rate(token)
+  var period := 1.0 / rate
+  var decimal := String.num(period, 16)
+  if float(decimal) == period: return decimal
+  var lower := token.to_lower()
+  var per_tick := lower.ends_with("/tick")
+  var parts := lower.trim_suffix("/tick").trim_suffix("/step").trim_suffix("/s").split("/")
+  var numerator := float(parts[1]) if parts.size() == 2 else 1.0
+  if not per_tick: numerator *= LEGACY_RATE_DIVISOR
+  var fraction := format_period(numerator) + "/" + parts[0]
+  if _parse_period(fraction) > 0.0 and absf(_parse_period(fraction) / period - 1.0) <= 0.000000000001:
+    return fraction
+  return format_period(period)
+
 static func _canonical_rate(token: String) -> String:
   if token.to_lower().ends_with("/tick"): return token
   var rate := _parse_rate(token)
@@ -377,14 +412,16 @@ static func _rate_edits(edits: Array[Dictionary], value: String, offset: int) ->
     if replacement != original:
       edits.append({"start": offset + token.get_start(), "end": offset + token.get_end(), "text": replacement})
 
-## Upgrade rate tokens only; preserve comments, cost limits, detector IDs,
-## ranges, metadata and legacy goal declarations. Invalid files are untouched.
+## Upgrade emitter rates to periods and output rates to /tick. Preserve
+## comments, costs, detector IDs, ranges and legacy goal declarations.
 static func migrate_rates(source: String) -> String:
   var before := parse(source)
   if before.has("error"): return source
   var edits: Array[Dictionary] = []
   var assignment := RegEx.new()
   assignment.compile("(?i)\\brate\\s*=\\s*([^,}\\s]+)")
+  var period_assignment := RegEx.new()
+  period_assignment.compile("(?i)\\bperiod\\s*=")
   for block in find_blocks(mask_comments(source)):
     var kind := building_kind(block.get_string(1))
     var body := block.get_string(2)
@@ -392,9 +429,10 @@ static func migrate_rates(source: String) -> String:
     if kind == "emitter":
       var found := assignment.search(body)
       if found != null:
-        _rate_edits(edits, found.get_string(1), start + found.get_start(1))
-      else:
-        edits.append({"start": block.get_end(2), "end": block.get_end(2), "text": ", rate=0.25/tick"})
+        edits.append({"start": start + found.get_start(), "end": start + found.get_end(),
+          "text": "period=" + _period_from_rate(found.get_string(1))})
+      elif period_assignment.search(body) == null:
+        edits.append({"start": block.get_end(2), "end": block.get_end(2), "text": ", period=4"})
     elif kind == "rate_medal" and not ":" in body:
       _rate_edits(edits, body, start)
     elif kind in ["goal", "rate_medal", "star_medal"]:
@@ -412,12 +450,20 @@ static func migrate_rates(source: String) -> String:
   if after.has("error"): return source
   before.erase("legacy_rates")
   after.erase("legacy_rates")
-  # Never rewrite a level if any parsed value would change.
+  # Allow only machine-precision rounding when taking a reciprocal.
+  if before.buildings.size() != after.buildings.size(): return source
+  for i in range(before.buildings.size()):
+    if before.buildings[i].kind != "emitter": continue
+    var old_period: float = before.buildings[i].period
+    var new_period: float = after.buildings[i].period
+    if absf(new_period / old_period - 1.0) > 0.000000000001: return source
+    after.buildings[i].period = old_period
+  # Never rewrite a level if any other parsed value would change.
   if before != after: return source
   return updated
 
 static func parse_building(kind: String, body: String, width: int, height: int, legacy_rates := false) -> Dictionary:
-  var entry := {"kind": kind, "facing": CATALOG.default_facing(kind), "fixed": "", "rate": "0.25/tick", "particles": []}
+  var entry := {"kind": kind, "facing": CATALOG.default_facing(kind), "fixed": "", "particles": []}
   var list_regex := RegEx.new()
   list_regex.compile("\\[([^]]*)\\]")
   var list_match := list_regex.search(body)
@@ -462,9 +508,22 @@ static func parse_building(kind: String, body: String, width: int, height: int, 
     return {"error": "A filter colour must be red, green or blue."}
   if kind == "gate" and entry.get("open", "false") not in ["true", "false"]:
     return {"error": "Gate open must be true or false."}
-  entry.rate = _parse_rate(str(entry.rate), legacy_rates and kind == "emitter")
-  if entry.rate <= 0.0:
-    return {"error": "Emitter rate must be positive."}
+  if kind == "emitter":
+    if entry.has("rate") and entry.has("period"):
+      return {"error": "Use either period or legacy rate for an emitter, not both."}
+    if entry.has("rate"):
+      var rate := _parse_rate(str(entry.rate), legacy_rates)
+      if rate <= 0.0 or not is_finite(1.0 / rate):
+        return {"error": "Emitter rate must be finite and positive."}
+      entry.period = 1.0 / rate
+      entry.erase("rate")
+    else:
+      entry.period = _parse_period(str(entry.get("period", DEFAULT_PERIOD)))
+    if entry.period <= 0.0:
+      return {"error": "Emitter period must be a finite positive number of ticks."}
+  elif entry.has("rate"):
+    entry.rate = _parse_rate(str(entry.rate))
+    if entry.rate <= 0.0: return {"error": "Rate must be positive."}
   for name in entry.particles:
     if not _valid_particle(name):
       return {"error": "Unknown particle: " + name}

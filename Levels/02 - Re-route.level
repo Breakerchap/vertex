@@ -8,8 +8,8 @@ star_medal: { hit_stars: true };
 star: { x = 4, y = 2 };
 star: { x = 4, y = 3 };
 
-emitter: {x=1, y=4, E, [electron], rate=0.25/tick, fixed=rp};
-emitter: {x=13, y=4, W, [positron], rate=0.25/tick, fixed=rp};
+emitter: {x=1, y=4, E, [electron], period=4, fixed=rp};
+emitter: {x=13, y=4, W, [positron], period=4, fixed=rp};
 mirror: {x=7, y=6, SW, fixed=p};
 wall: {x=2, y=6, fixed=pr} 
 detector: {x=4, y=1, [photon], fixed=rp};
