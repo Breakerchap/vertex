@@ -1,7 +1,7 @@
 title: 01 - First Contact;
 9 x 6;
 
-rate_medal: {0.25/tick};
+throughput_medal: {period=4};
 cost_medal: {0};
 star_medal: {hit_stars: true};
 star: {x=2, y=2};

@@ -1,9 +1,9 @@
 title: Proton Stuff;
 9 x 9;
 
-rate_medal: { 0.25/tick };
+throughput_medal: { period=4 };
 cost_medal: { 40 };
-star_medal: { proton: 0.25/tick; cost: 120 };
+star_medal: { proton: period=4; cost: 120 };
 
 detector: {x=7, y=7, [proton], fixed=p}
 wall: {x=8, y=6, fixed=p}

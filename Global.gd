@@ -55,8 +55,8 @@ func migrate_level_file(path: String) -> bool:
   var original := FileAccess.get_file_as_string(path)
   var updated := LevelParser.migrate_rates(original)
   if updated == original: return false
-  # Keep the earlier pre-tick backup intact if this file was migrated before.
-  var backup := path + ".pre-period.bak"
+  # Keep both older migration backups intact.
+  var backup := path + ".pre-throughput.bak"
   if not FileAccess.file_exists(backup):
     var copied := DirAccess.copy_absolute(path, backup)
     if copied != OK:
@@ -101,7 +101,14 @@ func record_level_progress(level_path: String, medals: Array[String]) -> void:
   if error != OK: push_warning("Could not save level progress: " + error_string(error))
 
 func _stored_progress(progress: ConfigFile, level_path: String) -> Dictionary:
-  if progress.has_section_key("levels", level_path): return progress.get_value("levels", level_path)
+  if progress.has_section_key("levels", level_path):
+    var stored: Dictionary = progress.get_value("levels", level_path)
+    var medals: Array[String] = []
+    for medal in stored.get("medals", []):
+      var name := "throughput" if medal == "rate" else str(medal)
+      if name not in medals: medals.append(name)
+    stored.medals = medals
+    return stored
   return {"completed": int(progress.get_value("stars", level_path, 0)) > 0, "medals": []}
 
 func level_paths() -> Array[String]:

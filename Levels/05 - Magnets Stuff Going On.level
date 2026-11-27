@@ -1,9 +1,9 @@
 title: 05 - IDK;
 11 x 11;
 
-rate_medal: {1/tick};
+throughput_medal: {period=1};
 cost_medal: {20};
-star_medal: {photon: 1/tick; cost: 120};
+star_medal: {photon: period=1; cost: 120};
 
 emitter: {x=9, y=7, W, [positron, electron], period=2, fixed=pr}
 emitter: {x=1, y=3, E, [electron, positron], period=2, fixed=p}

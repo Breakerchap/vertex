@@ -17,7 +17,7 @@ Coordinates start at the bottom-left and ranges include both ends. Directions ar
 
 ## Emitters, detectors and medals
 
-Photons, neutrinos and antineutrinos travel 1.5 tiles per grid tick. Baryons start at half a tile per grid tick. Other particles start at one tile per grid tick. An elastic collision can redistribute speed between equal-mass particles with nonzero mass. The sprite and its hitbox move together during transit. Emitters repeat their particle list and emit electrons when the list is empty. Emitters use an emission period in grid ticks: `period=1` emits every tick, `period=2` every two ticks, `period=3` every three ticks, and `period=0.5` twice per tick. Positive decimals and fractions are supported. The default is `period=4`, or one particle every four ticks. Detector output and medal thresholds still use particles per tick, as in `0.5/tick` or `1/2/tick`. The editor's output rate controls assume per tick when a unit is omitted; use an explicit `/tick` suffix for output rates in level source. Quark colours use `_r`, `_g` or `_b` on `up` and `down`. Use `anti_neutrino` for an antineutrino.
+Photons, neutrinos and antineutrinos travel 1.5 tiles per grid tick. Baryons start at half a tile per grid tick. Other particles start at one tile per grid tick. An elastic collision can redistribute speed between equal-mass particles with nonzero mass. The sprite and its hitbox move together during transit. Emitters repeat their particle list and emit electrons when the list is empty. Emitters use an emission period in grid ticks: `period=1` emits every tick, `period=2` every two ticks, `period=3` every three ticks, and `period=0.5` twice per tick. Positive decimals and fractions are supported. The default is `period=4`, or one particle every four ticks. Detector output and medal thresholds also use periods: the average number of grid ticks per detected particle, including gaps between bursts. A lower period means better throughput. For example, a threshold of `period=2` means one particle every two ticks on average or faster. The visual editor takes numbers in ticks per particle. In level source use `period=…` for each output requirement to avoid ambiguity with old rates. Quark colours use `_r`, `_g` or `_b` on `up` and `down`. Use `anti_neutrino` for an antineutrino.
 
 Detectors absorb particles and count those that match their expression. For example, `[electron OR positron]` matches either type, while `[(up OR down) AND up_r]` matches a red up quark. `AND` binds more tightly than `OR`, and commas mean `OR`. Use a broad name such as `up` to match every colour of that quark.
 
@@ -26,18 +26,18 @@ By default, a level clears as soon as a detector accepts any particle. You can k
 Set all three medals in **Level settings**. Use **Place stars** to toggle a marker on any board cell. Example level source:
 
 ```text
-rate_medal: {0.5/tick};
+throughput_medal: {period=2};
 cost_medal: {30};
-star_medal: {[electron OR positron]: 0.25/tick; cost: 20; no_buildings: reflector, magnet; hit_stars: true};
+star_medal: {[electron OR positron]: period=4; cost: 20; no_buildings: reflector, magnet; hit_stars: true};
 star: {x=2, y=3};
 star: {x=5, y=3};
 ```
 
-- The Rate medal counts total detected particles per tick.
+- The Throughput medal requires the average period between detected particles to be at or below the specified maximum. No sustained output never satisfies a positive target.
 - The Cost medal requires a build cost at or below the amount. Buildings already on the board cost nothing.
 - The Star medal supports total output (`any`), named particles or a detector-style particle expression, a build cost limit, excluded building types, and touching all placed stars during the run. Exclusions apply to every building on the board, including starting buildings. Conditions in one `star_medal` block are required together. Additional `star_medal` blocks offer alternative ways to earn the same medal.
 
-In **Level settings**, choose how a level clears: any detector (the default), all selected detectors, or any selected detector. Select the detectors using their board coordinates. For Rate and Star medals, add an output condition and choose either all detectors or a particular detector; choose total output or a particle expression. The editor automatically assigns persistent detector IDs when a condition references them. A detector's ID appears on the board. Move a detector without changing its ID; remove its objective references before deleting it.
+In **Level settings**, choose how a level clears: any detector (the default), all selected detectors, or any selected detector. Select the detectors using their board coordinates. For Throughput and Star medals, add an output condition and choose either all detectors or a particular detector; choose total output or a particle expression. The editor automatically assigns persistent detector IDs when a condition references them. A detector's ID appears on the board. Move a detector without changing its ID; remove its objective references before deleting it.
 
 For source editing, the equivalent is:
 
@@ -45,18 +45,18 @@ For source editing, the equivalent is:
 detector: {x=8, y=8, [photon], id=a, fixed=p};
 detector: {x=8, y=0, [photon], id=b, fixed=p};
 clear: {a AND b};
-rate_medal: {photon@a: 0.25/tick; photon@b: 0.25/tick};
+throughput_medal: {photon@a: period=4; photon@b: period=4};
 cost_medal: {30};
-star_medal: {photon@a: 0.5/tick; photon@b: 0.5/tick};
+star_medal: {photon@a: period=2; photon@b: period=2};
 ```
 
-Use `OR` instead of `AND` for alternative clear detectors. Clear requires one accepted particle at each required detector during the same run, not necessarily simultaneously. A scoped output condition such as `[electron OR positron]@a` measures only that detector. `any@a` counts everything accepted there. Unscoped output conditions still count across the board. All output conditions in a Rate or Star set must be satisfied. IDs must be unique and may contain letters, digits and underscores, starting with a letter.
+Use `OR` instead of `AND` for alternative clear detectors. Clear requires one accepted particle at each required detector during the same run, not necessarily simultaneously. A scoped output condition such as `[electron OR positron]@a` measures only that detector. `any@a` counts everything accepted there. Unscoped output conditions still count across the board. All output conditions in a Throughput or Star set must be satisfied. IDs must be unique and may contain letters, digits and underscores, starting with a letter.
 
-Deleting a detector in the editor removes its clear and medal conditions. If no named clear detectors remain, any detector can clear the level. A Rate or Star medal that loses its last condition uses the corresponding new-level threshold.
+Deleting a detector in the editor removes its clear and medal conditions. If no named clear detectors remain, any detector can clear the level. A Throughput or Star medal that loses its last condition uses the corresponding new-level threshold.
 
-Completing the clear objective starts a background simulation of the build. Output meters and rate-based medals use the same forecast. It measures full cycles when the output repeats and averages a later window when the pattern is irregular. The display uses particles per tick, independent of playback speed.
+Completing the clear objective starts a background simulation of the build. Output meters and throughput-based medals use the same forecast. It measures full cycles when the output repeats and averages a later window when the pattern is irregular. The display uses average ticks per detected particle, independent of playback speed. The output bar fills as the measured period approaches or improves on the maximum.
 
-Existing `goal` blocks, bare rates, `/step`, historical `/s` and emitter `rate=…/tick` declarations still load at their original cadence. Legacy per-step emitter rates become periods using `period = 4 / rate`; per-tick emitter rates become periods using `period = 1 / rate`. Output rates retain the per-tick format. Custom levels in the game folder are migrated on launch, with a `.pre-period.bak` backup; any earlier `.pre-tick.bak` backup is preserved. External levels are upgraded in the editor when opened and written in the new format on save. Invalid levels are left untouched. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Old hint declarations are ignored. Previous star totals carry forward as completion records.
+Existing `goal` blocks, `rate_medal` declarations, bare legacy rates, `/step`, historical `/s` and `rate=…/tick` declarations still load at their original cadence. Legacy per-step rates become periods using `period = 4 / rate`; per-tick rates become periods using `period = 1 / rate`. Custom levels in the game folder are migrated on launch, with a `.pre-throughput.bak` backup; earlier migration backups are preserved. Saved Rate medals count as Throughput medals. External levels are upgraded in the editor when opened and written in the new format on save. Invalid levels are left untouched. Legacy level goals supply default medal thresholds and are converted to medal declarations when you apply Level settings. Old hint declarations are ignored. Previous star totals carry forward as completion records.
 
 ## Gluons, Z bosons and W bosons
 

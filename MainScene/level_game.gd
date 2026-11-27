@@ -443,15 +443,15 @@ func _add_medals(rows: VBoxContainer) -> void:
     _refresh_clear_progress()
   var overview := HBoxContainer.new()
   rows.add_child(overview)
-  if level.has("rate_rule"):
+  if level.has("throughput_rule"):
     var outputs := VBoxContainer.new()
     outputs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     overview.add_child(outputs)
-    _add_medal_icon(outputs, "rate")
-    for key in level.rate_rule.rates:
-      _add_output_meter(outputs, key, _output_title(level.rate_rule.targets.get(key, key)), level.rate_rule.rates[key], "rate_condition")
+    _add_medal_icon(outputs, "throughput")
+    for key in level.throughput_rule.periods:
+      _add_output_meter(outputs, key, _output_title(level.throughput_rule.targets.get(key, key)), level.throughput_rule.periods[key], "throughput_condition")
   else:
-    _add_output_meter(overview, "any", "", level.medals.rate, "rate")
+    _add_output_meter(overview, "any", "", level.medals.throughput, "throughput")
   var budget := HBoxContainer.new()
   budget.size_flags_vertical = Control.SIZE_SHRINK_END
   overview.add_child(budget)
@@ -466,10 +466,10 @@ func _add_medals(rows: VBoxContainer) -> void:
   for index in range(level.medals.star.size()):
     if index > 0: conditions.add_child(UI.label("or"))
     var rule: Dictionary = level.medals.star[index]
-    for key in rule.rates:
+    for key in rule.periods:
       var target: String = rule.targets.get(key, key)
       var title := _output_title(target)
-      _add_output_meter(conditions, key, title, rule.rates[key], "star")
+      _add_output_meter(conditions, key, title, rule.periods[key], "star")
     if rule.has("cost"):
       _add_cost_requirement(conditions, rule.cost)
     if not rule.no_buildings.is_empty():
@@ -522,19 +522,19 @@ func _add_output_meter(parent: Container, key: String, title: String, target: fl
   column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   column.add_theme_constant_override("separation", 2)
   parent.add_child(column)
-  var requirement := "%s/tick" % OUTPUT_METER.format_rate(target)
+  var requirement := "≤ %s ticks" % OUTPUT_METER.format_period(target)
   var caption := UI.label(requirement if title.is_empty() else "%s · %s" % [title, requirement])
   caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-  if medal == "rate": caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+  if medal == "throughput": caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
   column.add_child(caption)
   var row := HBoxContainer.new()
   column.add_child(row)
   var meter := OUTPUT_METER.new()
-  meter.target = target
+  meter.target_period = target
   meter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
   row.add_child(meter)
-  if medal == "rate": _add_medal_icon(row, medal)
-  output_rows.append({"key": key, "meter": meter})
+  if medal == "throughput": _add_medal_icon(row, medal)
+  output_rows.append({"key": key, "meter": meter, "caption": caption, "title": title, "requirement": requirement})
 
 func _load_initial_board() -> void:
   running = false
@@ -1016,10 +1016,17 @@ func _update_hud_actions() -> void:
 
 func _refresh_output() -> void:
   for row in output_rows:
-    row.meter.set_rate(_output_rate(row.key), forecast != null, forecast_grid_ticks)
+    var period := _output_period(row.key)
+    row.meter.set_period(period, forecast != null, forecast_grid_ticks)
+    var value: String = row.requirement
+    if forecast_grid_ticks > 0.0:
+      var actual := OUTPUT_METER.format_period(period) + " ticks" if is_finite(period) else "No output"
+      value = "%s · target %s" % [actual, row.requirement]
+    row.caption.text = value if row.title.is_empty() else "%s · %s" % [row.title, value]
 
-func _output_rate(key: String) -> float:
-  return _goal_count(forecast_counts, key) / forecast_grid_ticks if forecast_grid_ticks > 0.0 else 0.0
+func _output_period(key: String) -> float:
+  var count := _goal_count(forecast_counts, key)
+  return forecast_grid_ticks / count if forecast_grid_ticks > 0.0 and count > 0 else INF
 
 func _drop_inventory(kind: String, screen_position: Vector2) -> void:
   if not is_board_pointer(screen_position): return
@@ -1143,12 +1150,12 @@ func _update_clear(first_detection: bool) -> void:
   completed = true
   var previous_count := earned_medals.size()
   if first_detection and cost <= level.medals.cost: earned_medals.append("cost")
-  var rate_targets: Dictionary = level.get("rate_rule", {}).get("rates", {"any": level.medals.rate})
-  if "rate" not in earned_medals and _meets_output(rate_targets, forecast_counts, forecast_grid_ticks):
-    earned_medals.append("rate")
+  var period_targets: Dictionary = level.get("throughput_rule", {}).get("periods", {"any": level.medals.throughput})
+  if "throughput" not in earned_medals and _meets_output(period_targets, forecast_counts, forecast_grid_ticks):
+    earned_medals.append("throughput")
   if "star" not in earned_medals:
     for rule in level.medals.star:
-      if _meets_build_conditions(rule) and _meets_output(rule.rates, forecast_counts, forecast_grid_ticks):
+      if _meets_build_conditions(rule) and _meets_output(rule.periods, forecast_counts, forecast_grid_ticks):
         earned_medals.append("star")
         break
   if first_detection or previous_count != earned_medals.size(): _save_run_progress()
@@ -1208,8 +1215,9 @@ func _update_results() -> void:
   for kind in total_counts:
     if kind == "any" or kind in PARTICLES.QUARK_FAMILIES: continue
     stats += "\n%s · %d detected" % [PARTICLES.label(kind), int(total_counts[kind])]
-    var rate := _output_rate(kind)
-    if rate > 0.0: stats += " · %s/tick" % OUTPUT_METER.format_rate(rate)
+    var period := _output_period(kind)
+    if is_finite(period): stats += " · %s ticks/particle" % OUTPUT_METER.format_period(period)
+    elif forecast_grid_ticks > 0.0: stats += " · No sustained output"
   results_text.text = "%d of 3 medals earned\nBuild cost $%d\n%s" % [earned_medals.size(), cost, stats]
 
 func _report_particle_path(particle: Particle, path: Array[Dictionary], until: float) -> void:
@@ -1245,11 +1253,12 @@ func _goal_count(counts: Dictionary, key: String) -> int:
     total += int(counts.get(name + suffix, 0))
   return total
 
-func _meets_output(rates: Dictionary, counts: Dictionary, ticks: float) -> bool:
-  for key in rates:
-    if ticks <= 0.0: return false
-    var actual := _goal_count(counts, key) / ticks
-    if actual < rates[key] and absf(actual / rates[key] - 1.0) > 0.000001: return false
+func _meets_output(periods: Dictionary, counts: Dictionary, ticks: float) -> bool:
+  for key in periods:
+    var count := _goal_count(counts, key)
+    if ticks <= 0.0 or count <= 0: return false
+    var actual := ticks / count
+    if actual > periods[key] and absf(periods[key] / actual - 1.0) > 0.000001: return false
   return true
 
 func _on_particle_event(kind: String, at: Vector2) -> void:

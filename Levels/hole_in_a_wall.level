@@ -1,8 +1,8 @@
 11 x 9;
 
-rate_medal: {0.5/tick};
+throughput_medal: {period=2};
 cost_medal: {80};
-star_medal: {photon: 0.5/tick; cost: 120};
+star_medal: {photon: period=2; cost: 120};
 
 
 wall: {x=5, y=1, fixed=p}

@@ -4,11 +4,10 @@ extends RefCounted
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const PARTICLE_TOKEN := "[a-zA-Z_][a-zA-Z_0-9]*|[(),]"
-const MEDAL_BLOCKS := ["rate_medal", "cost_medal", "star_medal"]
+const MEDAL_BLOCKS := ["throughput_medal", "cost_medal", "star_medal"]
 # Historical levels used four grid ticks per step (one second at 60 Hz).
 # Keep this conversion fixed even if simulation timing changes later.
 const LEGACY_RATE_DIVISOR := 4.0
-const DEFAULT_RATE := 0.25
 const DEFAULT_PERIOD := 4.0
 
 static func mask_comments(source: String) -> String:
@@ -36,7 +35,7 @@ static func find_dimensions(text: String) -> RegExMatch:
 static func find_blocks(text: String) -> Array[RegExMatch]:
   var blocks := RegEx.new()
   var names: Array = CATALOG.SCENES.keys()
-  names.append_array(MEDAL_BLOCKS + ["clear", "star", "goal", "inventory", "no_build", "magnetic_field", "mirror"])
+  names.append_array(MEDAL_BLOCKS + ["rate_medal", "clear", "star", "goal", "inventory", "no_build", "magnetic_field", "mirror"])
   blocks.compile("(?is)\\b(" + "|".join(names) + ")\\s*:\\s*\\{([^}]*)\\}[ \\t]*;?")
   return blocks.search_all(_without_metadata(text))
 
@@ -60,7 +59,7 @@ static func parse(source: String) -> Dictionary:
   var legacy_suffix := RegEx.new()
   legacy_suffix.compile("(?i)/s\\b")
   for block in blocks:
-    if block.get_string(1).to_lower() in ["goal", "rate_medal", "star_medal"] and legacy_suffix.search(block.get_string(2)) != null:
+    if block.get_string(1).to_lower() in ["goal", "rate_medal", "throughput_medal", "star_medal"] and legacy_suffix.search(block.get_string(2)) != null:
       data.legacy_rates = true
   var old_goals: Array[Dictionary] = []
   for block in blocks:
@@ -77,19 +76,19 @@ static func parse(source: String) -> Dictionary:
         var clear_rule := _parse_clear(body)
         if clear_rule.has("error"): return clear_rule
         data.merge(clear_rule)
-      "rate_medal", "cost_medal":
-        var medal := kind.trim_suffix("_medal")
-        if data.medals.has(medal): return {"error": "Duplicate " + kind + " declaration."}
-        if medal == "rate" and ":" in body:
-          var rule := _parse_star_medal(body)
+      "rate_medal", "throughput_medal", "cost_medal":
+        var medal := "cost" if kind == "cost_medal" else "throughput"
+        if data.medals.has(medal): return {"error": "Duplicate " + medal + " medal declaration."}
+        if medal == "throughput" and ":" in body:
+          var rule := _parse_star_medal(body, kind == "throughput_medal")
           if rule.has("error"): return rule
-          if rule.rates.is_empty() or rule.has("cost") or rule.hit_stars or not rule.no_buildings.is_empty():
-            return {"error": "The Rate medal accepts only output conditions."}
-          data.rate_rule = rule
-          data.medals.rate = float(rule.rates.get("any", DEFAULT_RATE))
+          if rule.periods.is_empty() or rule.has("cost") or rule.hit_stars or not rule.no_buildings.is_empty():
+            return {"error": "The Throughput medal accepts only output conditions."}
+          data.throughput_rule = rule
+          data.medals.throughput = float(rule.periods.get("any", DEFAULT_PERIOD))
           continue
-        var amount := _parse_rate(body) if medal == "rate" else _parse_cost_limit(body)
-        if medal == "rate" and amount <= 0.0: return {"error": "The Rate medal needs a positive rate."}
+        var amount := _parse_output_period(body, kind == "throughput_medal") if medal == "throughput" else _parse_cost_limit(body)
+        if medal == "throughput" and amount <= 0.0: return {"error": "The Throughput medal needs a positive period in ticks."}
         if medal == "cost" and amount < 0.0: return {"error": "The Cost medal needs a nonnegative cost limit."}
         data.medals[medal] = amount
       "star_medal":
@@ -120,7 +119,7 @@ static func parse(source: String) -> Dictionary:
   if data.medals.is_empty() and not old_goals.is_empty():
     data.medals = _medals_from_goals(old_goals)
   elif data.medals.size() != MEDAL_BLOCKS.size() or not old_goals.is_empty():
-    return {"error": "Define a rate_medal, cost_medal and star_medal together."}
+    return {"error": "Define a throughput_medal, cost_medal and star_medal together."}
   var occupied := {}
   var detector_ids := {}
   for building in data.buildings:
@@ -138,9 +137,9 @@ static func parse(source: String) -> Dictionary:
   for id in data.get("clear_ids", []):
     if not detector_ids.has(id): return {"error": "Unknown detector in clear objective: " + id}
   var rules: Array = data.medals.star.duplicate()
-  if data.has("rate_rule"): rules.append(data.rate_rule)
+  if data.has("throughput_rule"): rules.append(data.throughput_rule)
   for rule in rules:
-    for key in rule.rates:
+    for key in rule.periods:
       if "@" in key and not detector_ids.has(key.get_slice("@", 1)):
         return {"error": "Unknown detector in output objective: " + key.get_slice("@", 1)}
   return data
@@ -194,8 +193,8 @@ static func _parse_output_target(target: String) -> Dictionary:
   if not _valid_particle(name): return {"error": "Unknown output target: " + target}
   return {"key": name, "target": name}
 
-static func _parse_star_medal(body: String) -> Dictionary:
-  var rule := {"rates": {}, "targets": {}, "no_buildings": [], "hit_stars": false}
+static func _parse_star_medal(body: String, bare_periods := false) -> Dictionary:
+  var rule := {"periods": {}, "targets": {}, "no_buildings": [], "hit_stars": false}
   var seen := {}
   for clause in body.strip_edges().split(";", false):
     if clause.strip_edges().is_empty(): continue
@@ -225,9 +224,9 @@ static func _parse_star_medal(body: String) -> Dictionary:
         if value.to_lower() != "true": return {"error": "Use hit_stars: true to require every placed star."}
         rule.hit_stars = true
       _:
-        var rate := _parse_rate(value)
-        if rate <= 0.0: return {"error": "Output rates must be positive: " + value}
-        rule.rates[key] = rate
+        var period := _parse_output_period(value, bare_periods)
+        if period <= 0.0: return {"error": "Output periods must be finite and positive: " + value}
+        rule.periods[key] = period
   if seen.is_empty(): return {"error": "The Star medal needs at least one condition."}
   return rule
 
@@ -241,24 +240,24 @@ static func _medals_from_goals(goals: Array[Dictionary]) -> Dictionary:
       if key != "cost" and is_finite(old.goal[key][0]): lowest += float(old.goal[key][0])
     if lowest > 0.0: rate = minf(rate, lowest)
     for tier in [2, 1, 0]:
-      var rates := {}
+      var periods := {}
       var possible := true
       for key in old.goal:
         if key == "cost": continue
         var amount: float = old.goal[key][tier]
         if is_inf(amount): possible = false
-        elif amount > 0.0: rates[key] = amount
+        elif amount > 0.0: periods[key] = 1.0 / amount
       if not possible: continue
-      var rule := {"rates": rates, "targets": old.targets, "no_buildings": [], "hit_stars": false}
+      var rule := {"periods": periods, "targets": old.targets, "no_buildings": [], "hit_stars": false}
       if old.goal.has("cost") and is_finite(old.goal.cost[tier]):
         rule.cost = floorf(old.goal.cost[tier])
         cost_limit = minf(cost_limit, rule.cost)
-      if rates.is_empty() and not rule.has("cost"): rule.rates["any"] = DEFAULT_RATE
+      if periods.is_empty() and not rule.has("cost"): rule.periods["any"] = DEFAULT_PERIOD
       alternatives.append(rule)
       break
   if alternatives.is_empty():
-    alternatives.append({"rates": {"any": DEFAULT_RATE}, "targets": {}, "no_buildings": [], "hit_stars": false})
-  return {"rate": rate if is_finite(rate) else DEFAULT_RATE, "cost": cost_limit if is_finite(cost_limit) else 0.0, "star": alternatives}
+    alternatives.append({"periods": {"any": DEFAULT_PERIOD}, "targets": {}, "no_buildings": [], "hit_stars": false})
+  return {"throughput": 1.0 / rate if is_finite(rate) else DEFAULT_PERIOD, "cost": cost_limit if is_finite(cost_limit) else 0.0, "star": alternatives}
 
 static func building_kind(name: String) -> String:
   var kind := name.to_lower()
@@ -281,6 +280,10 @@ static func _parse_goal(body: String) -> Dictionary:
         values.append(INF)
       elif parts[0].strip_edges().to_lower() == "cost" and _parse_cost_limit(token) >= 0.0:
         values.append(float(token))
+      elif parts[0].strip_edges().to_lower() != "cost" and _is_period_assignment(token):
+        var period := _parse_output_period(token)
+        if period <= 0.0: return {"error": "Invalid goal period: " + token}
+        values.append(1.0 / period)
       elif parts[0].strip_edges().to_lower() != "cost" and _parse_rate(token) >= 0.0:
         values.append(_parse_rate(token))
       else:
@@ -346,14 +349,30 @@ static func _parse_rate(value: String, _legacy_bare := false) -> float:
   if not is_finite(rate): return -1.0
   return rate if per_tick else rate / LEGACY_RATE_DIVISOR
 
-## Settings controls use ticks even when the author omits the displayed unit.
-## Old units are still accepted explicitly.
-static func editor_rate_text(value: String) -> String:
+## Explicit period= values are unambiguous even in legacy Star/goal blocks.
+## Bare numbers in the new Throughput medal are also periods.
+static func _is_period_assignment(value: String) -> bool:
+  var pair := value.strip_edges().to_lower().split("=", true, 1)
+  return pair.size() == 2 and pair[0].strip_edges() == "period"
+
+static func _parse_output_period(value: String, bare_period := false) -> float:
+  var token := value.strip_edges().to_lower()
+  if _is_period_assignment(token): return _parse_period(token.get_slice("=", 1))
+  if bare_period and not (token.ends_with("/tick") or token.ends_with("/step") or token.ends_with("/s")):
+    return _parse_period(token)
+  var rate := _parse_rate(token)
+  if rate <= 0.0 or not is_finite(1.0 / rate): return -1.0
+  return 1.0 / rate
+
+## Fields in the visual editor always represent ticks per particle.
+static func editor_period_text(value: String) -> String:
   var token := value.strip_edges()
+  if token.is_empty() or _is_period_assignment(token): return token
   var lower := token.to_lower()
-  if token.is_empty() or lower.ends_with("/tick") or lower.ends_with("/step") or lower.ends_with("/s"):
+  if lower.ends_with("/tick") or lower.ends_with("/step") or lower.ends_with("/s"):
+    if _parse_output_period(token) > 0.0: return "period=" + _period_from_rate(token)
     return token
-  return token + "/tick"
+  return "period=" + token
 
 ## An emission period is a positive number of grid ticks per particle.
 ## Fractions are useful for rates which do not have a terminating decimal.
@@ -389,31 +408,38 @@ static func _period_from_rate(token: String) -> String:
     return fraction
   return format_period(period)
 
-static func _canonical_rate(token: String) -> String:
-  if token.to_lower().ends_with("/tick"): return token
-  var rate := _parse_rate(token)
-  if rate < 0.0: return token
-  var decimal := String.num(rate, 16)
-  if float(decimal) == rate: return decimal + "/tick"
-  # Preserve nonterminating fractions instead of rounding medal thresholds.
-  var parts := token.to_lower().trim_suffix("/step").trim_suffix("/s").split("/")
-  if parts.size() == 1: return parts[0] + "/4/tick"
-  var divisor := float(parts[1]) * LEGACY_RATE_DIVISOR
-  var denominator := String.num(divisor, 16)
-  if float(denominator) != divisor: denominator = str(divisor)
-  return parts[0] + "/" + denominator + "/tick"
+static func _output_period_edit(edits: Array[Dictionary], value: String, offset: int, bare_period := false) -> void:
+  var token := value.strip_edges()
+  if token.is_empty() or _is_period_assignment(token): return
+  var period := _parse_output_period(token, bare_period)
+  if period <= 0.0: return
+  var lower := token.to_lower()
+  var legacy := not bare_period or lower.ends_with("/tick") or lower.ends_with("/step") or lower.ends_with("/s")
+  var replacement := "period=" + (_period_from_rate(token) if legacy else token)
+  var first := value.find(token)
+  edits.append({"start": offset + first, "end": offset + first + token.length(), "text": replacement})
 
-static func _rate_edits(edits: Array[Dictionary], value: String, offset: int) -> void:
-  var tokens := RegEx.new()
-  tokens.compile("[^\\s,;]+")
-  for token in tokens.search_all(value):
-    var original := token.get_string()
-    var replacement := _canonical_rate(original)
-    if replacement != original:
-      edits.append({"start": offset + token.get_start(), "end": offset + token.get_end(), "text": replacement})
+# Reciprocals and legacy goal sums may introduce machine-precision rounding.
+# All nonnumeric data must remain identical.
+static func _equivalent_migration(before: Variant, after: Variant) -> bool:
+  if typeof(before) != typeof(after): return false
+  if before == after: return true
+  if before is float:
+    return is_finite(before) and is_finite(after) and before != 0.0 and absf(after / before - 1.0) <= 0.000000000001
+  if before is Dictionary:
+    if before.size() != after.size(): return false
+    for key in before:
+      if not after.has(key) or not _equivalent_migration(before[key], after[key]): return false
+    return true
+  if before is Array:
+    if before.size() != after.size(): return false
+    for index in range(before.size()):
+      if not _equivalent_migration(before[index], after[index]): return false
+    return true
+  return false
 
-## Upgrade emitter rates to periods and output rates to /tick. Preserve
-## comments, costs, detector IDs, ranges and legacy goal declarations.
+## Upgrade old emitter and medal rates to periods, preserving comments,
+## costs, detector IDs, goal tiers, and all other level data.
 static func migrate_rates(source: String) -> String:
   var before := parse(source)
   if before.has("error"): return source
@@ -433,14 +459,24 @@ static func migrate_rates(source: String) -> String:
           "text": "period=" + _period_from_rate(found.get_string(1))})
       elif period_assignment.search(body) == null:
         edits.append({"start": block.get_end(2), "end": block.get_end(2), "text": ", period=4"})
-    elif kind == "rate_medal" and not ":" in body:
-      _rate_edits(edits, body, start)
-    elif kind in ["goal", "rate_medal", "star_medal"]:
+    elif kind in ["goal", "rate_medal", "throughput_medal", "star_medal"]:
+      if kind == "rate_medal":
+        edits.append({"start": block.get_start(1), "end": block.get_end(1), "text": "throughput_medal"})
+      if kind in ["rate_medal", "throughput_medal"] and not ":" in body:
+        _output_period_edit(edits, body, start, kind == "throughput_medal")
+        continue
       var offset := start
       for clause in body.split(";"):
         var colon := clause.find(":")
         if colon >= 0 and clause.left(colon).strip_edges().to_lower() not in ["cost", "no_buildings", "hit_stars"]:
-          _rate_edits(edits, clause.substr(colon + 1), offset + colon + 1)
+          var value := clause.substr(colon + 1)
+          if kind == "goal":
+            var value_offset := offset + colon + 1
+            for tier in value.split(","):
+              _output_period_edit(edits, tier, value_offset)
+              value_offset += tier.length() + 1
+          else:
+            _output_period_edit(edits, value, offset + colon + 1, kind == "throughput_medal")
         offset += clause.length() + 1
   edits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.start > b.start)
   var updated := source
@@ -450,16 +486,7 @@ static func migrate_rates(source: String) -> String:
   if after.has("error"): return source
   before.erase("legacy_rates")
   after.erase("legacy_rates")
-  # Allow only machine-precision rounding when taking a reciprocal.
-  if before.buildings.size() != after.buildings.size(): return source
-  for i in range(before.buildings.size()):
-    if before.buildings[i].kind != "emitter": continue
-    var old_period: float = before.buildings[i].period
-    var new_period: float = after.buildings[i].period
-    if absf(new_period / old_period - 1.0) > 0.000000000001: return source
-    after.buildings[i].period = old_period
-  # Never rewrite a level if any other parsed value would change.
-  if before != after: return source
+  if not _equivalent_migration(before, after): return source
   return updated
 
 static func parse_building(kind: String, body: String, width: int, height: int, legacy_rates := false) -> Dictionary:

@@ -1,9 +1,9 @@
 title: 04 - To Get to the Other Side;
 9 x 9;
 
-rate_medal: {0.5/tick};
+throughput_medal: {period=2};
 cost_medal: {80};
-star_medal: {photon: 0.5/tick; no_buildings: reflector};
+star_medal: {photon: period=2; no_buildings: reflector};
 
 
 emitter: {x=1, y=5, NE, [electron, positron], period=4, fixed=pr}

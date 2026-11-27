@@ -10,7 +10,7 @@ func _ready() -> void:
   var scoped := PARSER.parse("3 x 3; clear: {a AND b}; rate_medal: {photon@a: 1/step; photon@b: 1/step}; cost_medal: {0}; star_medal: {[up OR down]@a: 1/step}; detector: {x=0,y=0,[photon OR up],id=a}; detector: {x=2,y=2,[photon],id=b};")
   assert(not scoped.has("error"), str(scoped))
   assert(scoped.clear_ids == ["a", "b"])
-  assert(scoped.rate_rule.rates.has("photon@a") and scoped.rate_rule.rates.has("photon@b"))
+  assert(scoped.throughput_rule.periods.has("photon@a") and scoped.throughput_rule.periods.has("photon@b"))
   var scoped_counts := {}
   PARTICLES.record_detection(scoped_counts, "photon", "a")
   PARTICLES.record_detection(scoped_counts, "photon", "a")
@@ -22,10 +22,10 @@ func _ready() -> void:
   scoped_game.level = scoped
   scoped_game.total_counts = {"any": 2, "any@a": 2, "photon@a": 2}
   assert(not scoped_game._clear_requirement_met())
-  assert(not scoped_game._meets_output(scoped.rate_rule.rates, scoped_game.total_counts, 1.0))
+  assert(not scoped_game._meets_output(scoped.throughput_rule.periods, scoped_game.total_counts, 1.0))
   scoped_game.total_counts = scoped_counts
   assert(scoped_game._clear_requirement_met())
-  assert(scoped_game._meets_output(scoped.rate_rule.rates, scoped_counts, 1.0))
+  assert(scoped_game._meets_output(scoped.throughput_rule.periods, scoped_counts, 1.0))
   assert(scoped_game._goal_count({"up@a": 3, "up_r@a": 2, "up_r@b": 4}, "[up,up_r]@a") == 3)
   scoped_game.level.clear_mode = "or"
   scoped_game.total_counts = {"any@b": 1}
@@ -34,9 +34,9 @@ func _ready() -> void:
   var level: Dictionary = PARSER.parse(FileAccess.get_file_as_string("res://Tests/magnet_fixture.level"))
   assert(not level.has("error"))
   assert(level.buildings[3].accepted == ["electron", "positron"])
-  assert(level.medals.star[0].rates.has("[electron,positron]"))
+  assert(level.medals.star[0].periods.has("[electron,positron]"))
   var goal_expression: Dictionary = PARSER.parse("2 x 2; goal: {[(electron OR up) AND up_r]: 1, 2, 3};")
-  assert(goal_expression.medals.star[0].rates.has("[up_r]"))
+  assert(goal_expression.medals.star[0].periods.has("[up_r]"))
   goal_expression = PARSER.parse("2 x 2; goal: {[electron OR (positron]: 1, 2, 3};")
   assert(goal_expression.has("error"))
   var expression: Dictionary = PARSER.parse("2 x 2; goal: {electron: 1, 2, 3}; detector: {x=0,y=0,[electron OR up AND up_r]};")
@@ -59,7 +59,7 @@ func _ready() -> void:
   var metadata := PARSER.parse("3 x 3;\ntitle: A small test;\nhint: Try the mirror;\ngoal: {photon: 1, 1, 1};")
   assert(metadata.title == "A small test" and not metadata.has("hint"), "Existing hints should be ignored.")
   var migrated := PARSER.parse("4 x 4; goal: {[photon_b]: 1, 2, 3}; emitter: {x=0,y=0,[photon_r,up]}; rail: {x=1,y=0}; inventory: {rail=2,gate=1};")
-  assert(migrated.medals.star[0].rates.has("[photon]") and migrated.medals.star[0].targets["[photon]"] == "[photon]")
+  assert(migrated.medals.star[0].periods.has("[photon]") and migrated.medals.star[0].targets["[photon]"] == "[photon]")
   assert(migrated.buildings.size() == 1 and migrated.buildings[0].particles == ["photon", "up_r"])
   assert(migrated.inventory == {"gate": 1}, "Saved rails should stay unavailable.")
   var game = GAME.instantiate()
@@ -72,7 +72,7 @@ func _ready() -> void:
   assert(game._meets_output(candidate, {"electron": 10, "positron": 0}, 10.0))
   assert(game._meets_output(candidate, {"electron": 6, "positron": 4}, 10.0))
   assert(not game._meets_output(candidate, {"electron": 9, "positron": 0}, 10.0))
-  var slow_candidate := {"electron": 1.0 / 300.0}
+  var slow_candidate := {"electron": 300.0}
   assert(game._meets_output(slow_candidate, {"electron": 6}, 1800.0))
   assert(not game._meets_output(slow_candidate, {"electron": 6}, 1920.0), "The forecast should use the measured rate.")
   assert(game._goal_count({"up": 4, "up_r": 2}, "[up,up_r]") == 4)
@@ -111,8 +111,8 @@ func _ready() -> void:
   assert(game.selected_building.orientation == mirror_orientation)
   assert(not game.has_method("_open_config"))
   assert(game.buildings[3].accepted == ["electron", "positron"])
-  assert(game.output_rows[0].meter.target == 1.0 and game.output_rows[0].key == "any")
-  assert(game.output_rows[1].meter.target == 2.0)
+  assert(game.output_rows[0].meter.target_period == 4.0 and game.output_rows[0].key == "any")
+  assert(game.output_rows[1].meter.target_period == 2.0)
   # Turn the positron beam towards the detector.
   game.selected_building = game.buildings[2]
   game._rotate_selected()
@@ -133,7 +133,7 @@ func _ready() -> void:
   assert(game.get_playback_speed() == 2.0)
   var live_counts: Dictionary = game.total_counts.duplicate()
   _advance_forecast(game)
-  assert(game.completed and "rate" in game.earned_medals and "star" not in game.earned_medals)
+  assert(game.completed and "throughput" in game.earned_medals and "star" not in game.earned_medals)
   game._show_results()
   assert(game.results_text.text.begins_with("2 of 3 medals earned"))
   game._result_action(&"continue")
@@ -215,19 +215,19 @@ func _run_sparse_level(repeating: bool) -> Node2D:
 func _check_sparse_output() -> void:
   var game := _run_sparse_level(true)
   _advance_forecast(game)
-  assert(is_equal_approx(game.output_rows[0].meter.rate, 1.0 / 1200.0), "The sparse stream should measure one detection every 1200 ticks.")
-  assert(game.completed and game.earned_medals == ["cost", "rate"], "A build at the cost limit should earn the Cost medal.")
+  assert(is_equal_approx(game.output_rows[0].meter.period, 1200.0), "The sparse stream should measure one detection every 1200 ticks.")
+  assert(game.completed and game.earned_medals == ["cost", "throughput"], "A build at the cost limit should earn the Cost medal.")
   assert(game.cost_rows[0].label.text == "$5 / $5")
   assert(game.total_counts.get("electron", 0) == 1, "Forecast counts must never enter live totals.")
   game.stop_to_build()
-  assert(game.output_rows[0].meter.rate == 0.0 and game.output_rows[0].meter.sample_grid_ticks == 0.0)
+  assert(is_inf(game.output_rows[0].meter.period) and game.output_rows[0].meter.sample_grid_ticks == 0.0)
   game.free()
 
 func _check_one_off_output() -> void:
   var game := _run_sparse_level(false)
   _advance_forecast(game)
   assert(game.completed and game.earned_medals == ["cost"] and game.results_button.visible)
-  assert(game.output_rows[0].meter.rate == 0.0, "A single detection should not count as sustained output.")
+  assert(is_inf(game.output_rows[0].meter.period), "A single detection should not count as sustained output.")
   game.free()
 
 func _check_burst_output() -> void:
@@ -240,7 +240,7 @@ func _check_burst_output() -> void:
   _run_steps(game, 2)
   assert(game.forecast != null, "The first burst should start a forecast.")
   _advance_forecast(game)
-  assert(game.output_rows[0].meter.rate == 0.0625 and game.output_rows[0].meter.sample_grid_ticks == 48.0,
+  assert(game.output_rows[0].meter.period == 16.0 and game.output_rows[0].meter.sample_grid_ticks == 48.0,
     "Count three detections over the full 48-tick cycle, including silence.")
   assert(game.earned_medals == ["cost", "star"], "The burst should earn only the medals whose limits it meets.")
   game.free()
@@ -282,7 +282,7 @@ func _check_stray_particles() -> void:
   _run_steps(game, 3)
   assert(game.total_counts.get("electron", 0) == 1 and proton.motion_position() == rest_position)
   _advance_forecast(game)
-  assert(game.completed and "rate" not in game.earned_medals)
+  assert(game.completed and "throughput" not in game.earned_medals)
   game.stop_to_build()
   assert(game._particles().is_empty() and game._building_at(start).visible)
   game.begin_run()
@@ -356,7 +356,7 @@ func _check_bundled_launch() -> void:
   game.begin_run()
   _run_steps(game, 8)
   _advance_forecast(game)
-  assert(game.output_rows[0].meter.rate == 0.25 and game.output_rows[0].meter.sample_grid_ticks == 4.0,
+  assert(game.output_rows[0].meter.period == 4.0 and game.output_rows[0].meter.sample_grid_ticks == 4.0,
     "First Contact should measure exactly one photon per four ticks from a repeating cycle.")
   assert(game.completed and game.earned_medals.size() == 3, "First Contact should have a route to all three medals.")
   game.free()
@@ -366,13 +366,13 @@ func _check_rate_migration() -> void:
   var upgraded := PARSER.migrate_rates(legacy)
   assert(upgraded != legacy and PARSER.migrate_rates(upgraded) == upgraded, "Migration must be idempotent.")
   assert(upgraded.contains("# keep 8/step and cost: 20 unchanged"))
-  assert(upgraded.contains("photon@a: 0.5/tick") and upgraded.contains("any: 0.125/tick"))
-  assert(upgraded.contains("cost: 20") and upgraded.contains("1/1200/tick"))
+  assert(upgraded.contains("throughput_medal: {photon@a: period=2; any: period=8}"))
+  assert(upgraded.contains("cost: 20") and upgraded.contains("photon: period=1200"))
   assert(not upgraded.contains("rate=") and upgraded.contains("period=4"))
   var old_data := PARSER.parse(legacy)
   var new_data := PARSER.parse(upgraded)
   assert(not old_data.has("error") and not new_data.has("error"))
-  assert(old_data.medals == new_data.medals and old_data.rate_rule == new_data.rate_rule)
+  assert(old_data.medals == new_data.medals and old_data.throughput_rule == new_data.throughput_rule)
   assert(old_data.buildings.size() == new_data.buildings.size())
   for i in range(3):
     assert(is_equal_approx(old_data.buildings[i].period, new_data.buildings[i].period))
@@ -380,7 +380,7 @@ func _check_rate_migration() -> void:
   assert(new_data.medals.cost == 30.0)
   var goal := "3 x 3; goal: {photon: 1/s, 2/step, inf; cost: 30, 20, 10}; emitter: {x=0,y=0,rate=1/2};"
   var migrated_goal := PARSER.migrate_rates(goal)
-  assert(migrated_goal.contains("photon: 0.25/tick, 0.5/tick, inf") and migrated_goal.contains("cost: 30, 20, 10"))
+  assert(migrated_goal.contains("photon: period=4, period=2, inf") and migrated_goal.contains("cost: 30, 20, 10"))
   assert(PARSER.parse(goal).medals == PARSER.parse(migrated_goal).medals)
   assert(PARSER.parse(goal).buildings == PARSER.parse(migrated_goal).buildings)
   assert(PARSER.parse(migrated_goal).buildings[0].period == 8.0)
@@ -390,7 +390,7 @@ func _check_rate_migration() -> void:
   assert(PARSER.parse(per_tick).buildings == PARSER.parse(migrated_tick).buildings)
   assert(PARSER.parse(per_tick).medals == PARSER.parse(migrated_tick).medals)
   for period in ["0.5", "1", "2", "3", "4", "1/2"]:
-    var authored := per_tick.replace("rate=0.5/tick", "period=" + period)
+    var authored := migrated_tick.replace("E,[electron],period=2", "E,[electron],period=" + period)
     var data := PARSER.parse(authored)
     assert(not data.has("error"), str(data))
     assert(is_equal_approx(data.buildings[0].period, PARSER._parse_period(period)))
@@ -398,6 +398,23 @@ func _check_rate_migration() -> void:
   for invalid_period in ["0", "-1", "inf", "nan", "1/0", "3/tick"]:
     assert(PARSER.parse(per_tick.replace("rate=0.5/tick", "period=" + invalid_period)).has("error"))
   assert(PARSER.parse(per_tick.replace("rate=0.5/tick", "period=2, rate=0.5/tick")).has("error"))
+  assert(PARSER.parse(migrated_tick).medals.throughput == 2.0)
+  assert(PARSER.parse(migrated_tick).medals.star[0].periods.any == 1.0)
+  assert(PARSER.parse(migrated_tick.replace("throughput_medal: {period=2}", "throughput_medal: {2}")).medals.throughput == 2.0)
+  for invalid_period in ["0", "-1", "inf", "nan", "1/0"]:
+    assert(PARSER.parse(migrated_tick.replace("throughput_medal: {period=2}", "throughput_medal: {period=" + invalid_period + "}")).has("error"))
+  assert(PARSER.parse(migrated_tick.replace("star_medal: {any: period=1}", "star_medal: {any: period=0}")).has("error"))
+  var game = GAME.instantiate()
+  var required := {"any": 2.0}
+  assert(game._meets_output(required, {"any": 2}, 4.0))
+  assert(game._meets_output(required, {"any": 4}, 4.0))
+  assert(not game._meets_output(required, {"any": 1}, 4.0))
+  assert(not game._meets_output(required, {}, 4.0))
+  assert(not game._meets_output(required, {"any": 2}, 0.0))
+  game.free()
+  var saved_progress := ConfigFile.new()
+  saved_progress.set_value("levels", "test", {"completed": true, "medals": ["rate", "cost", "throughput"]})
+  assert(Global._stored_progress(saved_progress, "test").medals == ["throughput", "cost"])
   var invalid := "3 x 3; rate_medal: {1/step};"
   assert(PARSER.migrate_rates(invalid) == invalid)
   assert(PARSER._parse_rate("1/tick") == 1.0 and PARSER._parse_rate("1/4/tick") == 0.25)
@@ -412,11 +429,17 @@ func _check_rate_migration() -> void:
   assert(old_backup != null)
   old_backup.store_string("Earlier backup")
   old_backup.close()
+  var period_backup := FileAccess.open(path + ".pre-period.bak", FileAccess.WRITE)
+  assert(period_backup != null)
+  period_backup.store_string("Previous period backup")
+  period_backup.close()
   assert(Global.migrate_level_file(path))
+  assert(FileAccess.get_file_as_string(path + ".pre-period.bak") == "Previous period backup")
   assert(FileAccess.get_file_as_string(path + ".pre-tick.bak") == "Earlier backup")
   assert(FileAccess.get_file_as_string(path) == upgraded)
-  assert(FileAccess.get_file_as_string(path + ".pre-period.bak") == legacy)
+  assert(FileAccess.get_file_as_string(path + ".pre-throughput.bak") == legacy)
   assert(not Global.migrate_level_file(path))
   DirAccess.remove_absolute(path)
-  DirAccess.remove_absolute(path + ".pre-period.bak")
+  DirAccess.remove_absolute(path + ".pre-throughput.bak")
   DirAccess.remove_absolute(path + ".pre-tick.bak")
+  DirAccess.remove_absolute(path + ".pre-period.bak")

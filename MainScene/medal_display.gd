@@ -1,7 +1,7 @@
 extends RefCounted
 
 const ICONS := {
-  "rate": preload("res://rate_medal.png"),
+  "throughput": preload("res://rate_medal.png"),
   "cost": preload("res://cost_medal.png"),
   "star": preload("res://star_medal.png"),
 }

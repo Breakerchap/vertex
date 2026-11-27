@@ -97,15 +97,15 @@ func _ready() -> void:
   assert("r" in editor.game._building_at(Vector2i(3, 2)).get_meta("entry").fixed)
   editor._open_settings()
   editor.title_input.text = "Test puzzle"
-  editor.rate_medal_input.text = "1/4"
+  editor.throughput_medal_input.text = "1/4"
   editor.cost_medal_input.text = "20"
   editor.star_rules.get_child(0).get_meta("rule").cost.text = "10"
   editor._add_star_rule()
   var fields: Dictionary = editor.star_rules.get_child(1).get_meta("rule")
   fields.hit_stars.button_pressed = true
   fields.excluded.text = "mirror, magnet"
-  editor._add_star_output(fields.rates, "electron")
-  var output_row: VBoxContainer = fields.rates.get_child(0)
+  editor._add_star_output(fields.periods, "electron")
+  var output_row: VBoxContainer = fields.periods.get_child(0)
   var particles: Control = output_row.get_meta("output").expression
   assert(particles.picker.item_count == PARTICLES.TYPES.size() + PARTICLES.QUARK_FAMILIES.size() + 1)
   particles.clear_button.pressed.emit()
@@ -119,10 +119,10 @@ func _ready() -> void:
   editor._apply_settings()
   assert(editor.parsed.medals.star.size() == 2, "Star medal alternatives must be separate condition sets")
   assert(editor.parsed.title == "Test puzzle")
-  assert(editor.parsed.medals.rate == 0.25 and editor.parsed.medals.cost == 20.0)
-  assert(editor.source.text.contains("1/4/tick"), "Bare values in the settings controls should mean per tick.")
+  assert(editor.parsed.medals.throughput == 0.25 and editor.parsed.medals.cost == 20.0)
+  assert(editor.source.text.contains("period=1/4"), "Bare values in the settings controls should mean ticks per particle.")
   assert(editor.parsed.medals.star[0].cost == 10.0)
-  assert(editor.parsed.medals.star[1].rates.has("[up_r]"))
+  assert(editor.parsed.medals.star[1].periods.has("[up_r]"))
   assert(editor.parsed.medals.star[1].targets["[up_r]"] == "[(electron OR up) AND up_r]")
   assert(editor.parsed.medals.star[1].no_buildings == ["reflector", "magnet"])
   assert(editor.parsed.medals.star[1].hit_stars)
@@ -247,35 +247,35 @@ func _check_detector_objectives(editor) -> void:
   assert(editor.clear_detectors.get_child_count() == 2)
   editor.clear_mode_input.select(1)
   for choice in editor.clear_detectors.get_children(): choice.button_pressed = true
-  editor.rate_medal_input.text = ""
-  editor._add_star_output(editor.rate_outputs)
-  editor._add_star_output(editor.rate_outputs)
+  editor.throughput_medal_input.text = ""
+  editor._add_star_output(editor.throughput_outputs)
+  editor._add_star_output(editor.throughput_outputs)
   for index in range(2):
-    var output: Dictionary = editor.rate_outputs.get_child(index).get_meta("output")
+    var output: Dictionary = editor.throughput_outputs.get_child(index).get_meta("output")
     output.destination.select(index + 1)
   var star_fields: Dictionary = editor.star_rules.get_child(0).get_meta("rule")
-  star_fields.rates.get_child(0).get_meta("output").destination.select(2)
+  star_fields.periods.get_child(0).get_meta("output").destination.select(2)
   editor._apply_settings()
   assert(not editor.parsed.has("error"), editor.settings_error.text)
   assert(editor.parsed.clear_ids == ["d1", "d2"])
-  assert(editor.parsed.rate_rule.rates == {"any@d1": 0.25, "any@d2": 0.25})
-  assert(editor.parsed.medals.star[0].rates.has("any@d2"))
+  assert(editor.parsed.throughput_rule.periods == {"any@d1": 4.0, "any@d2": 4.0})
+  assert(editor.parsed.medals.star[0].periods.has("any@d2"))
   assert(editor.parsed.buildings[0].id == "d1" and editor.parsed.buildings[1].id == "d2")
   editor._open_settings()
   assert(editor.clear_detectors.get_child(0).button_pressed and editor.clear_detectors.get_child(1).button_pressed)
-  assert(editor.rate_outputs.get_child(1).get_meta("output").destination.get_selected_metadata() == "d2")
+  assert(editor.throughput_outputs.get_child(1).get_meta("output").destination.get_selected_metadata() == "d2")
   editor.settings_dialog.hide()
   editor._move_block(Vector2i(0, 0), Vector2i(2, 2))
   assert(editor.game._building_at(Vector2i(2, 2)).get_meta("detector_id") == "d1")
   editor._select_at(Vector2i(2, 2))
   editor._delete_selected()
   assert(editor.game._building_at(Vector2i(2, 2)) == null)
-  assert(editor.parsed.clear_ids == ["d2"] and editor.parsed.rate_rule.rates == {"any@d2": 0.25})
-  assert(editor.parsed.medals.star[0].rates.has("any@d2"))
+  assert(editor.parsed.clear_ids == ["d2"] and editor.parsed.throughput_rule.periods == {"any@d2": 4.0})
+  assert(editor.parsed.medals.star[0].periods.has("any@d2"))
   editor._select_at(Vector2i(0, 1))
   editor._delete_selected()
-  assert(not editor.parsed.has("clear_ids") and not editor.parsed.has("rate_rule"))
-  assert(editor.parsed.medals.star[0].rates == {"any": 0.5})
+  assert(not editor.parsed.has("clear_ids") and not editor.parsed.has("throughput_rule"))
+  assert(editor.parsed.medals.star[0].periods == {"any": 2.0})
   editor._undo_editor()
   assert(editor.game._building_at(Vector2i(0, 1)) != null and editor.parsed.clear_ids == ["d2"])
 
@@ -610,4 +610,4 @@ func _check_emitter_period(editor) -> void:
   editor._apply_visual_properties()
   assert(editor.source.text.contains("period=3") and not editor.source.text.contains("rate="))
   assert(editor.game._building_at(Vector2i(1, 1)).period == 3.0)
-  assert(editor.parsed.medals.rate == 0.25)
+  assert(editor.parsed.medals.throughput == 4.0)

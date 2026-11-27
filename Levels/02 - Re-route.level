@@ -2,7 +2,7 @@ title: 02 - Re-route;
 
 15 x 8;
 
-rate_medal: {0.5/tick};
+throughput_medal: {period=2};
 cost_medal: {15};
 star_medal: { hit_stars: true };
 star: { x = 4, y = 2 };
