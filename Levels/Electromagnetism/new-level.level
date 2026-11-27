@@ -1,0 +1,21 @@
+title: I dont know;
+11 x 9;
+
+rate_medal: {8/step};
+cost_medal: {20};
+star_medal: {any: 4/step; cost: 100};
+
+
+
+emitter: {x=0, y=3, E, [electron, positron], rate=2/step, fixed=pr}
+
+emitter: {x=0, y=5, E, [electron, positron], rate=2/step, fixed=pr};
+emitter: {x=10, y=5, W, [electron, positron], rate=2/step, fixed=pr}
+emitter: {x=10, y=3, W, [electron, positron], rate=2/step, fixed=pr}
+detector: {x=5, y=0, [photon], fixed=p}
+detector: {x=5, y=8, [photon], fixed=p};
+
+
+
+
+inventory: {magnet=24, pusher=4};

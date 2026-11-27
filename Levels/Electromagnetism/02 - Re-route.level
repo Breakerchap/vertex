@@ -1,5 +1,5 @@
 title: 02 - Re-route;
-
+order: 2
 15 x 8;
 
 throughput_medal: {period=2};

@@ -346,7 +346,7 @@ func _check_pusher_stars() -> void:
   game.free()
 
 func _check_bundled_launch() -> void:
-  Global.selected_level = "res://Levels/01 - First Contact.level"
+  Global.selected_level = "res://Levels/Electromagnetism/01 - First Contact.level"
   var game: Node2D = GAME.instantiate()
   game.editor_playtest = true
   get_tree().root.add_child(game)

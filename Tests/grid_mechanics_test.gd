@@ -662,13 +662,26 @@ func _w_boson_fields() -> void:
           "A converted W should keep its direction and speed and continue through the tick.")
 
 func _gluon_buildings() -> void:
-  for kind in ["wall", "edge_wall", "filter", "gate", "detector", "emitter"]:
+  for kind in ["wall", "edge_wall", "detector", "emitter"]:
     _new_board()
     var device := _device(kind, Vector2.ZERO)
     if kind == "emitter": device.stop_sequence()
     var gluon := _particle("gluon", Vector2.LEFT * 2.0) as BOSON
     sim.step_simulation(2.0)
-    _check(gluon.is_queued_for_deletion(), "A gluon should be blocked by a " + kind + ".")
+    var tip := gluon.motion_position()
+    _check(gluon.tip_stopped and not gluon.is_queued_for_deletion() and gluon.trail_points[-1].is_equal_approx(tip),
+      "A gluon should stop and keep its trail when it hits a " + kind + ".")
+    var incoming := _particle("electron", Vector2(-1, -1), Vector2.DOWN)
+    sim.step_simulation()
+    _check(gluon.motion_position().is_equal_approx(tip) and incoming.trapped_by == gluon,
+      "The trail should stay in place and catch particles after hitting a " + kind + ".")
+
+  for kind in ["filter", "gate"]:
+    _new_board()
+    _device(kind, Vector2.ZERO)
+    var gluon := _particle("gluon", Vector2.LEFT * 2.0)
+    sim.step_simulation(2.0)
+    _check(gluon.is_queued_for_deletion(), "A gluon should be absorbed by a " + kind + ".")
 
   _new_board()
   _device("glass", Vector2.ZERO)
@@ -700,14 +713,30 @@ func _gluon_buildings() -> void:
   _check(holder.held_particle == gluon and _at(gluon, Vector2.ZERO), "A Holder should stop a gluon tip.")
 
   _new_board()
-  _device("wall", Vector2.RIGHT * 5.0)
+  var wall := _device("wall", Vector2.RIGHT * 5.0)
   gluon = _particle("gluon", Vector2.ZERO) as BOSON
   sim.step_simulation()
   var captive := _particle("electron", Vector2(1, -1), Vector2.DOWN)
   sim.step_simulation(0.8)
   _check(captive.trapped_by == gluon, "The trail should catch a particle before it hits a wall.")
   sim.step_simulation(0.8)
-  _check(gluon.is_queued_for_deletion() and captive.trapped_by == null and not captive.is_queued_for_deletion(), "A destroyed gluon should release its trapped particle.")
+  _check(gluon.tip_stopped and captive.trapped_by == gluon, "A gluon should keep its captive when it hits a wall.")
+  var forecast := FORECAST.new(sim, [wall])
+  var shadow_gluon := forecast.shadow._particles()[0] as BOSON
+  _check(shadow_gluon.tip_stopped and shadow_gluon.caught.size() == 1
+    and shadow_gluon.trail_points == gluon.trail_points, "The forecast should copy a stopped trail and its captive.")
+  forecast.dispose()
+
+  _new_board()
+  _device("detector", Vector2.RIGHT * 5.0, {"accepted": ["gluon"] as Array[String]})
+  var detected: Array[String] = []
+  sim.particle_detected.connect(func(particle: String, _id: String) -> void: detected.append(particle))
+  gluon = _particle("gluon", Vector2.ZERO) as BOSON
+  sim.step_simulation()
+  captive = _particle("electron", Vector2(1, -1), Vector2.DOWN)
+  sim.step_simulation(1.6)
+  _check(detected == ["gluon"] and gluon.is_queued_for_deletion() and captive.trapped_by == null,
+    "A gluon detector should count the gluon, remove its trail and release its captive.")
 
 func _gluon_pass_through() -> void:
   _new_board()
@@ -790,7 +819,7 @@ func _gluon_trap() -> void:
   _check(_at(gluon, Vector2.RIGHT * 6.0) and gluon.caught.is_empty(), "A gluon should leave its trail at two tiles per tick.")
   var electron := _particle("electron", Vector2(2, -1), Vector2.DOWN)
   sim.step_simulation(2.0)
-  _check(gluon.caught == [electron] and electron.trapped_by == gluon and gluon.edge_stopped, "The old trail should catch a particle and persist at the board edge.")
+  _check(gluon.caught == [electron] and electron.trapped_by == gluon and gluon.tip_stopped, "The old trail should catch a particle and persist at the board edge.")
   var held_position := electron.motion_position()
   sim.step_simulation(0.2)
   _check(electron.motion_position() == held_position, "One captive should stay where it touched the trail.")

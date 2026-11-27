@@ -17,10 +17,14 @@ static func mask_comments(source: String) -> String:
     lines.append(line if comment < 0 else line.left(comment) + " ".repeat(line.length() - comment))
   return "\n".join(lines)
 
-static func find_metadata(text: String) -> Array[RegExMatch]:
+static func find_metadata(text: String, chapter := false) -> Array[RegExMatch]:
   var metadata := RegEx.new()
-  metadata.compile("(?im)^\\h*(title|hint|rotation)\\h*:\\h*([^;\\n]+)\\h*;")
-  return metadata.search_all(text)
+  metadata.compile("(?im)^\\h*(title|hint|rotation|order)\\h*:\\h*([^;\\r\\n]+)(;|\\r?$)")
+  var matches := metadata.search_all(text)
+  if chapter: return matches
+  return matches.filter(func(item: RegExMatch) -> bool:
+    return item.get_string(1).to_lower() == "order" or item.get_string(3) == ";"
+  )
 
 static func _without_metadata(text: String) -> String:
   for item in find_metadata(text):

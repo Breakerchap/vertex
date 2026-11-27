@@ -9,7 +9,7 @@ const LINE_HALF_WIDTH := 0.18
 const EPSILON := 0.00001
 
 var trail_points := PackedVector2Array()
-var edge_stopped := false
+var tip_stopped := false
 var caught: Array[Particle] = []
 var pull_axis := Vector2.ZERO
 

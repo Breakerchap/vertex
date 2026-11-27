@@ -1,0 +1,13 @@
+title: Pion Neutral;
+11 x 9;
+
+rate_medal: {1/step};
+cost_medal: {95};
+star_medal: {any: 1/step; no_buildings: glass, pusher};
+
+emitter: {x=5, y=0, N, [up_r, down_g, up_b, down_r], rate=2/step, fixed=pr}
+detector: {x=5, y=8, [pion_plus OR pion_minus], fixed=p}
+
+
+
+inventory: {reflector=0, magnet=20, glass=4, filter=0, pusher=8};

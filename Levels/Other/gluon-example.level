@@ -1,0 +1,14 @@
+title: Gluon Example;
+7 x 6;
+
+throughput_medal: {period=2.0};
+cost_medal: {0};
+star_medal: {hit_stars: true};
+
+detector: {x=3, y=5, [photon], fixed=p}
+emitter: {x=1, y=5, S, [electron], period=4.0, fixed=pr}
+emitter: {x=5, y=5, S, [positron], period=4.0, fixed=pr}
+emitter: {x=0, y=1, NE, [gluon], period=0.5}
+detector: {x=3, y=0, [photon], fixed=p};
+star: {x=6, y=4};
+star: {x=4, y=2};

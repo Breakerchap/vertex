@@ -1,0 +1,22 @@
+title: Proton Wall;
+11 x 7;
+
+rate_medal: {6/step};
+cost_medal: {80};
+star_medal: {any: 6/step; cost: 120};
+
+
+detector: {x=10, y=3, [proton], fixed=p, id=d1};
+emitter: {x=3, y=0, N, [up_r], rate=2/step, fixed=pr}
+emitter: {x=5, y=0, N, [up_g], rate=2/step, fixed=pr}
+
+
+emitter: {x=2, y=6, S, [electron], rate=2/step, fixed=pr}
+emitter: {x=4, y=6, S, [down_b], rate=2/step, fixed=pr}
+
+detector: {x=10, y=4, [positron], fixed=p, id=d2};
+detector: {x=10, y=2, [electron], fixed=p, id=d3};
+emitter: {x=1, y=0, N, [positron], rate=2/step, fixed=pr}
+
+clear: {d1 AND d2 AND d3};
+inventory: {magnet=100, glass=4, filter=0};

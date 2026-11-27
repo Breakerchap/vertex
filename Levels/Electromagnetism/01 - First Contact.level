@@ -1,4 +1,5 @@
 title: 01 - First Contact;
+order: 1
 9 x 6;
 
 throughput_medal: {period=4};

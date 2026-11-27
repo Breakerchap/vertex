@@ -95,7 +95,7 @@ func _init(source: ParticleSimulation, buildings: Array[Node]) -> void:
       var gluon := original as BOSON
       var trail := particle_copies[original] as BOSON
       trail.trail_points = gluon.trail_points.duplicate()
-      trail.edge_stopped = gluon.edge_stopped
+      trail.tip_stopped = gluon.tip_stopped
       for captive in gluon.caught:
         if particle_copies.has(captive): trail.trap(particle_copies[captive])
       trail.pull_axis = gluon.pull_axis

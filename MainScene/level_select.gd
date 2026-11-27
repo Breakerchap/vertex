@@ -1,13 +1,19 @@
 extends Control
 
 const PARSER = preload("res://Levels/level_parser.gd")
+const CATALOG = preload("res://Levels/level_catalog.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
 const MEDALS = preload("res://MainScene/medal_display.gd")
 
-var levels: VBoxContainer
-var known_paths: Array[String] = []
+var list: ScrollContainer
+var rows: VBoxContainer
+var subtitle: Label
+var back: Button
+var chapter_path := ""
+var known_entries: Array[Dictionary] = []
 
 func _ready() -> void:
+  chapter_path = Global.selected_level.get_base_dir()
   theme = UI.theme()
   var background := ColorRect.new()
   background.color = UI.BACKGROUND
@@ -35,19 +41,23 @@ func _ready() -> void:
   title.text = "Vertex"
   UI.heading(title, 32)
   box.add_child(title)
-  var subtitle := Label.new()
-  subtitle.text = "Levels"
+  var header := HBoxContainer.new()
+  box.add_child(header)
+  back = UI.button(header, "Chapters", _open_chapter.bind(""))
+  subtitle = Label.new()
   UI.heading(subtitle, 19)
-  box.add_child(subtitle)
-  var list := UI.vertical_scroll()
+  subtitle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  subtitle.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+  header.add_child(subtitle)
+  list = UI.vertical_scroll()
   list.size_flags_vertical = Control.SIZE_EXPAND_FILL
   box.add_child(list)
-  levels = VBoxContainer.new()
-  levels.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-  levels.add_theme_constant_override("separation", 8)
-  list.add_child(levels)
-  _refresh_levels()
-  get_window().focus_entered.connect(_refresh_levels)
+  rows = VBoxContainer.new()
+  rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  rows.add_theme_constant_override("separation", 8)
+  list.add_child(rows)
+  _refresh()
+  get_window().focus_entered.connect(_refresh)
   var actions := HFlowContainer.new()
   box.add_child(actions)
   var editor := Button.new()
@@ -63,52 +73,61 @@ func _ready() -> void:
     folder.custom_minimum_size.y = 44
     folder.tooltip_text = "Open the folder where Vertex looks for your custom levels"
 
-func _refresh_levels() -> void:
-  var paths := Global.level_paths()
-  if paths == known_paths and levels.get_child_count() > 0: return
-  known_paths = paths
-  for child in levels.get_children():
-    levels.remove_child(child)
+func _refresh() -> void:
+  var chapters := CATALOG.chapters()
+  chapters.append({"title": "Custom levels", "path": Global.CUSTOM_LEVELS})
+  var chapter_title := ""
+  for chapter in chapters:
+    if chapter.path == chapter_path:
+      chapter_title = chapter.title
+      break
+  if chapter_title.is_empty(): chapter_path = ""
+  back.visible = not chapter_path.is_empty()
+  subtitle.text = "Chapters" if chapter_path.is_empty() else chapter_title
+  var entries := chapters if chapter_path.is_empty() else CATALOG.levels(chapter_path)
+  if entries == known_entries and rows.get_child_count() > 0: return
+  known_entries = entries
+  for child in rows.get_children():
+    rows.remove_child(child)
     child.queue_free()
-  var custom_section := false
-  for path in paths:
-    var parsed: Dictionary = PARSER.parse(FileAccess.get_file_as_string(path))
-    var name: String = str(parsed.get("title", ""))
-    if name.is_empty(): name = path.get_file().trim_suffix(".level")
-    var button := Button.new()
-    button.custom_minimum_size.y = 49
-    button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-    button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    var custom := path.begins_with("user://")
-    if custom and not custom_section:
-      custom_section = true
-      var section := Label.new()
-      section.text = "Custom levels"
-      UI.heading(section, 17)
-      levels.add_child(section)
-    var progress := Global.level_progress(path)
-    button.text = name
-    if parsed.has("error"):
-      button.text = path.get_file() + "  (invalid)"
-      button.tooltip_text = str(parsed.error)
-      button.disabled = true
+  for entry in entries:
+    if chapter_path.is_empty():
+      var button := UI.button(rows, entry.title, _open_chapter.bind(entry.path))
+      _style_list_button(button)
     else:
-      button.pressed.connect(_open_level.bind(path))
-    var row := HBoxContainer.new()
-    levels.add_child(row)
-    button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    row.add_child(button)
-    if not parsed.has("error"):
-      var clear_mark := UI.label("✓" if progress.completed else "")
-      clear_mark.custom_minimum_size.x = 18
-      clear_mark.tooltip_text = "Level cleared" if progress.completed else "Level uncleared"
-      clear_mark.mouse_filter = Control.MOUSE_FILTER_PASS
-      row.add_child(clear_mark)
-      row.add_child(MEDALS.strip(progress.medals, 28))
-  if paths.is_empty():
-    var empty := Label.new()
-    empty.text = "No levels"
-    levels.add_child(empty)
+      _add_level(entry.path, entry.title)
+  if entries.is_empty(): rows.add_child(UI.label("No levels"))
+
+func _style_list_button(button: Button) -> void:
+  button.custom_minimum_size.y = 49
+  button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+  button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+
+func _add_level(path: String, title: String) -> void:
+  var parsed: Dictionary = PARSER.parse(FileAccess.get_file_as_string(path))
+  var row := HBoxContainer.new()
+  rows.add_child(row)
+  var button := UI.button(row, title, _open_level.bind(path))
+  _style_list_button(button)
+  button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+  if parsed.has("error"):
+    button.text = path.get_file() + "  (invalid)"
+    button.tooltip_text = str(parsed.error)
+    button.disabled = true
+    return
+  var progress := Global.level_progress(path)
+  var clear_mark := UI.label("✓" if progress.completed else "")
+  clear_mark.custom_minimum_size.x = 18
+  clear_mark.tooltip_text = "Level cleared" if progress.completed else "Level uncleared"
+  clear_mark.mouse_filter = Control.MOUSE_FILTER_PASS
+  row.add_child(clear_mark)
+  row.add_child(MEDALS.strip(progress.medals, 28))
+
+func _open_chapter(path: String) -> void:
+  chapter_path = path
+  Global.selected_level = ""
+  list.scroll_vertical = 0
+  _refresh()
 
 func _show_custom_levels() -> void:
   var error := Global.ensure_custom_levels()

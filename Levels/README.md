@@ -1,6 +1,10 @@
 # Levels
 
-The level selector reads the bundled `.level` files and files in the game's custom levels folder. Use **Custom levels folder** on the level screen to open it in Finder or your desktop file manager. The editor uses your system's Open and Save dialogs where available. You can work on files elsewhere, but save a copy in the custom levels folder to see it on the level screen. Bundled levels are read-only; use **Save as…** to keep an edited copy.
+The game opens on **Chapters**. Each folder directly inside `Levels/` with a `.chapter` file appears as a chapter and lists the `.level` files in that folder. Use `title: Electromagnetism` in `.chapter` to set its display name. Otherwise, the folder name appears.
+
+Add `order: 1` on its own line in a `.chapter` or `.level` file to set its position. Lower numbers appear first. Entries without a number appear after them, alphabetically by display name. Entries with the same number also sort alphabetically.
+
+**Custom levels** lists the files in the game's custom levels folder. Use **Custom levels folder** to open it in Finder or your desktop file manager. The editor uses your system's Open and Save dialogs where available. You can work on files elsewhere and save a copy in the custom levels folder to see it in the game. Bundled levels are read-only. Use **Save as…** to keep an edited copy.
 
 Coordinates start at the bottom-left and ranges include both ends. Directions are `E`, `SE`, `S`, `SW`, `W`, `NW` and `N`. An optional `title` declaration sets the displayed name.
 

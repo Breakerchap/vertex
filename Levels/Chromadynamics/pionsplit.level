@@ -1,0 +1,12 @@
+title: Pion Icecream Split;
+13 x 9;
+
+rate_medal: {1/step};
+cost_medal: {30};
+star_medal: {any: 2/step};
+
+emitter: {x=2, y=0, N, [pion_minus], rate=1/step, fixed=pr}
+emitter: {x=10, y=0, N, [pion_plus], rate=1/step, fixed=pr}
+emitter: {x=3, y=0, N, [electron], rate=1/step, fixed=pr}
+emitter: {x=9, y=0, N, [positron], rate=1/step, fixed=pr}
+detector: {x=6, y=8, [up_g OR up_r OR down_r OR down_g]}

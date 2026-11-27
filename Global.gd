@@ -4,6 +4,14 @@ var selected_level: String = ""
 
 const PROGRESS_FILE := "user://level_progress.cfg"
 const CUSTOM_LEVELS := "user://levels"
+const LEVEL_CATALOG = preload("res://Levels/level_catalog.gd")
+const LEGACY_LEVELS := {
+  "res://Levels/Chromadynamics": ["Proton.level"],
+  "res://Levels/Electromagnetism": [
+    "01 - First Contact.level", "02 - Re-route.level", "05 - Magnets Stuff Going On.level",
+    "To Get To The Other Side.level", "hole_in_a_wall.level",
+  ],
+}
 
 var desktop_view_size: Vector2i
 
@@ -101,6 +109,10 @@ func record_level_progress(level_path: String, medals: Array[String]) -> void:
   if error != OK: push_warning("Could not save level progress: " + error_string(error))
 
 func _stored_progress(progress: ConfigFile, level_path: String) -> Dictionary:
+  var file := level_path.get_file()
+  if not progress.has_section_key("levels", level_path) and not progress.has_section_key("stars", level_path):
+    if file in LEGACY_LEVELS.get(level_path.get_base_dir(), []):
+      level_path = LEVEL_CATALOG.ROOT.path_join(file)
   if progress.has_section_key("levels", level_path):
     var stored: Dictionary = progress.get_value("levels", level_path)
     var medals: Array[String] = []
@@ -111,22 +123,18 @@ func _stored_progress(progress: ConfigFile, level_path: String) -> Dictionary:
     return stored
   return {"completed": int(progress.get_value("stars", level_path, 0)) > 0, "medals": []}
 
-func level_paths() -> Array[String]:
-  var result: Array[String] = []
-  for directory in ["res://Levels", CUSTOM_LEVELS]:
-    if not DirAccess.dir_exists_absolute(directory): continue
-    var files := DirAccess.get_files_at(directory)
-    files.sort()
-    for file in files:
-      if file.to_lower().ends_with(".level"):
-        result.append(directory + "/" + file)
-  return result
-
 func next_level_path(current: String) -> String:
-  var paths := level_paths()
-  var index := paths.find(current)
-  if index < 0: return ""
-  for i in range(index + 1, paths.size()):
-    if not LevelParser.parse(FileAccess.get_file_as_string(paths[i])).has("error"):
-      return paths[i]
+  var directories: Array[String] = []
+  for chapter in LEVEL_CATALOG.chapters():
+    directories.append(chapter.path)
+  directories.append(CUSTOM_LEVELS)
+  var first := directories.find(current.get_base_dir())
+  if first < 0: return ""
+  var found := false
+  for i in range(first, directories.size()):
+    for entry in LEVEL_CATALOG.levels(directories[i]):
+      if found and not LevelParser.parse(FileAccess.get_file_as_string(entry.path)).has("error"):
+        return entry.path
+      if entry.path == current: found = true
+    if not found: return ""
   return ""

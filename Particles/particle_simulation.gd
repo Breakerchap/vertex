@@ -204,7 +204,7 @@ func _advance_gluons(particles: Array[Particle], time: float, obstacles: Array[N
   for gluon in gluons:
     if gluon.caught.size() == 2: continue
     var path: Array[Dictionary]
-    if gluon.edge_stopped:
+    if gluon.tip_stopped:
       var at := gluon.motion_position()
       path = [{"from": at, "to": at, "start": 0.0, "end": time}]
     else:
@@ -213,9 +213,9 @@ func _advance_gluons(particles: Array[Particle], time: float, obstacles: Array[N
     if track_particle_paths: _report_particle_path(gluon, path, time)
     if hits.has(gluon):
       var hit: Dictionary = hits[gluon]
-      if hit.has("edge"):
+      if hit.has("edge") or _stops_gluon_tip(hit.target, gluon):
         _redirect_particle(gluon, hit.at, gluon.direction)
-        gluon.edge_stopped = true
+        gluon.tip_stopped = true
       else:
         gluon.release_captives()
         _absorb_at_building(gluon, hit)
@@ -224,6 +224,10 @@ func _advance_gluons(particles: Array[Particle], time: float, obstacles: Array[N
   # Only other particle types collide with the updated trails.
   obstacles.append_array(gluons)
   return pulls
+
+func _stops_gluon_tip(target: Node, gluon: BOSON) -> bool:
+  return (target is ParticleEmitter or target.get_meta("device", "") in ["wall", "edge_wall"]
+    or (target.has_method("accepts") and not target.accepts(gluon)))
 
 func _pull_captives(gluon: BOSON, time: float) -> Dictionary:
   if not track_particle_paths or gluon.caught.size() != 2: return gluon.pull_pair(time)

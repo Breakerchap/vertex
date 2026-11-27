@@ -1,0 +1,21 @@
+title: Gated Community;
+9 x 9;
+
+rate_medal: {1/step};
+cost_medal: {30};
+star_medal: {any: 2/step};
+
+detector: {x=8, y=4, [photon], fixed=p}
+
+
+gate: {x=8, y=3, N, open=true, fixed=pr}
+gate: {x=8, y=5, N, open=true, fixed=pr}
+gate: {x=7, y=4, W, open=true, fixed=pr}
+wall: {x=7, y=5, fixed=p}
+wall: {x=7, y=3, fixed=p}
+emitter: {x=2, y=0, N, [muon], rate=1/step, fixed=pr}
+emitter: {x=4, y=0, N, [anti_muon], rate=1/step, fixed=pr}
+reflector: {x=0, y=4, E, fixed=pr}
+reflector: {x=8, y=8, S, fixed=pr}
+reflector: {x=8, y=0, N, fixed=pr}
+inventory: {magnet=20, glass=4, pusher=4};

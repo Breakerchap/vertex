@@ -2,6 +2,7 @@ extends Node
 
 const EDITOR = preload("res://MainScene/level_editor.tscn")
 const PARSER = preload("res://Levels/level_parser.gd")
+const LEVEL_CATALOG = preload("res://Levels/level_catalog.gd")
 const CATALOG = preload("res://Buildings/building_catalog.gd")
 const PARTICLES = preload("res://Particles/particle_catalog.gd")
 const UI = preload("res://MainScene/workspace_theme.gd")
@@ -19,9 +20,9 @@ func _ready() -> void:
   assert(panel_rect.end.x <= viewport_size.x and panel_rect.end.y <= viewport_size.y)
   await _check_adaptive_layout(editor)
   await _check_touch_scrolling()
-  for file in DirAccess.get_files_at("res://Levels"):
-    if file.ends_with(".level"):
-      assert(not PARSER.parse(FileAccess.get_file_as_string("res://Levels/" + file)).has("error"), file)
+  for chapter in LEVEL_CATALOG.chapters():
+    for entry in LEVEL_CATALOG.levels(chapter.path):
+      assert(not PARSER.parse(FileAccess.get_file_as_string(entry.path)).has("error"), entry.path)
   _check_detector_objectives(editor)
   _check_emitter_period(editor)
   var original := "# preserve this 99 x 99 comment\ntitle: A 15 x 15 dream;\n5 x 5;\ngoal: {[(electron OR up) AND up_r]: 1/s, 2/s, 3/s};\nwall: {x=+0..+1, y=0, fixed=p};\nmagnet: {x=2,y=2,-,fixed=rp};\ninventory: {mirror=2};\n"
@@ -152,7 +153,7 @@ func _ready() -> void:
   editor.file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
   editor._file_selected(target)
   assert(editor.source.text == saved)
-  assert(editor._is_bundled_level(ProjectSettings.globalize_path("res://Levels/01 - First Contact.level")))
+  assert(editor._is_bundled_level(ProjectSettings.globalize_path("res://Levels/Electromagnetism/01 - First Contact.level")))
   editor._open_source()
   editor._set_source("5 x 5; goal: {photon: 1, 2, 3};")
   history_key.keycode = KEY_S
