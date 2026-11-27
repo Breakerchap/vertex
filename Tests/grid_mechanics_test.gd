@@ -444,6 +444,43 @@ func _reflectors_and_neutrino_holders() -> void:
         _check(not particle.is_queued_for_deletion() and particle.direction == side, "Reflectors should bounce neutral %s from %s." % [name, side])
       else:
         _check(particle.is_queued_for_deletion(), "Reflectors should destroy %s approaching from %s." % [name, side])
+  # The shiny side reflects all non-neutrino neutral particles, even large
+  # and slow ones. Neutrinos remain exempt from reflector interactions.
+  for orientation in range(8):
+    var front: Vector2 = SimulationGrid.VECTORS[(orientation + 6) % 8]
+    for name in ["neutron", "pion_zero", "photon", "z_boson", "gluon"]:
+      _new_board()
+      _device("reflector", Vector2.ZERO, {"orientation": orientation})
+      var neutral := _particle(name, front * 2.0, -front)
+      sim.step_simulation(7.0)
+      _check(not neutral.is_queued_for_deletion() and neutral.direction.normalized().is_equal_approx(front.normalized()),
+        "%s should reflect from the shiny side at rotation %s." % [name, orientation])
+  # A centred beam entering a diagonal mirror must exit on a centred lane.
+  for name in ["neutron", "pion_zero", "photon", "z_boson", "gluon"]:
+    _new_board()
+    _device("reflector", Vector2.ZERO, {"orientation": 1})
+    var neutral := _particle(name, Vector2.UP * 2.0, Vector2.DOWN)
+    sim.step_simulation(3.0 / neutral.speed)
+    _check(not neutral.is_queued_for_deletion() and neutral.direction.is_equal_approx(Vector2.RIGHT)
+      and neutral.motion_position().distance_to(Vector2.RIGHT * CELL) < 0.01,
+      "%s should turn 90 degrees through the mirror centre, staying on the lane." % name)
+  for name in ["neutrino", "anti_neutrino"]:
+    _new_board()
+    _device("reflector", Vector2.ZERO, {"orientation": 1})
+    var neutrino := _particle(name, Vector2.UP * 2.0, Vector2.DOWN)
+    sim.step_simulation(3.0 / neutrino.speed)
+    _check(not neutrino.is_queued_for_deletion() and neutrino.direction == Vector2.DOWN
+      and neutrino.motion_position().distance_to(Vector2.DOWN * CELL) < 0.01,
+      "%s should pass through the shiny side too." % name)
+  # A rounded corner must not absorb a neutral ray aimed inside the strip.
+  _new_board()
+  var reflector := _device("reflector", Vector2.ZERO) as ParticleReflector
+  var neutron := _particle("neutron", Vector2.UP * 2.0)
+  var start := Vector2(60.0, -40.0)
+  var motion := Vector2(-12.0, 40.0)
+  _check(reflector.sweep_for(neutron, start, motion * 0.5).is_empty(), "A neutron aimed at the shiny strip should reach it without being absorbed early.")
+  var hit := reflector.sweep_for(neutron, start + motion * 0.5, motion * 0.5)
+  _check(hit.get("reflective", false) and is_equal_approx(hit.get("fraction", -1.0), 1.0), "The shiny strip should reflect the neutron at the centre line.")
   _new_board()
   _device("pusher", Vector2.ZERO)
   _device("reflector", Vector2.UP, {"orientation": 4})
@@ -760,6 +797,8 @@ func _gluon_trap() -> void:
   var positron := _particle("positron", Vector2(5, 1), Vector2.UP)
   sim.step_simulation(0.67)
   _check(gluon.caught == [electron, positron], "The second particle should join the trap.")
+  _check(gluon.pull_axis == Vector2.RIGHT and is_equal_approx(electron.motion_position().y, positron.motion_position().y),
+    "Opposite-side captures on a horizontal trail should align head-on.")
   var tip_position := gluon.motion_position()
   var prior_electron := electron.motion_position()
   var prior_positron := positron.motion_position()
@@ -776,7 +815,27 @@ func _gluon_trap() -> void:
   for simulation in [sim, forecast.shadow]:
     var products: Array[Particle] = simulation._particles()
     _check(products.size() == 2 and products.all(func(p: Particle) -> bool: return p.flavour == Particle.Flavour.PHOTON), "A captured electron and positron should react normally and annihilate the gluon.")
+    _check(products.all(func(p: Particle) -> bool: return is_zero_approx(p.direction.x)), "A horizontal gluon collision should produce vertical photons.")
   forecast.dispose()
+
+func _gluon_alignment() -> void:
+  _new_board()
+  var gluon := _particle("gluon", Vector2.ZERO) as BOSON
+  gluon.trail_points = PackedVector2Array([Vector2.ZERO, Vector2(2, 0) * CELL, Vector2(2, 3) * CELL])
+  var a := _particle("electron", Vector2(0, -1), Vector2.DOWN)
+  var b := _particle("positron", Vector2(2, 3), Vector2.UP)
+  var midpoint := (a.global_position + b.global_position) * 0.5
+  gluon.trap(a)
+  gluon.trap(b)
+  gluon.pull_pair(0.0)
+  _check(gluon.pull_axis.is_equal_approx(Vector2.ONE.normalized()) and a.direction.is_equal_approx(-b.direction),
+    "A bent trail should choose a consistent grid axis for a head-on collision.")
+  _check(((a.global_position + b.global_position) * 0.5).is_equal_approx(midpoint),
+    "Aligning the captives should preserve their midpoint.")
+  var contact := gluon.pull_pair(2.0)
+  _check(not contact.is_empty() and contact.velocity_a.is_equal_approx(-contact.velocity_b)
+    and is_equal_approx(a.global_position.distance_to(b.global_position), a.world_collision_radius() + b.world_collision_radius()),
+    "Aligned particles should meet at their hitboxes with exactly opposite velocities.")
 
 func _gluon_trail_bounces_and_releases() -> void:
   _new_board()
@@ -826,6 +885,7 @@ func _run() -> void:
   _gluon_pass_through()
   _gluon_emitter_waits_for_tail()
   _gluon_trap()
+  _gluon_alignment()
   _gluon_trail_bounces_and_releases()
   if is_instance_valid(sim): sim.free()
   if failures == 0: print("Grid mechanics checks passed")

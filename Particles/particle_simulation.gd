@@ -491,6 +491,13 @@ func _settle_impact(particle: Particle, hit: Dictionary, time: float, obstacles:
 
 func _reflect_particle(particle: Particle, at: Vector2, hit: Dictionary, incoming: Vector2) -> void:
   var heading := incoming.bounce(hit.normal)
+  # A centred grid beam should leave a reflector on an exact grid heading,
+  # not become off-grid due to floating-point error in the intersection.
+  if hit.target is ParticleReflector:
+    var centre: Vector2 = hit.target.global_position
+    if at.distance_squared_to(centre) <= 0.001 * 0.001 and _is_grid_heading(incoming):
+      at = centre
+      heading = SimulationGrid.heading(heading)
   if particle.flavour == Particle.Flavour.Z_BOSON:
     _redirect_reflection(particle, at, heading)
   else:
@@ -815,6 +822,12 @@ func _bounce(a: Particle, b: Particle, contact: Dictionary, pulled := false) -> 
     # Z collisions deflect both particles without changing their travel speeds.
     velocity_a = velocity_a.bounce(normal)
     velocity_b = velocity_b.bounce(normal)
+  elif pulled:
+    # Gluon contacts are already head-on along the chosen grid axis.
+    # Swap the velocities exactly, without introducing angular drift.
+    var incoming_a := velocity_a
+    velocity_a = velocity_b
+    velocity_b = incoming_a
   else:
     var exchange := relative.dot(normal) * normal
     velocity_a -= exchange

@@ -11,6 +11,7 @@ const EPSILON := 0.00001
 var trail_points := PackedVector2Array()
 var edge_stopped := false
 var caught: Array[Particle] = []
+var pull_axis := Vector2.ZERO
 
 func _ready() -> void:
   if flavour == Flavour.GLUON:
@@ -25,11 +26,13 @@ func prune_captives() -> void:
     if not is_instance_valid(caught[i]) or caught[i].is_queued_for_deletion():
       caught.remove_at(i)
   sprite.visible = caught.size() < 2
+  if caught.size() < 2: pull_axis = Vector2.ZERO
 
 func release_captives() -> void:
   for particle in caught:
     if is_instance_valid(particle): particle.trapped_by = null
   caught.clear()
+  pull_axis = Vector2.ZERO
 
 func record_path(path: Array[Dictionary]) -> void:
   for leg in path:
@@ -57,21 +60,48 @@ func trap(particle: Particle) -> void:
   sprite.visible = caught.size() < 2
   queue_redraw()
 
-## Close the gap between the hitboxes. Both particles travel at the same pull speed.
+# Use the centre line rather than the outer hitbox contact points to choose a
+# heading. A straight trail gives the same axis from either side.
+func _closest_trail_point(at: Vector2) -> Vector2:
+  var closest := trail_points[-1]
+  var distance := at.distance_squared_to(closest)
+  for i in range(trail_points.size() - 1, 0, -1):
+    var point := Geometry2D.get_closest_point_to_segment(at, trail_points[i - 1], trail_points[i])
+    var squared := at.distance_squared_to(point)
+    if squared < distance:
+      closest = point
+      distance = squared
+  return closest
+
+func _choose_pull_axis(a: Vector2, b: Vector2) -> Vector2:
+  var delta := b - a
+  var along_trail := _closest_trail_point(b) - _closest_trail_point(a)
+  var axis := SimulationGrid.heading(along_trail).normalized()
+  if axis.is_zero_approx() or absf(delta.dot(axis)) < EPSILON:
+    axis = SimulationGrid.heading(delta).normalized()
+  if axis.is_zero_approx(): axis = SimulationGrid.heading(direction).normalized()
+  if axis.is_zero_approx(): axis = Vector2.RIGHT
+  return -axis if delta.dot(axis) < 0.0 else axis
+
+## Align to one of the eight grid headings and close the gap head-on.
+## The midpoint stays fixed, and the particles retain their own speeds.
 func pull_pair(time: float) -> Dictionary:
   if caught.size() != 2: return {}
   var a := caught[0]
   var b := caught[1]
-  var delta := b.global_position - a.global_position
-  var axis := direction if delta.is_zero_approx() else delta.normalized()
-  var gap := maxf(0.0, delta.length() - a.world_collision_radius() - b.world_collision_radius())
+  if pull_axis.is_zero_approx():
+    pull_axis = _choose_pull_axis(a.global_position, b.global_position)
+  var axis := pull_axis
+  var midpoint := (a.global_position + b.global_position) * 0.5
+  var span := maxf(0.0, (b.global_position - a.global_position).dot(axis))
+  var gap := maxf(0.0, span - a.world_collision_radius() - b.world_collision_radius())
   var contact_time := gap / (2.0 * PULL_SPEED * SimulationGrid.CELL)
-  var travel := axis * (PULL_SPEED * SimulationGrid.CELL * minf(time, contact_time))
-  _move_captive(a, a.global_position + travel, axis)
-  _move_captive(b, b.global_position - travel, -axis)
+  var half_span := maxf(0.0, span * 0.5 - PULL_SPEED * SimulationGrid.CELL * minf(time, contact_time))
+  _move_captive(a, midpoint - axis * half_span, axis)
+  _move_captive(b, midpoint + axis * half_span, -axis)
   if contact_time > time: return {}
   return {"a": a, "b": b, "gluon": self, "time": contact_time,
-    "at_a": a.global_position, "at_b": b.global_position, "at": (a.global_position + b.global_position) * 0.5,
+    "at_a": a.global_position, "at_b": b.global_position, "at": midpoint,
     "velocity_a": axis * PULL_SPEED, "velocity_b": -axis * PULL_SPEED}
 
 func _move_captive(particle: Particle, at: Vector2, heading: Vector2) -> void:

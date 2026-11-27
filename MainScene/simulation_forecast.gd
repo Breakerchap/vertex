@@ -98,6 +98,7 @@ func _init(source: ParticleSimulation, buildings: Array[Node]) -> void:
       trail.edge_stopped = gluon.edge_stopped
       for captive in gluon.caught:
         if particle_copies.has(captive): trail.trap(particle_copies[captive])
+      trail.pull_axis = gluon.pull_axis
     for partner in original.separating_from:
       if particle_copies.has(partner):
         particle_copies[original].separating_from.append(particle_copies[partner])

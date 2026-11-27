@@ -13,6 +13,7 @@ extends "res://Buildings/building.gd"
 const HALF_WIDTH: float = 51.2
 const HALF_HEIGHT: float = 16.6
 const EPSILON: float = 0.00001
+const FACE_EPSILON: float = 0.001
 
 func _ready() -> void:
   super._ready()
@@ -30,14 +31,24 @@ func sweep_for(particle: Particle, from: Vector2, motion: Vector2) -> Dictionary
   var relative := from - global_position
   var start := Vector2(relative.dot(tangent), relative.dot(normal))
   var move := Vector2(motion.dot(tangent), motion.dot(normal))
+  # Reflect the particle centre at the finite strip on the tile centre line.
+  # Resolve this approach before the expanded body: large or slow particles
+  # can overlap the body or a rounded corner before reaching the strip.
+  if neutral and move.y > EPSILON and start.y <= FACE_EPSILON:
+    var front_t := -start.y / move.y
+    var front_x := start.x + move.x * front_t
+    if absf(front_x) <= half_width + FACE_EPSILON:
+      if start.y + move.y < -FACE_EPSILON: return {}
+      return {"fraction": clampf(front_t, 0.0, 1.0), "normal": -normal,
+        "reflective": true, "allow_z_reflection": false}
+
   var best_t := INF
   var best_normal := Vector2.ZERO
 
   # Check the four straight faces expanded by the particle radius.
   if absf(move.y) > EPSILON:
     for side in [-1.0, 1.0]:
-      # The reflective strip meets incoming beams on the tile's centre line.
-      var face_y: float = 0.0 if neutral and side < 0.0 else side * (half_height + radius)
+      var face_y: float = side * (half_height + radius)
       var t: float = (face_y - start.y) / move.y
       var x: float = start.x + move.x * t
       var face_normal := Vector2(0.0, side)
@@ -87,12 +98,11 @@ func sweep_for(particle: Particle, from: Vector2, motion: Vector2) -> Dictionary
         if distances[i] < distances[nearest]:
           nearest = i
       contact_normal = normals[nearest]
-    var approaching_center := neutral and contact_normal.is_equal_approx(Vector2.UP) and start.y <= 0.0 and move.y > EPSILON
-    if move.dot(contact_normal) < -EPSILON and not approaching_center:
+    if move.dot(contact_normal) < -EPSILON:
       best_t = 0.0
       best_normal = contact_normal
 
   if best_t == INF:
     return {}
   return {"fraction": best_t, "normal": (tangent * best_normal.x + normal * best_normal.y).normalized(),
-    "reflective": neutral and best_normal == Vector2.UP, "allow_z_reflection": false}
+    "reflective": false, "allow_z_reflection": false}

@@ -64,7 +64,7 @@ Use `gluon` and `z_boson` in emitter sequences. Gluons have mass zero and travel
 
 An emitter waits for its previous gluon's trail to clear the emitter's front, then waits one firing interval before emitting another gluon.
 
-The first particle to touch a trail stays in place. When a second touches it, the tip stops moving and both particles are pulled together at three tiles per tick. They interact on contact and the trail disappears. A trail stays active when its tip reaches the edge of the board. If a building absorbs the tip, the trail disappears and releases its captive.
+The first particle to touch a trail stays in place. When a second touches it, the tip stops moving. Both particles align head-on along the nearest grid heading determined by the trail, then pull together at three tiles per tick. They interact on contact and the trail disappears. A trail stays active when its tip reaches the edge of the board. If a building absorbs the tip, the trail disappears and releases its captive.
 
 Z bosons travel one tile per tick. They bounce off other particles, gluon trails, and most buildings, including detectors that reject them. A detector that accepts `z_boson` absorbs and counts it. The sides and back of a reflector also absorb Z bosons. They pass through an open gate.
 
@@ -78,7 +78,7 @@ W bosons use `w_plus` and `w_minus`. Both have a field three tiles across. W⁺ 
 | `glass: {x=2, y=1};` | Electrons, muons, neutrinos, their antiparticles, photons and gluons pause while passing through. Glass blocks all other particles. |
 | `filter: {x=2, y=1, colour=blue};` | Passes photons and quarks of the chosen colour. Bounces rejected quarks and Z bosons. Absorbs other particles that hit it. Choose red, green or blue. |
 | `edge_wall: {x=2, y=1, N};` | Blocks the chosen cardinal edge while leaving the cell free for a building. Click near an edge to place or select its wall. |
-| `reflector: {x=2, y=1, N};` | The shiny front reflects uncharged particles. Charged hits and hits on the sides or back are absorbed. Existing `mirror` declarations and inventory entries still load. |
+| `reflector: {x=2, y=1, N};` | The shiny front reflects uncharged particles at the tile centre line, preserving centred lanes. Charged hits and hits on the sides or back are absorbed. Neutrinos and antineutrinos pass through without interacting. Existing `mirror` declarations and inventory entries still load. |
 | `holder: {x=2, y=1};` | Holds one particle at the cell centre, including neutrinos or antineutrinos. A particle interaction releases the holder’s contents or the reaction products. |
 | `pusher: {x=2, y=1};` | The facing direction sets the first one-tile push. The next push goes in the opposite direction. A push into another pusher triggers it immediately. Each pusher fires at most once in that chain, and the particle keeps its speed and heading. |
 | `magnet: {x=2, y=1, polarity=positive};` | Charged particles enter and exit through the edges along paths that turn them 90 degrees. A matching charge turns clockwise and an opposite charge turns counterclockwise. Neutral particles pass straight through. |
