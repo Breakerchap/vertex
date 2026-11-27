@@ -7,7 +7,7 @@ star_medal: {hit_stars: true};
 star: {x=2, y=2};
 star: {x=4, y=3};
 
-emitter: {x=1, y=2, E, [electron], rate=0.25/tick, fixed=pr}
-emitter: {x=7, y=2, W, [positron], rate=0.25/tick, fixed=pr}
+emitter: {x=1, y=2, E, [electron], period=4, fixed=pr}
+emitter: {x=7, y=2, W, [positron], period=4, fixed=pr}
 wall: {x=5, y=2}
 detector: {x=4, y=4, [photon], fixed=p}

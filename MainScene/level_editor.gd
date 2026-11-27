@@ -297,7 +297,7 @@ func _build_source_dialog() -> void:
   highlighter.add_color_region("#", "", Color("8192a4"), true)
   for word in CATALOG.SCENES.keys() + PARSER.MEDAL_BLOCKS + ["star", "goal", "inventory", "no_build", "magnetic_field", "mirror", "rotation"]:
     highlighter.add_keyword_color(word, Color("7bd9bd"))
-  for word in ["x", "y", "fixed", "rate", "AND", "OR"]:
+  for word in ["x", "y", "fixed", "period", "rate", "AND", "OR"]:
     highlighter.add_keyword_color(word, Color("b5a6f1"))
   source.syntax_highlighter = highlighter
   source.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -741,7 +741,7 @@ func _place_editor_kind(kind: String, cell: Vector2i, facing := "E") -> void:
     status.show()
     return
   var extra := ""
-  if kind == "emitter": extra = ", E, rate=0.25/tick"
+  if kind == "emitter": extra = ", E, period=4"
   elif kind == "detector": extra = ", [photon]"
   elif kind == "stray_particle": extra = ", E, [electron]"
   elif kind == "edge_wall": extra = ", " + facing
@@ -763,8 +763,8 @@ func _copy_selected() -> void:
   var first: Dictionary = block.entries[0]
   copied_origin = Vector2i(first.x, first.y) if edit_range else selected_cell
   copied_declaration = block.text if edit_range else _single_declaration(block.text, selected_cell)
-  if parsed.legacy_rates and first.kind == "emitter":
-    copied_declaration = _explicit_emitter_rate(copied_declaration, first.rate)
+  if first.kind == "emitter":
+    copied_declaration = _explicit_emitter_period(copied_declaration, first.period)
   status.text = "Copied %s." % str(first.kind).replace("_", " ")
 
 func _start_paste() -> void:
@@ -997,15 +997,15 @@ func _build_visual_form() -> void:
     _visual_row("Particle", particle)
     visual_fields.particle = particle
   if entry.kind == "emitter":
-    var rate := SpinBox.new()
-    rate.min_value = 0.0
-    rate.max_value = 250.0
-    rate.allow_greater = true
-    rate.step = 0.0
-    rate.value = float(entry.rate)
-    rate.tooltip_text = "Particles per tick. 0.25 emits one particle every four ticks."
-    _visual_row("Rate / tick", rate)
-    visual_fields.rate = rate
+    var period := SpinBox.new()
+    period.min_value = 0.0
+    period.max_value = 400.0
+    period.allow_greater = true
+    period.step = 0.0
+    period.value = float(entry.period)
+    period.tooltip_text = "Ticks between particles: 1 = every tick, 2 = every other tick, 0.5 = twice per tick."
+    _visual_row("Period (ticks)", period)
+    visual_fields.period = period
   var fixed_position := CheckBox.new()
   fixed_position.text = "Lock position"
   fixed_position.button_pressed = "p" in str(entry.fixed)
@@ -1066,8 +1066,8 @@ func _apply_visual_properties() -> void:
     if not expression.is_empty(): parts.append("[" + expression + "]")
   elif not entry.particles.is_empty():
     parts.append("[" + ", ".join(entry.particles) + "]")
-  if visual_fields.has("rate"):
-    parts.append("rate=%s/tick" % String.num_scientific(visual_fields.rate.value))
+  if visual_fields.has("period"):
+    parts.append("period=%s" % PARSER.format_period(visual_fields.period.value))
   var fixed := str(entry.fixed).replace("p", "")
   if visual_fields.fixed_position.button_pressed: fixed += "p"
   if visual_fields.has("fixed_rotation"):
@@ -1076,7 +1076,7 @@ func _apply_visual_properties() -> void:
     if visual_fields.fixed_rotation.button_pressed: fixed += flag
   if not fixed.is_empty(): parts.append("fixed=" + fixed)
   for key in entry:
-    if key not in ["kind", "x", "y", "facing", "fixed", "rate", "particles", "accepted", "polarity", "particle_expression", "colour", "travel", "track", "open", "rotation"]:
+    if key not in ["kind", "x", "y", "facing", "fixed", "rate", "period", "particles", "accepted", "polarity", "particle_expression", "colour", "travel", "track", "open", "rotation"]:
       parts.append("%s=%s" % [key, entry[key]])
   var replacement := "%s: {%s}" % [entry.kind, ", ".join(parts)]
   var keep_range := edit_range and destination != end
@@ -1090,6 +1090,9 @@ func _open_properties() -> void:
   if selected_block < 0: return
   var declaration: String = PARSER.mask_comments(blocks[selected_block].text).replace("\n", " ")
   if not edit_range: declaration = _single_declaration(declaration, selected_cell)
+  var entry: Dictionary = blocks[selected_block].entries[0]
+  if entry.kind == "emitter":
+    declaration = _explicit_emitter_period(declaration, entry.period)
   declaration_error.text = ""
   _build_property_form(declaration)
   inspector_dialog.popup_centered_clamped(Vector2i(560, 340), 0.88)
@@ -1227,11 +1230,7 @@ func _remove_detector_objectives(updated: String, deleted: PackedStringArray) ->
     updated = updated.left(span.get_start()) + replacement + updated.substr(span.get_end())
   if removed_stars > 0 and removed_stars == star_blocks:
     updated += "\n" + _medal_declaration("star", "any: 0.5/tick") + "\n"
-  if parsed.legacy_rates:
-    var result := PARSER.parse(updated)
-    if not result.has("error") and not result.legacy_rates:
-      updated = _preserve_legacy_emitter_rates(updated, result)
-  return updated
+  return PARSER.migrate_rates(updated)
 
 func _toggle_star(cell: Vector2i) -> void:
   if not game.is_cell_on_board(cell): return
@@ -1547,34 +1546,20 @@ func _apply_settings() -> void:
     updated = updated.left(edit.span.get_start()) + edit.text + updated.substr(edit.span.get_end())
   if not additional.is_empty(): updated = updated.trim_suffix("\n") + "\n" + "\n".join(additional) + "\n"
   updated = prefix + updated
+  updated = PARSER.migrate_rates(updated)
   var result: Dictionary = PARSER.parse(updated)
-  if not result.has("error") and parsed.legacy_rates and not result.legacy_rates:
-    updated = _preserve_legacy_emitter_rates(updated, result)
-    result = PARSER.parse(updated)
   if result.has("error"):
     settings_error.text = str(result.error)
     return
   if updated != source.text: _set_source(updated)
   settings_dialog.hide()
 
-func _preserve_legacy_emitter_rates(updated: String, data: Dictionary) -> String:
-  var declarations := PARSER.find_blocks(PARSER.mask_comments(updated))
-  declarations.reverse()
-  for declaration in declarations:
-    if declaration.get_string(1).to_lower() != "emitter": continue
-    var emitter := PARSER.parse_building("emitter", declaration.get_string(2), data.width, data.height, true)
-    var start := declaration.get_start()
-    var stop := declaration.get_end()
-    var authored := updated.substr(start, stop - start)
-    updated = updated.left(start) + _explicit_emitter_rate(authored, emitter.entries[0].rate) + updated.substr(stop)
-  return updated
-
-func _explicit_emitter_rate(declaration: String, rate: float) -> String:
+func _explicit_emitter_period(declaration: String, period: float) -> String:
   var regex := RegEx.new()
-  regex.compile("(?i)\\brate\\s*=\\s*[^,}\\s]+")
+  regex.compile("(?i)\\b(?:rate|period)\\s*=\\s*[^,}\\s]+")
   var masked := PARSER.mask_comments(declaration)
   var found := regex.search(masked)
-  var text := "rate=%s/tick" % String.num_scientific(rate)
+  var text := "period=%s" % PARSER.format_period(period)
   if found != null:
     return declaration.left(found.get_start()) + text + declaration.substr(found.get_end())
   var end := masked.rfind("}")

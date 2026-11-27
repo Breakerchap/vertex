@@ -23,6 +23,7 @@ func _ready() -> void:
     if file.ends_with(".level"):
       assert(not PARSER.parse(FileAccess.get_file_as_string("res://Levels/" + file)).has("error"), file)
   _check_detector_objectives(editor)
+  _check_emitter_period(editor)
   var original := "# preserve this 99 x 99 comment\ntitle: A 15 x 15 dream;\n5 x 5;\ngoal: {[(electron OR up) AND up_r]: 1/s, 2/s, 3/s};\nwall: {x=+0..+1, y=0, fixed=p};\nmagnet: {x=2,y=2,-,fixed=rp};\ninventory: {mirror=2};\n"
   editor._set_source(original)
   editor._set_source("Not a valid level")
@@ -599,3 +600,14 @@ func _area_drag(game, first: Vector2i, last: Vector2i) -> void:
 
 func _screen_cell(game, cell: Vector2i) -> Vector2:
   return game.get_global_transform_with_canvas() * game._cell_position(cell)
+
+func _check_emitter_period(editor) -> void:
+  editor._set_source("5 x 5; rate_medal: {0.25/tick}; cost_medal: {30}; star_medal: {any: 0.5/tick}; emitter: {x=1,y=1,E,[electron],rate=0.5/tick};")
+  editor._select_at(Vector2i(1, 1), "emitter")
+  assert(editor.visual_fields.has("period") and not editor.visual_fields.has("rate"))
+  assert(editor.visual_fields.period.value == 2.0)
+  editor.visual_fields.period.value = 3.0
+  editor._apply_visual_properties()
+  assert(editor.source.text.contains("period=3") and not editor.source.text.contains("rate="))
+  assert(editor.game._building_at(Vector2i(1, 1)).period == 3.0)
+  assert(editor.parsed.medals.rate == 0.25)

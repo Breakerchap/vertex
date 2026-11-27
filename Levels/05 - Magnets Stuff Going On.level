@@ -5,8 +5,8 @@ rate_medal: {1/tick};
 cost_medal: {20};
 star_medal: {photon: 1/tick; cost: 120};
 
-emitter: {x=9, y=7, W, [positron, electron], rate=0.5/tick, fixed=pr}
-emitter: {x=1, y=3, E, [electron, positron], rate=0.5/tick, fixed=p}
+emitter: {x=9, y=7, W, [positron, electron], period=2, fixed=pr}
+emitter: {x=1, y=3, E, [electron, positron], period=2, fixed=p}
 
 
 inventory: {mirror=8, magnet=12};

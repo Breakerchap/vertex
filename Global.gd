@@ -55,7 +55,8 @@ func migrate_level_file(path: String) -> bool:
   var original := FileAccess.get_file_as_string(path)
   var updated := LevelParser.migrate_rates(original)
   if updated == original: return false
-  var backup := path + ".pre-tick.bak"
+  # Keep the earlier pre-tick backup intact if this file was migrated before.
+  var backup := path + ".pre-period.bak"
   if not FileAccess.file_exists(backup):
     var copied := DirAccess.copy_absolute(path, backup)
     if copied != OK:

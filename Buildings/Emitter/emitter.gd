@@ -15,8 +15,8 @@ const BOSON = preload("res://Particles/Boson/boson.gd")
 @export var particleFlavour: Particle.Flavour = Particle.Flavour.ELECTRON
 @export var isAnti: bool = false
 @export var direction: Vector2 = Vector2.RIGHT
-## Number of particles emitted per grid tick.
-@export_range(0.0025, 250.0, 0.0025, "or_greater") var rate: float = 0.25
+## Grid ticks between emitted particles. Smaller periods emit faster.
+@export_range(0.004, 400.0, 0.001, "or_greater", "or_less") var period: float = 4.0
 @export var sequence: Array[EmissionEntry] = []
 @export var repeat_sequence: bool = false
 @export var start_on_ready: bool = true
@@ -93,16 +93,16 @@ func reset_device() -> void:
 func step_emission(ticks: float) -> void:
   if _last_gluon_covers_front():
     _gluon_cooldown = INF
-  elif is_inf(_gluon_cooldown) and rate > 0.0:
-    _gluon_cooldown = 1.0 / rate
+  elif is_inf(_gluon_cooldown) and is_finite(period) and period > 0.0:
+    _gluon_cooldown = period
   _step_scheduled_emission(ticks)
   _gluon_cooldown = maxf(0.0, _gluon_cooldown - ticks)
 
 func _step_scheduled_emission(ticks: float) -> void:
   if not _continuous and _pending.is_empty():
     return
-  if rate <= 0.0:
-    push_warning("Emitter rate must be greater than zero")
+  if not is_finite(period) or period <= 0.0:
+    push_warning("Emitter period must be finite and greater than zero")
     stop_sequence()
     return
   while (_continuous or not _pending.is_empty()) and _time_until_next <= 0.000001:
@@ -119,7 +119,7 @@ func _step_scheduled_emission(ticks: float) -> void:
         emit_particle(entry.flavour, entry.is_anti, entry.direction, entry.colour)
       if _pending.is_empty() and repeat_sequence and not _sequence_template.is_empty():
         _pending = _sequence_template.duplicate()
-    _time_until_next += 1.0 / rate
+    _time_until_next += period
   _time_until_next -= ticks
 
 func _gluon_emission_blocked(flavour: Particle.Flavour) -> bool:
